@@ -949,8 +949,10 @@ function validateParsing(rawText, parsed) {
     }
   });
 
-  // 3. FNSKU uniqueness — each FNSKU should be unique (inkl. Einzelne-SKU)
-  const fnskuSeen = new Map();
+  // 3. FNSKU presence — нур warnen, wenn FNSKU komplett fehlt.
+  //    Cross-Pallet-Duplikate sind LEGITIM (z.B. zwei Single-SKU-Paletten
+  //    mit demselben Artikel — siehe FBA15LPH6M0K Beispiel) und werden NICHT
+  //    als Fehler/Warnung gemeldet.
   parsed.pallets.forEach((p) =>
     p.items.forEach((it) => {
       if (!it.fnsku) {
@@ -960,47 +962,29 @@ function validateParsing(rawText, parsed) {
           palletId: p.id,
           msg: `${p.id}: артикул без FNSKU — "${it.title?.slice(0, 40) || '—'}"`,
         });
-        return;
       }
-      const prev = fnskuSeen.get(it.fnsku);
-      if (prev) {
-        issues.push({
-          severity: 'warn',
-          kind: 'dup-fnsku',
-          palletId: p.id,
-          msg: `Дубликат FNSKU ${it.fnsku} (на ${prev} и ${p.id})`,
-        });
-      } else fnskuSeen.set(it.fnsku, p.id);
     })
   );
-  (parsed.einzelneSkuItems || []).forEach((it) => {
-    if (!it.fnsku) return;
-    const prev = fnskuSeen.get(it.fnsku);
-    if (prev) {
-      issues.push({
-        severity: 'warn',
-        kind: 'dup-fnsku',
-        palletId: 'Einzelne SKU',
-        msg: `Дубликат FNSKU ${it.fnsku} (на ${prev} и Einzelne SKU)`,
-      });
-    } else fnskuSeen.set(it.fnsku, 'Einzelne SKU');
-  });
 
   // 4. Header SKU/Unit totals cross-check
-  // Inkl. Einzelne-SKU-Items, da diese im Header mitgezählt werden
+  // WICHTIG: Header zählt UNIQUE FNSKUs (z.B. 8 SKU bedeutet 8 verschiedene Produkte),
+  // unser Parser zählt physische Entries (z.B. derselbe Artikel auf 2 Paletten = 2 Entries).
+  // Daher: für SKU-Vergleich → nur eindeutige FNSKUs zählen. Für Einheiten → alle aufsummieren.
   const eskuItems = parsed.einzelneSkuItems || [];
-  const totalSkus =
-    parsed.pallets.reduce((s, p) => s + p.items.length, 0) + eskuItems.length;
-  const totalUnits =
-    parsed.pallets.reduce(
-      (s, p) => s + p.items.reduce((ss, it) => ss + (it.units || 0), 0),
-      0
-    ) + eskuItems.reduce((s, it) => s + (it.units || 0), 0);
+  const allEntries = [
+    ...parsed.pallets.flatMap((p) => p.items),
+    ...eskuItems,
+  ];
+  const uniqueFnskus = new Set();
+  allEntries.forEach((it) => { if (it.fnsku) uniqueFnskus.add(it.fnsku); });
+  const totalSkus = uniqueFnskus.size;
+  const totalEntries = allEntries.length;
+  const totalUnits = allEntries.reduce((s, it) => s + (it.units || 0), 0);
   if (parsed.meta?.totalSkus != null && parsed.meta.totalSkus !== totalSkus) {
     issues.push({
       severity: 'error',
       kind: 'sku-mismatch',
-      msg: `Заголовок: ${parsed.meta.totalSkus} SKU, посчитано: ${totalSkus}`,
+      msg: `Header: ${parsed.meta.totalSkus} SKU (eindeutige FNSKUs), gezählt: ${totalSkus}`,
     });
   }
   if (parsed.meta?.totalUnits != null && parsed.meta.totalUnits !== totalUnits) {
@@ -1051,7 +1035,8 @@ function validateParsing(rawText, parsed) {
     counts: {
       palletsInText: palletMatches.length,
       palletsParsed: parsed.pallets.length,
-      itemsParsed: totalSkus,
+      itemsParsed: totalSkus,                  // unique FNSKUs (matches header)
+      entriesParsed: totalEntries,             // physical entries across pallets
       itemsExpectedFromHeader: parsed.meta?.totalSkus,
       unitsParsed: totalUnits,
       unitsExpectedFromHeader: parsed.meta?.totalUnits,
@@ -1577,21 +1562,39 @@ function detectReserveCandidates(flatItems) {
 }
 
 /**
- * Findet wiederholte "Zu verwendender Artikel"-Werte — wenn mehrere
- * Artikel auf denselben useItem zeigen, markieren wir sie alle.
+ * Findet "Wiederholt"-Markierungen anhand des "Zu verwendender Artikel" (useItem).
+ *
+ * Logik (order-aware):
+ *   • Wenn useItem X auf mehreren Items vorkommt, bekommen ALLE BIS AUF DAS LETZTE
+ *     vorkommen die Markierung "Wiederholt".
+ *   • Das LETZTE Vorkommen bleibt OHNE Badge — wir brauchen den Artikel danach
+ *     nicht mehr; der Hinweis "wiederholt" ist nur für vorherige relevant.
+ *
+ * Rückgabe: Set<FNSKU> — FNSKUs, die als "Wiederholt" markiert werden sollen.
  */
 function detectRepeatedUseItems(flatItems) {
-  const useItemCounts = new Map();
+  // Wie oft kommt jeder useItem vor?
+  const useCount = new Map();
   flatItems.forEach((row) => {
     const u = row.item.useItem;
+    if (u) useCount.set(u, (useCount.get(u) || 0) + 1);
+  });
+  // Letzter Index pro useItem (in flatItems-Render-Reihenfolge)
+  const lastIdx = new Map();
+  flatItems.forEach((row, idx) => {
+    const u = row.item.useItem;
+    if (u) lastIdx.set(u, idx);
+  });
+  // Markiere alle Vorkommen außer dem LETZTEN
+  const repeatedFnskus = new Set();
+  flatItems.forEach((row, idx) => {
+    const u = row.item.useItem;
     if (!u) return;
-    useItemCounts.set(u, (useItemCounts.get(u) || 0) + 1);
+    if ((useCount.get(u) || 0) < 2) return;     // nur einmal → kein Badge
+    if (lastIdx.get(u) === idx) return;         // letztes Vorkommen → kein Badge
+    if (row.item.fnsku) repeatedFnskus.add(row.item.fnsku);
   });
-  const repeatedSet = new Set();
-  useItemCounts.forEach((count, useItem) => {
-    if (count >= 2) repeatedSet.add(useItem);
-  });
-  return repeatedSet;
+  return repeatedFnskus;
 }
 
 /**
@@ -2371,24 +2374,16 @@ function PalletVolumeCard({ stats }) {
   const C2 = 2 * Math.PI * R;
   const dash = Math.min(1, stats.fillPct) * C2;
 
-  // Sortiere Artikel nach Belegungs-Anteil (größte zuerst)
+  // Sortiere Artikel nach Volumen-Anteil (größte zuerst)
   const sortedItems = [...stats.itemsBreakdown]
     .filter((b) => b.v.cartonsCount > 0)
-    .sort((a, b) => b.v.articleFill - a.v.articleFill);
+    .sort((a, b) => b.v.totalCm3 - a.v.totalCm3);
   const topItems = sortedItems.slice(0, 8);
 
-  // Restkapazität
+  // Restkapazität (volumetrisch)
   const remainingPct = Math.max(0, 1 - stats.fillPct);
+  const remainingM3 = Math.max(0, stats.capacityM3 - stats.totalM3);
   const remainingKg = Math.max(0, stats.weightCapKg - stats.totalWeightKg);
-
-  // Geschätzte gefüllte Layer (basierend auf Bodenfläche)
-  // Pro Artikel: cartonsCount / perLayer = Layer-Bedarf
-  const totalLayersUsed = stats.itemsBreakdown.reduce((sum, b) => {
-    if (b.v.grid.perLayer > 0)
-      return sum + b.v.cartonsCount / b.v.grid.perLayer;
-    return sum;
-  }, 0);
-  const maxLayers = 13; // typische Höhen-Layer-Annahme
 
   return (
     <div
@@ -2460,14 +2455,6 @@ function PalletVolumeCard({ stats }) {
           </div>
         </div>
 
-        {/* Layer-Stack-Visualisierung (mini 3D-Preview) */}
-        <LayerStackViz
-          totalLayers={Math.min(maxLayers, totalLayersUsed)}
-          maxLayers={maxLayers}
-          color={c.fg}
-          items={topItems}
-        />
-
         {/* Title + Metrik-Chips */}
         <div style={{ flex: 1, minWidth: 200 }}>
           <div
@@ -2479,19 +2466,9 @@ function PalletVolumeCard({ stats }) {
             }}
           >
             <span>Paletten-Auslastung</span>
-            {stats.densityPenalty < 1 && (
-              <span
-                title={`${stats.uniqueFormatsCount} verschiedene Box-Größen → realistische Pack-Effizienz ${(stats.densityPenalty * 100).toFixed(0)}%`}
-                style={{
-                  fontSize: 8.5, padding: '2px 6px', borderRadius: 3,
-                  background: T.purpleBg, color: T.purple,
-                  border: `1px solid ${T.purple}33`,
-                  letterSpacing: 0.6, fontWeight: 700,
-                }}
-              >
-                MIXED ÷{stats.densityPenalty.toFixed(2)}
-              </span>
-            )}
+            <span style={{ fontSize: 9, color: T.textMuted, fontWeight: 500, fontStyle: 'italic' }}>
+              · plain volumetric @ dichter Stapelung
+            </span>
           </div>
           <div
             style={{
@@ -2500,23 +2477,23 @@ function PalletVolumeCard({ stats }) {
             }}
           >
             <MetricChip
-              label="Layout"
-              value={`${(stats.adjustedGridFill * 100).toFixed(0)}%`}
-              detail={`${stats.totalCartons} Kartons`}
-              active={stats.limitingFactor === 'layout'}
-              tone={stats.isLayoutOverflow ? 'red' : 'default'}
+              label="Volumen"
+              value={`${(stats.fillPct * 100).toFixed(0)}%`}
+              detail={`${stats.totalM3.toFixed(2)} / ${stats.capacityM3.toFixed(2)} m³`}
+              active={stats.limitingFactor === 'volume'}
+              tone={stats.isOverflow ? 'red' : 'default'}
             />
             <MetricChip
               label="Gewicht"
               value={`${(stats.weightPct * 100).toFixed(0)}%`}
-              detail={`${stats.totalWeightKg.toFixed(1)} kg`}
+              detail={`${stats.totalWeightKg.toFixed(1)} / ${stats.weightCapKg} kg`}
               active={stats.limitingFactor === 'weight'}
               tone={stats.isWeightOverflow ? 'red' : 'default'}
             />
             <MetricChip
-              label="Volumen"
-              value={`${stats.totalM3.toFixed(2)}`}
-              detail="m³"
+              label="Kartons"
+              value={stats.totalCartons}
+              detail={`${stats.itemsBreakdown.length} Artikel`}
             />
             {stats.hasUnknown && (
               <MetricChip
@@ -2527,7 +2504,7 @@ function PalletVolumeCard({ stats }) {
               />
             )}
           </div>
-          {/* Capacity remaining hint */}
+          {/* Capacity remaining */}
           {!stats.isOverflow && remainingPct > 0.02 && (
             <div
               style={{
@@ -2538,21 +2515,27 @@ function PalletVolumeCard({ stats }) {
               <span style={{ color: T.textMuted, fontWeight: 600 }}>Frei: </span>
               <span className="lp-mono">{(remainingPct * 100).toFixed(0)}%</span>
               <span style={{ color: T.textMuted }}> · </span>
-              <span className="lp-mono">{remainingKg.toFixed(0)} kg Gewicht</span>
+              <span className="lp-mono">{remainingM3.toFixed(2)} m³</span>
               <span style={{ color: T.textMuted }}> · </span>
-              <span className="lp-mono">≈ {Math.max(0, maxLayers - Math.floor(totalLayersUsed))} freie Lagen</span>
+              <span className="lp-mono">{remainingKg.toFixed(0)} kg</span>
             </div>
           )}
           {stats.isOverflow && (
             <div
               style={{
-                fontSize: 11, color: '#dc2626', fontWeight: 600,
+                fontSize: 11, color: '#dc2626', fontWeight: 700,
                 lineHeight: 1.4,
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                padding: '6px 10px',
+                borderRadius: 6,
+                marginTop: 4,
               }}
             >
-              ⚠ {stats.limitingFactor === 'weight'
-                ? `Gewichts-Limit überschritten: ${(stats.totalWeightKg - stats.weightCapKg).toFixed(0)} kg über Tarif`
-                : `Layout-Limit überschritten: ${((stats.adjustedGridFill - 1) * 100).toFixed(0)}% zu viel — passt physisch nicht`}
+              ⚠ ÜBERFÜLLT — {((stats.fillPct - 1) * 100).toFixed(0)}% zu viel
+              {stats.limitingFactor === 'weight'
+                ? ` (Gewicht: ${(stats.totalWeightKg - stats.weightCapKg).toFixed(0)} kg über Tarif)`
+                : ` (Volumen: ${(stats.totalCm3 / 1_000_000 - stats.capacityM3).toFixed(2)} m³ Überschuss)`}
             </div>
           )}
         </div>
@@ -2586,13 +2569,14 @@ function PalletVolumeCard({ stats }) {
             }}
           >
             {topItems.map((b, i) => {
-              const wPct = (b.v.articleFill / stats.densityPenalty) * 100;
+              // Anteil dieses Artikels an der gesamten Palette (volumetrisch)
+              const wPct = (b.v.totalCm3 / stats.palletVolCm3) * 100;
               const key = itemShortFormat(b.item) + (b.item.fnsku || i);
               const segColor = colorForKey(key);
               return (
                 <div
                   key={i}
-                  title={`${itemShortFormat(b.item)} · ${b.v.cartonsCount} Kartons → ${wPct.toFixed(1)}%`}
+                  title={`${itemShortFormat(b.item)} · ${b.v.cartonsCount} Kartons · ${(b.v.totalCm3 / 1_000_000).toFixed(3)} m³ → ${wPct.toFixed(1)}%`}
                   style={{
                     width: `${wPct}%`,
                     background: segColor,
@@ -2603,7 +2587,7 @@ function PalletVolumeCard({ stats }) {
               );
             })}
             {/* 100%-Marker */}
-            {stats.adjustedGridFill < 1 && (
+            {stats.fillPct < 1 && (
               <div
                 style={{
                   position: 'absolute', right: 0, top: -2, bottom: -2,
@@ -2624,7 +2608,7 @@ function PalletVolumeCard({ stats }) {
               <ArticleBreakdownRow
                 key={i}
                 breakdown={b}
-                penalty={stats.densityPenalty}
+                palletVolCm3={stats.palletVolCm3}
               />
             ))}
           </div>
@@ -2691,10 +2675,10 @@ function LayerStackViz({ totalLayers, maxLayers, color, items }) {
 }
 
 /* ── Eine Zeile in der Per-Artikel-Aufschlüsselung ────────────────────── */
-function ArticleBreakdownRow({ breakdown, penalty }) {
+function ArticleBreakdownRow({ breakdown, palletVolCm3 }) {
   const b = breakdown;
   const segColor = colorForKey(itemShortFormat(b.item) + (b.item.fnsku || ''));
-  const articlePct = (b.v.articleFill / penalty) * 100;
+  const articlePct = palletVolCm3 > 0 ? (b.v.totalCm3 / palletVolCm3) * 100 : 0;
   const g = b.v.grid;
   // Match-Quality-Badge
   const q = b.v.matchQuality;
@@ -3239,9 +3223,8 @@ function PalletBattery({ stats, label, size = 'md', highlight = false }) {
     <div
       title={
         `${pct.toFixed(0)}% Auslastung${overflow ? ' · ÜBERLAUF' : ''}\n` +
-        `Layout (Grid):  ${(stats.gridFillPct * 100).toFixed(0)}% (${stats.totalM3.toFixed(2)} m³)\n` +
-        `Gewicht:        ${(stats.weightPct * 100).toFixed(0)}% (${stats.totalWeightKg.toFixed(1)} kg)\n` +
-        `Limit: ${stats.limitingFactor === 'weight' ? 'Gewicht' : 'Layout'}\n` +
+        `Volumen: ${stats.totalM3.toFixed(2)} / ${stats.capacityM3.toFixed(2)} m³\n` +
+        `Gewicht: ${(stats.weightPct * 100).toFixed(0)}% (${stats.totalWeightKg.toFixed(1)} kg)\n` +
         `${stats.totalCartons} Kartons` +
         (stats.hasUnknown ? `\n${stats.unmatchedCount}× geschätzt (nicht im Katalog)` : '')
       }
@@ -3624,6 +3607,8 @@ function ItemRow({
   onToggleLoaded,
   isReserveCandidate,
   isRepeatedUseItem,
+  isEasy,
+  lstStatus,
 }) {
   return (
     <div
@@ -3753,7 +3738,7 @@ function ItemRow({
           )}
           {isRepeatedUseItem && (
             <span
-              title="Gleicher «Zu verwendender Artikel» kommt mehrfach vor"
+              title="Gleicher «Zu verwendender Artikel» kommt später nochmal vor"
               style={{
                 fontSize: 9.5,
                 color: '#fff',
@@ -3766,6 +3751,59 @@ function ItemRow({
               }}
             >
               ↺ Wiederholt
+            </span>
+          )}
+          {isEasy && (
+            <span
+              title="Wenig Einheiten, kommt nirgends mehrfach vor — leicht aufzuhebener Artikel"
+              style={{
+                fontSize: 9.5,
+                color: '#fff',
+                background: '#10B981',
+                padding: '2px 6px',
+                borderRadius: 4,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+                fontWeight: 700,
+              }}
+            >
+              ⚡ Leicht
+            </span>
+          )}
+          {lstStatus === 'mit' && (
+            <span
+              title="Mit SEPA-Lastschrift-Aufdruck"
+              style={{
+                fontSize: 9.5,
+                color: '#FBBF24',
+                background: '#1F2937',
+                padding: '2px 6px',
+                borderRadius: 4,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+                fontWeight: 800,
+                border: '1px solid #FBBF24',
+              }}
+            >
+              ✓ LST
+            </span>
+          )}
+          {lstStatus === 'ohne' && (
+            <span
+              title="Ohne LST-Aufdruck"
+              style={{
+                fontSize: 9.5,
+                color: '#6B7280',
+                background: '#F3F4F6',
+                padding: '2px 6px',
+                borderRadius: 4,
+                letterSpacing: 0.6,
+                textTransform: 'uppercase',
+                fontWeight: 700,
+                border: '1px solid #D1D5DB',
+              }}
+            >
+              ohne LST
             </span>
           )}
         </div>
@@ -3810,6 +3848,201 @@ function ItemRow({
         >
           Einh.
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   FBA-COCKPIT — präsentables Header-Block direkt unter dem App-Header.
+   Zeigt Shipment-ID, Datum, Ziel, Counts UND einen "Fokus starten"-CTA-Button.
+   ───────────────────────────────────────────────────────────────────────── */
+function FbaCockpit({ meta, palletCount, flatItems, einzelneSkuCount, onStartFokus, loadingPct }) {
+  if (!meta) return null;
+  const totalEinheiten = flatItems.reduce((s, r) => s + (r.item.units || 0), 0);
+  const sn = meta.sendungsnummer || '—';
+  const totalSkus = (meta.totalSkus ?? flatItems.length);
+
+  return (
+    <div
+      style={{
+        background: 'linear-gradient(135deg, #1F2937 0%, #111827 100%)',
+        color: '#F9FAFB',
+        borderRadius: 14,
+        padding: '20px 24px',
+        marginBottom: 16,
+        boxShadow: '0 8px 24px rgba(17,24,39,0.18)',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Subtiles tech-pattern Hintergrund */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: 0.05,
+          backgroundImage:
+            'repeating-linear-gradient(45deg, transparent 0 12px, #fff 12px 13px)',
+          pointerEvents: 'none',
+        }}
+      />
+      <div
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 24,
+          flexWrap: 'wrap',
+        }}
+      >
+        {/* Shipment ID Block */}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              fontSize: 9.5,
+              color: '#9CA3AF',
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              marginBottom: 4,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                background: '#FBBF24',
+                color: '#111827',
+                padding: '2px 8px',
+                borderRadius: 4,
+                letterSpacing: 1.5,
+                fontSize: 9.5,
+                fontWeight: 800,
+              }}
+            >
+              FBA
+            </span>
+            <span>Shipment</span>
+            {meta.destination && (
+              <>
+                <span style={{ opacity: 0.4 }}>·</span>
+                <span>{meta.destination}</span>
+              </>
+            )}
+            {meta.createdDate && (
+              <>
+                <span style={{ opacity: 0.4 }}>·</span>
+                <span className="lp-mono">{meta.createdDate}</span>
+              </>
+            )}
+            {meta.createdTime && (
+              <>
+                <span style={{ opacity: 0.4 }}>·</span>
+                <span className="lp-mono">{meta.createdTime}</span>
+              </>
+            )}
+          </div>
+          <div
+            className="lp-mono"
+            style={{
+              fontSize: 28,
+              fontWeight: 700,
+              letterSpacing: -0.3,
+              color: '#F9FAFB',
+              lineHeight: 1,
+              marginBottom: 8,
+            }}
+            title="Sendungsnummer (Klicken zum Kopieren)"
+            onClick={() => {
+              if (navigator.clipboard) navigator.clipboard.writeText(sn);
+            }}
+          >
+            {sn}
+          </div>
+          {/* Stats inline */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 18,
+              fontSize: 11.5,
+              color: '#D1D5DB',
+              fontWeight: 500,
+            }}
+          >
+            <span>
+              <span className="lp-mono" style={{ color: '#F9FAFB', fontWeight: 700, fontSize: 14 }}>{palletCount}</span>{' '}
+              <span style={{ opacity: 0.7 }}>{palletCount === 1 ? 'Palette' : 'Paletten'}</span>
+            </span>
+            <span>
+              <span className="lp-mono" style={{ color: '#F9FAFB', fontWeight: 700, fontSize: 14 }}>{totalSkus}</span>{' '}
+              <span style={{ opacity: 0.7 }}>SKU</span>
+            </span>
+            <span>
+              <span className="lp-mono" style={{ color: '#F9FAFB', fontWeight: 700, fontSize: 14 }}>{(meta.totalUnits ?? totalEinheiten).toLocaleString('de-DE')}</span>{' '}
+              <span style={{ opacity: 0.7 }}>Einheiten</span>
+            </span>
+            {einzelneSkuCount > 0 && (
+              <span
+                style={{
+                  background: '#7C3AED',
+                  padding: '2px 10px',
+                  borderRadius: 4,
+                  color: '#fff',
+                  fontWeight: 700,
+                  letterSpacing: 0.6,
+                  fontSize: 10.5,
+                  textTransform: 'uppercase',
+                }}
+              >
+                ⬢ {einzelneSkuCount} Einzelne SKU
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Fokus-Start CTA */}
+        <button
+          onClick={onStartFokus}
+          style={{
+            background: loadingPct >= 100 ? '#10B981' : '#FBBF24',
+            color: '#111827',
+            border: 'none',
+            borderRadius: 12,
+            padding: '14px 22px',
+            fontSize: 15,
+            fontWeight: 800,
+            letterSpacing: 0.6,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 10,
+            boxShadow: '0 4px 14px rgba(251,191,36,0.35)',
+            transition: 'all 0.2s ease',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-1px)';
+            e.currentTarget.style.boxShadow = '0 6px 20px rgba(251,191,36,0.45)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 14px rgba(251,191,36,0.35)';
+          }}
+          title="Vollbildmodus für sequenzielles Be-Etikettieren der Paletten"
+        >
+          <span style={{ fontSize: 18 }}>▶</span>
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
+            <span style={{ fontSize: 9.5, opacity: 0.8, letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: 700 }}>
+              {loadingPct >= 100 ? 'Erledigt' : 'Schritt für Schritt'}
+            </span>
+            <span style={{ fontSize: 16, fontWeight: 800 }}>Fokus-Modus starten</span>
+          </span>
+        </button>
       </div>
     </div>
   );
@@ -3956,21 +4189,35 @@ function EinzelneSkuSection({ items, distribution, onPalletClick }) {
                 </div>
                 <div
                   style={{
-                    display: 'flex', gap: 10, alignItems: 'center',
+                    display: 'flex', gap: 8, alignItems: 'center',
                     fontSize: 10.5, color: T.textSub, flexWrap: 'wrap',
                     fontFamily: 'DM Mono, monospace',
                   }}
                 >
-                  <span>{it.fnsku}</span>
-                  {it.dimStr && <span style={{ color: T.textMuted }}>· {it.dimStr}</span>}
+                  {/* FNSKU als hervorgehobenes Code-Pill */}
+                  <span
+                    title="FNSKU — eindeutiger Artikel-Code"
+                    style={{
+                      background: '#F5F3FF',
+                      color: '#7C3AED',
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      border: '1px solid #DDD6FE',
+                      fontWeight: 700,
+                      letterSpacing: 0.4,
+                    }}
+                  >
+                    {it.fnsku}
+                  </span>
+                  {it.dimStr && <span style={{ color: T.textMuted }}>{it.dimStr}</span>}
                   <span style={{ color: T.textMuted }}>
-                    · ({eskMeta.packsPerCarton}×{eskMeta.itemsPerPack} {eskMeta.contentLabel})
+                    ({eskMeta.packsPerCarton}×{eskMeta.itemsPerPack} {eskMeta.contentLabel})
                   </span>
                   <span style={{ color: T.text, fontWeight: 600 }}>
-                    · {it.units} Einh = {eskMeta.cartonsCount}× Karton
+                    {it.units} Einh = {eskMeta.cartonsCount}× Karton
                   </span>
                   {!v.matched && (
-                    <span style={{ color: T.amber }}>· ≈ geschätzt</span>
+                    <span style={{ color: T.amber }}>≈ geschätzt</span>
                   )}
                 </div>
               </div>
@@ -4093,7 +4340,9 @@ function PalletCard({
   eskuExtras = [],
 }) {
   const totalUnits = pallet.items.reduce((s, i) => s + (i.units || 0), 0);
-  const loadedCount = pallet.items.filter((it) => loadedSet?.has(it.fnsku)).length;
+  const loadedCount = pallet.items.filter((it) =>
+    loadedSet?.has(`${pallet.id}::${it.fnsku}`)
+  ).length;
   const palletProgressPct =
     pallet.items.length > 0 ? (loadedCount / pallet.items.length) * 100 : 0;
   const isPalletDone = loadedCount === pallet.items.length && pallet.items.length > 0;
@@ -4256,10 +4505,12 @@ function PalletCard({
               isActive={activeItemId === item.fnsku}
               onClick={() => onItemClick(item)}
               dimmed={isDimmed}
-              loaded={loadedSet?.has(item.fnsku)}
-              onToggleLoaded={() => onToggleLoaded?.(item.fnsku)}
+              loaded={loadedSet?.has(`${pallet.id}::${item.fnsku}`)}
+              onToggleLoaded={() => onToggleLoaded?.(`${pallet.id}::${item.fnsku}`)}
               isReserveCandidate={reserveFnskus?.has(item.fnsku)}
-              isRepeatedUseItem={item.useItem && repeatedUseItems?.has(item.useItem)}
+              isRepeatedUseItem={repeatedUseItems?.has(item.fnsku)}
+              isEasy={isLeichtAbzuholen(item, repeatedUseItems)}
+              lstStatus={itemHasLst(item)}
             />
           );
         })}
@@ -5021,35 +5272,147 @@ function buildPalletScreens(sortedPallets, einzelneSkuItems = [], distribution =
 }
 
 /**
- * Извлекает короткое немецкое название из полного титла.
- * Примеры:
- *  "Ec-Cash Thermorollen 57mm x 35mm x 12mm — Kassenrollen ..." → "Thermorolle 57×35"
- *  "TK THERMALKING Big Bag — Säcke für Bauschutt ..." → "Big Bag 90×90"
+ * Извлекает короткое немецкое название из полного титла — с продвинутыми
+ * правилами для специфических групп товаров (по спеку пользователя).
+ *
+ * Правила:
+ *  • Klebeband / Packband / Paketband  → "Klebeband (X)" wo X = количество
+ *  • Heipa-Thermorolle                 → "Heipa Thermorolle (X Stück) D×H×B"
+ *  • Sandsack / Sandsäcke              → "Sandsäcke L×W (count)"
+ *  • Kernöl / Steirisches Gourmet      → "Kernöl (1 l)"
+ *  • Tacho LKW                         → "Tachorollen LKW - Xer Pack"
+ *  • Big Bag                           → "Big Bag dim"
+ *  • Thermo / Veit                     → "Thermorolle/Veit-Rolle dim ± mit LST"
  */
 function shortGermanName(item) {
+  const t = item.title || '';
+  const tl = t.toLowerCase();
+  const dim = item.dimStr || '';
+
+  // ── Klebeband / Packband / Paketband ────────────────────────────────
+  if (/klebeband|paketband|packband/i.test(tl)) {
+    // Letzte Klammer mit Zahl im Titel: "(1)", "(6)", "(12)", "(36)"
+    const m = t.match(/\((\d{1,3})\)\s*$/);
+    const count = m ? m[1] : null;
+    // Marken-Präfix erhalten falls vorhanden ("TK THERMALKING")
+    const brand = /tk\s*thermalking/i.test(tl) ? 'TK THERMALKING ' : '';
+    return `${brand}Klebeband${count ? ` (${count})` : ''}`;
+  }
+
+  // ── Heipa Thermorolle ───────────────────────────────────────────────
+  if (item.isHeipa) {
+    // Stück-Count: "(5 Stück)", "(50 Stück)" oder analog
+    const stk = t.match(/\((\d+)\s*(?:Stück|Stk|Rollen?)\)/i);
+    // Maße: "58 x 64 x 12 mm" oder "58x64x12 mm"
+    const mass = t.match(/(\d+)\s*[x×х]\s*(\d+)\s*[x×х]\s*(\d+)\s*mm/i);
+    const stkPart = stk ? ` (${stk[1]} Stück)` : '';
+    const massPart = mass ? ` ${mass[1]}×${mass[2]}×${mass[3]} mm` : '';
+    return `Heipa Thermorolle${stkPart}${massPart}`.trim();
+  }
+
+  // ── Sandsäcke ───────────────────────────────────────────────────────
+  if (/sandsack|sandsäcke/i.test(tl)) {
+    // Maße: "(40 x 60 cm)" oder "(90 × 90 cm)"
+    const mass = t.match(/\((\d+)\s*[x×х]\s*(\d+)\s*cm\)/i);
+    // Anzahl: zweite Klammer "(50)" oder "(20)"
+    const cnt = t.match(/\((\d+)\)\s*$/);
+    const massPart = mass ? `${mass[1]} × ${mass[2]} cm` : '';
+    const cntPart = cnt ? ` (${cnt[1]} Stk)` : '';
+    return `Sandsäcke${massPart ? ` ${massPart}` : ''}${cntPart}`.trim();
+  }
+
+  // ── Kernöl / Steirisches Gourmet ────────────────────────────────────
+  if (/kernöl|kernoel|steirisches\s+gourmet/i.test(tl)) {
+    // Volumen: "(1 l)", "(0.5 l)", "(500 ml)"
+    const vol = t.match(/\((\d+(?:[\.,]\d+)?)\s*(l|ml)\)/i);
+    return vol ? `Kernöl (${vol[1]} ${vol[2]})` : 'Kernöl';
+  }
+
+  // ── Tachorollen LKW ─────────────────────────────────────────────────
+  if (item.isTacho) {
+    // "60er Pack", "15er Pack", "12 Stk"
+    const pack = t.match(/(\d+)\s*er\s*Pack/i) || t.match(/\((\d+)\s*Rollen\)/i)
+                  || t.match(/(\d+)\s*Stk/i);
+    return `Tachorollen LKW${pack ? ` - ${pack[1]}er Pack` : ''}`;
+  }
+
+  // ── Big Bag ─────────────────────────────────────────────────────────
+  if (/big\s*bag/i.test(tl)) {
+    return `Big Bag${dim ? ` ${dim}` : ''}`.trim();
+  }
+
+  // ── Thermorolle (default) ───────────────────────────────────────────
+  if (item.isThermo) {
+    if (/lastschrift|\blst\b|sepa/i.test(tl)) {
+      return `Thermorolle ${dim} mit LST`.trim();
+    }
+    if (/unbedruckt|ohne\s+aufdruck/i.test(tl)) {
+      return `Thermorolle ${dim} unbedruckt`.trim();
+    }
+    return `Thermorolle ${dim}`.trim();
+  }
+
+  // ── Veit ────────────────────────────────────────────────────────────
+  if (item.isVeit) {
+    return `Veit-Rolle ${dim}`.trim();
+  }
+
+  // Fallback — первые 4 слова
+  const words = t.split(/\s+/).slice(0, 4).join(' ');
+  return words || 'Artikel';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   itemHasLst — Hilfsfunktion: enthält der Artikel "Lastschrift"-Aufdruck?
+   Verwendet für mit-LST/Ohne-LST-Badge.
+   Nicht anwendbar auf 80×… Formate (das sind Quittungs-Rollen, nicht EC).
+   ───────────────────────────────────────────────────────────────────────── */
+function itemHasLst(item) {
+  if (!item || !item.title) return null;
+  // 80×... Formate ausschließen (LST irrelevant)
+  const dim = item.dimStr || '';
+  if (/^\s*80\s*[×x]/i.test(dim)) return null;
+  // Nur Thermo/Heipa/Veit
+  if (!item.isThermo && !item.isHeipa && !item.isVeit) return null;
+  const t = item.title.toLowerCase();
+  if (/lastschrift|\blst\b|sepa[\s-]?lastschrift/i.test(t)) return 'mit';
+  // Wenn explizit "ohne LST" oder unbedruckt
+  if (/ohne\s+lst|ohne\s+lastschrift|unbedruckt|ohne\s+aufdruck/i.test(t)) return 'ohne';
+  // Default Thermo ohne LST-Hinweis: "ohne"
+  return 'ohne';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   isLeichtAbzuholen — Markierung für leicht aufzuhebende Artikel.
+   Bedingungen:
+     • Artikel kommt nirgends mehrfach vor (nicht "Wiederholt"!)
+     • units ≤ 20 (Standard)
+     • EXCEPT 80×80 / 80×63 / 80×60 / ÖKO → threshold ≤ 5
+     • Klebeband → threshold ≤ 6
+   ───────────────────────────────────────────────────────────────────────── */
+function isLeichtAbzuholen(item, repeatedFnskus) {
+  if (!item || !item.units) return false;
+  // Wenn der Artikel "Wiederholt"-markiert ist, ist es NICHT leicht zu nehmen
+  // (es taucht woanders auch auf, also Vorsicht)
+  if (repeatedFnskus && repeatedFnskus.has(item.fnsku)) return false;
+
   const t = (item.title || '').toLowerCase();
   const dim = item.dimStr || '';
-  if (item.isThermo) {
-    if (/lastschrift|lst|sepa/i.test(t)) {
-      return `Thermorolle ${dim} mit LST`;
-    }
-    if (/unbedruckt|ohne aufdruck/i.test(t)) {
-      return `Thermorolle ${dim} unbedruckt`;
-    }
-    return `Thermorolle ${dim}`;
+
+  // Klebeband: ≤ 6
+  if (/klebeband|paketband|packband/i.test(t)) {
+    return item.units <= 6;
   }
-  if (item.isVeit) {
-    return `Veit-Rolle ${dim}`;
+  // 80×80, 80×63, 80×60: ≤ 5
+  if (/^\s*80\s*[×x]\s*(80|63|60)/i.test(dim)) {
+    return item.units <= 5;
   }
-  if (/big\s*bag/i.test(t)) {
-    return `Big Bag ${dim || ''}`.trim();
+  // ÖKO: ≤ 5
+  if (/öko|oeko/i.test(t)) {
+    return item.units <= 5;
   }
-  if (/säcke|sack|bag/i.test(t)) {
-    return `Sack ${dim || ''}`.trim();
-  }
-  // fallback — first 4 words
-  const words = (item.title || '').split(/\s+/).slice(0, 4).join(' ');
-  return words || 'Artikel';
+  // Default: ≤ 20
+  return item.units <= 20;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -5092,8 +5455,11 @@ function FokusModus({
   }, []);
 
   // Pallet "done" = ALLE Artikel markiert (inkl. zugewiesener Einzelne-SKU)
+  // Composite-Key: palletId::fnsku — derselbe FNSKU auf 2 Paletten ist UNABHÄNGIG.
   const palletDone = useCallback(
-    (p) => p && (p.allItems || p.pallet.items).every((it) => loadedSet.has(it.fnsku)),
+    (p) => p && (p.allItems || p.pallet.items).every((it) =>
+      loadedSet.has(`${p.palletId}::${it.fnsku}`)
+    ),
     [loadedSet]
   );
   const isCurrentDone = current ? palletDone(current) : false;
@@ -5119,8 +5485,8 @@ function FokusModus({
   const totalArticlesDone = useMemo(
     () =>
       screens
-        .flatMap((s) => s.allItems || s.pallet.items)
-        .filter((it) => loadedSet.has(it.fnsku)).length,
+        .flatMap((s) => (s.allItems || s.pallet.items).map((it) => ({ s, it })))
+        .filter(({ s, it }) => loadedSet.has(`${s.palletId}::${it.fnsku}`)).length,
     [screens, loadedSet]
   );
   const totalArticles = screens.reduce((s, p) => s + p.itemCount, 0);
@@ -5171,24 +5537,25 @@ function FokusModus({
     }
   }, []);
 
+  // Per-Palette Marker — gleicher FNSKU auf 2 Paletten ist unabhängig.
+  const currentPalletId = current?.palletId || '';
   const copyArticle = useCallback(
     (fnsku) => {
-      // Permanenter Marker: einmal kopiert, bleibt grün.
+      const key = `${currentPalletId}::${fnsku}`;
       setCopiedSet((prev) => {
-        if (prev.has(fnsku)) return prev;
+        if (prev.has(key)) return prev;
         const next = new Set(prev);
-        next.add(fnsku);
+        next.add(key);
         return next;
       });
       copyTextRaw(fnsku);
     },
-    [copyTextRaw]
+    [copyTextRaw, currentPalletId]
   );
 
   const copyUseItem = useCallback(
     (useItem) => {
-      // Auch useItem-Code als kopiert markieren (Prefix für Eindeutigkeit)
-      const key = `useItem:${useItem}`;
+      const key = `useItem:${currentPalletId}::${useItem}`;
       setCopiedSet((prev) => {
         if (prev.has(key)) return prev;
         const next = new Set(prev);
@@ -5197,30 +5564,24 @@ function FokusModus({
       });
       copyTextRaw(useItem);
     },
-    [copyTextRaw]
+    [copyTextRaw, currentPalletId]
   );
 
-  // Enter / "Weiter" — versucht zur nächsten Palette zu wechseln.
-  // Wenn die aktuelle Palette nicht fertig ist → markiert ALLE ihre Artikel
-  // als "geladen" (Schnellabschluss), beim nächsten Druck springt weiter.
-  // Wenn ALLE Paletten fertig sind → ruft onFinish() auf (→ AbschlussScreen).
+  // Enter / "Weiter" — STRENGE Logik (kein Auto-Marking mehr!):
+  //   • Wenn aktuelle Palette NICHT fertig → blockiert (nichts passiert).
+  //     Der User MUSS jeden Artikel einzeln "Als geladen markieren".
+  //   • Wenn fertig und nicht letzte → springt zur nächsten Palette.
+  //   • Wenn letzte fertig → onFinish() → AbschlussScreen.
   const advance = useCallback(() => {
     if (!current) return;
-    if (!isCurrentDone) {
-      // Schnellabschluss: alle Artikel der aktuellen Palette markieren (inkl. Einzelne-SKU)
-      (current.allItems || current.pallet.items).forEach((it) => {
-        if (!loadedSet.has(it.fnsku)) onToggleLoaded(it.fnsku);
-      });
-      return;
-    }
-    // Letzte Palette und alles fertig → "Alle Paletten fertig" → Abschluss
+    if (!isCurrentDone) return;                              // ← strict block
     const isLast = palletIdx === screens.length - 1;
     if (isLast && allPalletsDone) {
       if (onFinish) onFinish();
       return;
     }
     setPalletIdx((i) => Math.min(screens.length - 1, i + 1));
-  }, [current, isCurrentDone, loadedSet, onToggleLoaded, screens.length, palletIdx, allPalletsDone, onFinish]);
+  }, [current, isCurrentDone, screens.length, palletIdx, allPalletsDone, onFinish]);
 
   const goPrev = useCallback(() => {
     setPalletIdx((i) => Math.max(0, i - 1));
@@ -5751,12 +6112,16 @@ function FokusModus({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   {fg.articles.map((row) => {
                     const it = row.item;
-                    const done = loadedSet.has(it.fnsku);
+                    // Per-Palette Schlüssel: derselbe FNSKU auf 2 Paletten = unabhängig
+                    const itemKey = `${current.palletId}::${it.fnsku}`;
+                    const done = loadedSet.has(itemKey);
                     const labeled = labeledSet?.has(it.fnsku);
-                    const isCopied = copiedSet.has(it.fnsku);
-                    const isUseCopied = it.useItem && copiedSet.has(`useItem:${it.useItem}`);
+                    const isCopied = copiedSet.has(itemKey);
+                    const isUseCopied = it.useItem && copiedSet.has(`useItem:${current.palletId}::${it.useItem}`);
                     const isReserve = reserveFnskus?.has(it.fnsku);
-                    const isRepeatedUse = it.useItem && repeatedUseItems?.has(it.useItem);
+                    const isRepeatedUse = repeatedUseItems?.has(it.fnsku);
+                    const lstStatus = itemHasLst(it);                       // 'mit' | 'ohne' | null
+                    const isEasy = isLeichtAbzuholen(it, repeatedUseItems);
                     const vol = articleVolumes.perItem.get(it.fnsku);
                     const volPct = articleVolumes.maxCm3 > 0 && vol?.matched
                       ? (vol.totalCm3 / articleVolumes.maxCm3) * 100
@@ -5838,7 +6203,7 @@ function FokusModus({
                           )}
                           {isRepeatedUse && (
                             <span
-                              title="Gleicher Zu-verwendender-Artikel kommt mehrfach vor"
+                              title="Gleicher Zu-verwendender-Artikel kommt später nochmal vor"
                               style={{
                                 background: '#0EA5E9',
                                 color: '#fff',
@@ -5851,6 +6216,59 @@ function FokusModus({
                               }}
                             >
                               ↺ Wiederholt
+                            </span>
+                          )}
+                          {isEasy && (
+                            <span
+                              title="Wenig Einheiten und kommt nirgends mehrfach vor — leicht aufzuhebener Artikel"
+                              style={{
+                                background: '#10B981',
+                                color: '#fff',
+                                padding: '4px 10px',
+                                borderRadius: 6,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                letterSpacing: 0.8,
+                                textTransform: 'uppercase',
+                              }}
+                            >
+                              ⚡ Leicht abzuholen
+                            </span>
+                          )}
+                          {lstStatus === 'mit' && (
+                            <span
+                              title="Mit SEPA-Lastschrift-Aufdruck"
+                              style={{
+                                background: '#1F2937',
+                                color: '#FBBF24',
+                                padding: '4px 10px',
+                                borderRadius: 6,
+                                fontSize: 10,
+                                fontWeight: 800,
+                                letterSpacing: 1,
+                                textTransform: 'uppercase',
+                                border: '1px solid #FBBF24',
+                              }}
+                            >
+                              ✓ mit LST
+                            </span>
+                          )}
+                          {lstStatus === 'ohne' && (
+                            <span
+                              title="Ohne LST-Aufdruck (unbedruckt / ohne Lastschrift)"
+                              style={{
+                                background: '#F3F4F6',
+                                color: '#6B7280',
+                                padding: '4px 10px',
+                                borderRadius: 6,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                letterSpacing: 0.8,
+                                textTransform: 'uppercase',
+                                border: '1px solid #D1D5DB',
+                              }}
+                            >
+                              ✕ ohne LST
                             </span>
                           )}
                           {labeled && (
@@ -6213,7 +6631,7 @@ function FokusModus({
                           }}
                         >
                           <button
-                            onClick={() => onToggleLoaded(it.fnsku)}
+                            onClick={() => onToggleLoaded(itemKey)}
                             style={{
                               background: done ? T.green : T.text,
                               color: '#fff',
@@ -6288,6 +6706,22 @@ function FokusModus({
                             <span style={{ fontSize: 16 }}>⬢</span>
                             <span style={{ fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase', fontSize: 10 }}>
                               Einzelne SKU
+                            </span>
+                            <span style={{ opacity: 0.7 }}>·</span>
+                            {/* FNSKU als hervorgehobenes Code-Chip — leicht erkennbar */}
+                            <span
+                              className="lp-mono"
+                              title="FNSKU"
+                              style={{
+                                background: 'rgba(255,255,255,0.18)',
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                fontWeight: 800,
+                                letterSpacing: 0.5,
+                                border: '1px solid rgba(255,255,255,0.3)',
+                              }}
+                            >
+                              {it.fnsku}
                             </span>
                             <span style={{ opacity: 0.7 }}>·</span>
                             <span className="lp-mono">
@@ -9923,10 +10357,13 @@ export default function LagerauftragParser({ onBack }) {
     [flatItems]
   );
 
-  // Loading progress
+  // Loading progress — keys sind palletId::fnsku, damit derselbe Artikel
+  // auf zwei Paletten unabhängig markiert wird.
   const loadingProgress = useMemo(() => {
     const total = flatItems.length;
-    const done = flatItems.filter((r) => loadedSet.has(r.item.fnsku)).length;
+    const done = flatItems.filter((r) =>
+      loadedSet.has(`${r.palletId}::${r.item.fnsku}`)
+    ).length;
     return { total, done, pct: total > 0 ? (done / total) * 100 : 0 };
   }, [flatItems, loadedSet]);
 
@@ -10321,6 +10758,18 @@ export default function LagerauftragParser({ onBack }) {
               </div>
             )}
           </div>
+
+          {/* FBA-Cockpit: prominent shipment header + Fokus-Start */}
+          {data && (
+            <FbaCockpit
+              meta={data.meta}
+              palletCount={sortedPallets.length}
+              flatItems={flatItems}
+              einzelneSkuCount={einzelneSkuItems.length}
+              onStartFokus={() => setFokusOpen(true)}
+              loadingPct={loadingProgress.pct}
+            />
+          )}
 
           {/* Workday timer + estimate (ultra-modern) */}
           {data && (
