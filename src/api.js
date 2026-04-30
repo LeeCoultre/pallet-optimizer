@@ -1,15 +1,17 @@
 /* API client for FastAPI backend.
- * Falls back to local JS packing if the backend is unreachable.
  *
  * Deployment:
- *   - In dev: BASE = http://localhost:8000
- *   - In prod: set VITE_API_URL=https://your-backend.example.com at build time
- *     (Cloudflare Pages env var, Vercel env var, etc.)
+ *   - Dev: BASE defaults to http://localhost:8000
+ *   - Prod (Railway, single service): build with VITE_API_URL="" so requests
+ *     go to the same origin and hit the FastAPI backend serving /api/*
+ *   - Split deploy: build with VITE_API_URL=https://your-backend.example.com
+ *
+ * `??` (not `||`) so an explicitly empty string is respected.
  */
 
-const BASE =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
-  'http://localhost:8000';
+const envUrl =
+  typeof import.meta !== 'undefined' ? import.meta.env?.VITE_API_URL : undefined;
+const BASE = envUrl ?? 'http://localhost:8000';
 
 function snakeToCamel(obj) {
   if (Array.isArray(obj)) return obj.map(snakeToCamel);

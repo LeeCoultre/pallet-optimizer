@@ -1,77 +1,62 @@
 # Deployment
 
-Зачем 2 платформы: Cloudflare Workers не поддерживает Python+OR-Tools.
-Решение: статика на Cloudflare, Python-бэкенд на Railway/Render.
+Проект разворачивается одним сервисом на **Railway**: тот же контейнер
+собирает Vite-фронтенд и поднимает FastAPI-бэкенд, который отдаёт и
+`/api/*`, и собранную статику из `dist/`. Один URL, без CORS-проблем.
 
-## 1. Backend → Railway.app (рекомендую)
+## Файлы деплоя
+
+- `Dockerfile` (корень) — multi-stage: Node 20 (build frontend) → Python 3.11 (runtime)
+- `.dockerignore` — исключает `node_modules`, `dist`, `.git`, кэш Python
+- `railway.json` — указывает Railway использовать корневой Dockerfile + healthcheck `/health`
+
+## Деплой на Railway (через GitHub)
+
+1. Залогинься на https://railway.app через GitHub.
+2. **New Project** → **Deploy from GitHub repo** → выбери репозиторий.
+3. Railway увидит `railway.json` и `Dockerfile` в корне и начнёт билд.
+   - Builder: `DOCKERFILE`
+   - Healthcheck: `GET /health` (вернёт `{"status":"ok"}`)
+4. После успешного деплоя: **Settings → Networking → Generate Domain** —
+   получишь публичный URL вида `https://<project>.up.railway.app`.
+5. Открывай URL — фронтенд загрузится, и его `fetch('/api/...')` пойдёт
+   в тот же контейнер.
+
+### Переменные окружения
+
+Ничего обязательного. Railway сам подставит `$PORT`. Если когда-нибудь
+понадобится разделить фронт и бэк — пересобрать фронт с
+`VITE_API_URL=https://<backend>.up.railway.app`.
+
+## Локальная проверка прод-сборки
 
 ```bash
-# 1. Зарегистрируйся на railway.app (через GitHub)
-# 2. New Project → Deploy from GitHub repo → выбираешь pallet-optimizer
-# 3. Настройки сервиса:
-#    Root Directory:  backend
-#    Start Command:   (auto-detect из Dockerfile)
-# 4. Дождись деплоя → откроется https://<твой-проект>.up.railway.app
-# 5. В Settings → Networking → "Generate Domain" чтобы получить публичный URL
+docker build -t pallet-optimizer .
+docker run --rm -p 8000:8000 -e PORT=8000 pallet-optimizer
+# открой http://localhost:8000
+# проверь: curl http://localhost:8000/health  → {"status":"ok"}
 ```
 
-Альтернативы: **Render.com** (есть бесплатный тариф), **Fly.io** (требует CLI).
-
-После деплоя проверь:
-```bash
-curl https://<твой-backend>.up.railway.app/healthz   # 200 OK
-```
-
-## 2. Frontend → Cloudflare Pages
+## Локальная разработка (без Docker)
 
 ```bash
-# Вариант A: через GitHub
-# 1. Cloudflare Dashboard → Pages → Connect to Git
-# 2. Выбираешь репо pallet-optimizer
-# 3. Build settings:
-#      Framework preset:  None / Vite
-#      Build command:     npm run build
-#      Output directory:  dist
-# 4. Environment variables:
-#      VITE_API_URL = https://<твой-backend>.up.railway.app
-# 5. Deploy
-
-# Вариант B: вручную через wrangler CLI
-npm install -g wrangler
-npm run build
-wrangler pages deploy dist --project-name pallet-optimizer
-```
-
-После деплоя получишь `https://pallet-optimizer.pages.dev`.
-
-## 3. Локальная проверка прод-сборки
-
-```bash
-# Frontend
-cd /path/to/pallet-optimizer
-VITE_API_URL=http://localhost:8000 npm run build
-npx serve dist -p 4173
-
-# Backend (в отдельном терминале)
+# Терминал 1 — backend
 cd backend
-docker build -t pallet-backend .
-docker run -p 8000:8000 pallet-backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+# (для dev-режима import в main.py при необходимости поменяй
+#  `from .routers` на `from routers`, либо запусти из корня:
+#   uvicorn backend.main:app --reload --port 8000)
+
+# Терминал 2 — frontend
+npm install
+npm run dev   # http://localhost:5176, ходит на http://localhost:8000
 ```
 
-## 4. Файлы для деплоя (уже подготовлены)
+## Эндпоинты
 
-- `backend/Dockerfile` — Docker для Railway/Render
-- `backend/.dockerignore` — exclude неважных файлов
-- `public/_redirects` — SPA fallback для Cloudflare Pages
-- `public/_headers` — security headers + cache для assets
-- `src/api.js` — читает `VITE_API_URL` из env
-
-## 5. Что не работает на чистом Cloudflare без backend
-
-- `/api/pack` — 3D-bin packing (использует CP-SAT)
-- `/api/single-layer` — single-layer optimization
-
-Эти эндпоинты доступны только если backend задеплоен.
-
-**Lagerauftrag страница** — полностью клиент-сайд (mammoth.js парсит .docx
-прямо в браузере), работает БЕЗ бэкенда.
+- `GET /health` — healthcheck для Railway
+- `POST /api/pack` — 3D bin packing (CP-SAT через OR-Tools)
+- `POST /api/single-layer` — single-layer optimization
+- `POST /api/import-xlsx` — парсинг XLSX-заказов
+- `GET /*` — отдача SPA (всё, что не `/api/*` и не `/health`)

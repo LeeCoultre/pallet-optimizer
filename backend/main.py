@@ -1,7 +1,7 @@
-import os
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from .routers import packing, xlsx_import
 
@@ -23,7 +23,19 @@ async def health():
     return {"status": "ok"}
 
 
-# Serve built frontend LAST (catches remaining paths with html=True)
-dist_dir = Path(__file__).parent.parent / "dist"
+# Serve built frontend if present (single-service deploy on Railway).
+# In dev (no dist/) the frontend runs on Vite at :5176 and just hits /api here.
+dist_dir = Path(__file__).resolve().parent.parent / "dist"
 if dist_dir.exists():
-    app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="static")
+    assets_dir = dist_dir / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    index_file = dist_dir / "index.html"
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        candidate = dist_dir / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index_file)
