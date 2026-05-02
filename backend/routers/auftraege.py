@@ -194,7 +194,25 @@ async def start_auftrag(
     me: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Atomic claim: succeeds only if status was 'queued'."""
+    """Atomic claim: succeeds only if status was 'queued' AND the caller
+    has no other in_progress Auftrag. One active task per user — without
+    this guard the frontend's currentSrc=.find(...) hides extras."""
+    busy = (
+        await db.execute(
+            select(Auftrag.id)
+            .where(
+                Auftrag.assigned_to_user_id == me.id,
+                Auftrag.status == AuftragStatus.in_progress,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if busy is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "You already have another Auftrag in progress — finish or cancel it first.",
+        )
+
     now = datetime.now(timezone.utc)
     result = await db.execute(
         update(Auftrag)

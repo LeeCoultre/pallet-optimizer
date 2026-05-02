@@ -154,7 +154,16 @@ export function useAppState() {
   const removeMut  = useMutation({ mutationFn: deleteAuftrag, onSuccess: invalidateAll });
   const reorderMut = useMutation({ mutationFn: apiReorder,    onSuccess: invalidateAll });
   const cancelMut  = useMutation({ mutationFn: cancelAuftrag, onSuccess: invalidateAll });
-  const startMut   = useMutation({ mutationFn: startAuftrag,  onSuccess: invalidateAll });
+  const startMut   = useMutation({
+    mutationFn: startAuftrag,
+    onSuccess:  invalidateAll,
+    onError:    (err) => {
+      /* Race: caller's UI thought current was empty but server says otherwise.
+         Surface the message; refetch will sync the real state in. */
+      if (err?.status === 409) alert(err.message);
+      invalidateAll();
+    },
+  });
   const completeMut = useMutation({
     mutationFn: completeAuftrag,
     onSuccess: async () => {
@@ -228,9 +237,18 @@ export function useAppState() {
   }, [queue, qc, reorderMut]);
 
   const startEntry = useCallback((entryId) => {
+    /* Local guard — backend has the same rule; this avoids a needless 409
+       round-trip when we already know we have an active Auftrag. */
+    if (current) {
+      alert(
+        'Du bearbeitest bereits einen Auftrag. ' +
+        'Schließe ihn ab oder breche ihn ab, bevor du einen neuen startest.'
+      );
+      return;
+    }
     const target = entryId || queue[0]?.id;
     if (target) startMut.mutate(target);
-  }, [queue, startMut]);
+  }, [current, queue, startMut]);
 
   const goToStep = useCallback((step) => {
     if (current?.id) progressMut.mutate({ id: current.id, payload: { step } });
