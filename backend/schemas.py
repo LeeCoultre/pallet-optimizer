@@ -11,12 +11,22 @@ Note: backend/models.py holds Pydantic DTOs for the pallet packer
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Generic, Optional, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.orm import Auftrag, AuftragStatus, User, UserRole, WorkflowStep
+
+T = TypeVar("T")
+
+
+class Paginated(BaseModel, Generic[T]):
+    """Generic page wrapper for list endpoints."""
+    items: list[T]
+    total: int
+    limit: int
+    offset: int
 
 
 class APIModel(BaseModel):
@@ -45,6 +55,58 @@ class HistoryPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ─── Admin schemas (Sprint 2.8 – 2.11) ───────────────────────────────
+
+class AdminUserDetail(APIModel):
+    id: UUID
+    clerk_id: Optional[str] = None
+    email: str
+    name: str
+    role: UserRole
+    created_at: datetime
+    last_login_at: Optional[datetime] = None
+    auftraege_completed: int = 0
+
+    @classmethod
+    def from_orm_row(cls, u: User, completed: int = 0) -> AdminUserDetail:
+        return cls(
+            id=u.id,
+            clerk_id=u.clerk_id,
+            email=u.email,
+            name=u.name,
+            role=u.role,
+            created_at=u.created_at,
+            last_login_at=u.last_login_at,
+            auftraege_completed=completed,
+        )
+
+
+class RoleUpdate(BaseModel):
+    role: UserRole
+
+
+class AuditLogEntry(APIModel):
+    id: UUID
+    action: str
+    created_at: datetime
+    user_id: UUID
+    user_name: Optional[str] = None
+    auftrag_id: Optional[UUID] = None
+    auftrag_file_name: Optional[str] = None  # joined; falls back to meta.file_name
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminStats(BaseModel):
+    total_auftraege: int
+    queued_now: int
+    in_progress_now: int
+    completed_total: int
+    completed_today: int
+    completed_this_week: int
+    avg_duration_sec: Optional[float] = None
+    top_users: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ─── Auftraege — request payloads ────────────────────────────────────
