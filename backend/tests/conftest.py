@@ -1,9 +1,13 @@
 """Shared pytest fixtures.
 
-Tests run against the live Railway PostgreSQL via the same engine the app
-uses. `clean_db` (autouse) TRUNCATEs every Marathon table before each test,
-so test order doesn't matter and there's no leakage. After the suite, run
-`.venv/bin/python -m backend.seed` to restore the 4 Lynne users in the DB.
+Tests run against the live Railway PostgreSQL via the same engine the
+app uses. `clean_db` (autouse) TRUNCATEs every Marathon table before
+each test, so order doesn't matter.
+
+Auth: instead of issuing real Clerk JWTs, we override get_current_user
+(and require_admin transitively) via FastAPI's dependency_overrides.
+The `as_user(user)` fixture flips the active identity inside a single
+test, so we can simulate "user A starts → user B tries to progress".
 """
 
 import pytest_asyncio
@@ -11,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 from backend.database import AsyncSessionLocal, engine
+from backend.deps import get_current_user
 from backend.main import app
 from backend.orm import User, UserRole
 
@@ -30,32 +35,17 @@ async def clean_db():
             "TRUNCATE audit_log, auftraege, users RESTART IDENTITY CASCADE"
         ))
     yield
-
-
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def restore_seed_after_suite():
-    """Reseed the 4 Lynne users once the whole suite finishes — otherwise the
-    final test's TRUNCATE leaves the dev DB empty and the running UI gets 401."""
-    yield
-    from backend.seed import USERS
-    from sqlalchemy.dialects.postgresql import insert
-    async with AsyncSessionLocal() as s:
-        for u in USERS:
-            await s.execute(
-                insert(User)
-                .values(email=u["email"], name=u["name"], role=u["role"])
-                .on_conflict_do_update(
-                    index_elements=["email"],
-                    set_={"name": u["name"], "role": u["role"]},
-                )
-            )
-        await s.commit()
+    # Drop any auth overrides set during the test.
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest_asyncio.fixture
 async def admin():
     async with AsyncSessionLocal() as s:
-        u = User(email="admin@test", name="TestAdmin", role=UserRole.admin)
+        u = User(
+            email="admin@test", name="TestAdmin", role=UserRole.admin,
+            clerk_id="user_test_admin",
+        )
         s.add(u)
         await s.commit()
         await s.refresh(u)
@@ -65,7 +55,10 @@ async def admin():
 @pytest_asyncio.fixture
 async def user():
     async with AsyncSessionLocal() as s:
-        u = User(email="user@test", name="TestUser", role=UserRole.user)
+        u = User(
+            email="user@test", name="TestUser", role=UserRole.user,
+            clerk_id="user_test_user1",
+        )
         s.add(u)
         await s.commit()
         await s.refresh(u)
@@ -75,11 +68,30 @@ async def user():
 @pytest_asyncio.fixture
 async def user2():
     async with AsyncSessionLocal() as s:
-        u = User(email="user2@test", name="TestUser2", role=UserRole.user)
+        u = User(
+            email="user2@test", name="TestUser2", role=UserRole.user,
+            clerk_id="user_test_user2",
+        )
         s.add(u)
         await s.commit()
         await s.refresh(u)
         return u
+
+
+@pytest_asyncio.fixture
+def as_user():
+    """Switch the authenticated identity for this test.
+
+    Usage:
+        async def test_x(client, admin, user, as_user):
+            as_user(admin)
+            await client.post(...)
+            as_user(user)
+            await client.patch(...)
+    """
+    def _set(u: User):
+        app.dependency_overrides[get_current_user] = lambda: u
+    return _set
 
 
 def make_payload(file_name="t.docx", fba="T-1", pallets=None):

@@ -1,87 +1,75 @@
-"""Authentication stub + authorization (admin-only, ownership)."""
+"""Auth — token presence, ownership guards, admin-only endpoints."""
 
 from .conftest import make_payload
 
 
-async def test_unknown_user_returns_401(client):
-    r = await client.get(
-        "/api/auftraege",
-        headers={"X-User-Id": "00000000-0000-0000-0000-000000000000"},
-    )
+async def test_no_auth_returns_401(client):
+    """No dependency override + no Bearer header → 401."""
+    r = await client.get("/api/auftraege")
     assert r.status_code == 401
 
 
-async def test_missing_header_returns_422(client):
-    r = await client.get("/api/auftraege")
-    assert r.status_code == 422  # FastAPI validation
-
-
 async def test_users_endpoint_open(client, admin, user):
-    """Picker dropdown needs no auth."""
+    """The picker dropdown source needs no auth."""
     r = await client.get("/api/users")
     assert r.status_code == 200
     names = sorted(u["name"] for u in r.json())
     assert names == ["TestAdmin", "TestUser"]
 
 
-async def test_me_returns_role(client, admin, user):
-    r = await client.get("/api/me", headers={"X-User-Id": str(admin.id)})
+async def test_me_returns_role(client, admin, user, as_user):
+    as_user(admin)
+    r = await client.get("/api/me")
     assert r.json()["role"] == "admin"
 
-    r = await client.get("/api/me", headers={"X-User-Id": str(user.id)})
+    as_user(user)
+    r = await client.get("/api/me")
     assert r.json()["role"] == "user"
 
 
-async def test_other_user_cannot_progress(client, admin, user):
+async def test_other_user_cannot_progress(client, admin, user, as_user):
     """Ownership guard on /progress."""
-    h_admin = {"X-User-Id": str(admin.id)}
-    r = await client.post("/api/auftraege", headers=h_admin, json=make_payload())
+    as_user(admin)
+    r = await client.post("/api/auftraege", json=make_payload())
     a_id = r.json()["id"]
-    await client.post(f"/api/auftraege/{a_id}/start", headers=h_admin)
+    await client.post(f"/api/auftraege/{a_id}/start")
 
+    as_user(user)
     r = await client.patch(
         f"/api/auftraege/{a_id}/progress",
-        headers={"X-User-Id": str(user.id)},
         json={"current_item_idx": 5},
     )
     assert r.status_code == 403
 
 
-async def test_other_user_cannot_cancel(client, admin, user):
-    h_admin = {"X-User-Id": str(admin.id)}
-    r = await client.post("/api/auftraege", headers=h_admin, json=make_payload())
+async def test_other_user_cannot_cancel(client, admin, user, as_user):
+    as_user(admin)
+    r = await client.post("/api/auftraege", json=make_payload())
     a_id = r.json()["id"]
-    await client.post(f"/api/auftraege/{a_id}/start", headers=h_admin)
+    await client.post(f"/api/auftraege/{a_id}/start")
 
-    r = await client.post(
-        f"/api/auftraege/{a_id}/cancel",
-        headers={"X-User-Id": str(user.id)},
-    )
+    as_user(user)
+    r = await client.post(f"/api/auftraege/{a_id}/cancel")
     assert r.status_code == 403
 
 
-async def _create_completed(client, owner):
-    h = {"X-User-Id": str(owner.id)}
-    r = await client.post("/api/auftraege", headers=h, json=make_payload())
+async def _create_completed(client, owner, as_user):
+    as_user(owner)
+    r = await client.post("/api/auftraege", json=make_payload())
     a_id = r.json()["id"]
-    await client.post(f"/api/auftraege/{a_id}/start", headers=h)
-    await client.post(f"/api/auftraege/{a_id}/complete", headers=h)
+    await client.post(f"/api/auftraege/{a_id}/start")
+    await client.post(f"/api/auftraege/{a_id}/complete")
     return a_id
 
 
-async def test_admin_can_delete_history(client, admin):
-    a_id = await _create_completed(client, admin)
-    r = await client.delete(
-        f"/api/history/{a_id}",
-        headers={"X-User-Id": str(admin.id)},
-    )
+async def test_admin_can_delete_history(client, admin, as_user):
+    a_id = await _create_completed(client, admin, as_user)
+    r = await client.delete(f"/api/history/{a_id}")
     assert r.status_code == 204
 
 
-async def test_user_cannot_delete_history(client, admin, user):
-    a_id = await _create_completed(client, admin)
-    r = await client.delete(
-        f"/api/history/{a_id}",
-        headers={"X-User-Id": str(user.id)},
-    )
+async def test_user_cannot_delete_history(client, admin, user, as_user):
+    a_id = await _create_completed(client, admin, as_user)
+    as_user(user)
+    r = await client.delete(f"/api/history/{a_id}")
     assert r.status_code == 403
