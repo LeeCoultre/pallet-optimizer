@@ -3,6 +3,10 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer,
+  Tooltip, XAxis, YAxis,
+} from 'recharts';
 import { useMe } from '../hooks/useMe.js';
 import {
   adminListAuftraege,
@@ -21,6 +25,8 @@ const TABS = [
   { id: 'audit',     label: 'Audit-Log'  },
   { id: 'kpi',       label: 'KPIs'       },
 ];
+
+const PAGE_SIZE = 25;
 
 export default function AdminScreen() {
   const meQ = useMe();
@@ -67,17 +73,35 @@ export default function AdminScreen() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   TAB: ALL AUFTRAEGE  (status filter + file_name search)
+   TAB: ALL AUFTRAEGE  (filters + pagination + sortable headers)
    ════════════════════════════════════════════════════════════════════════ */
 
 function AuftraegeTab() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortDir, setSortDir] = useState('desc');
+
+  const onSort = (key) => {
+    if (sortBy === key) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSortBy(key);
+      setSortDir('desc');
+    }
+    setPage(0);
+  };
+  const resetPageThen = (setter) => (v) => { setter(v); setPage(0); };
 
   const q = useQuery({
-    queryKey: ['admin', 'auftraege', statusFilter, search],
-    queryFn: () => adminListAuftraege({ status: statusFilter, search, limit: 100 }),
+    queryKey: ['admin', 'auftraege', statusFilter, search, sortBy, sortDir, page],
+    queryFn: () => adminListAuftraege({
+      status: statusFilter, search, sortBy, sortDir,
+      limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+    }),
     refetchInterval: 5000,
+    placeholderData: (prev) => prev,  // smoother pagination — keep old data while fetching
   });
 
   return (
@@ -86,7 +110,7 @@ function AuftraegeTab() {
         <Select
           label="Status"
           value={statusFilter}
-          onChange={setStatusFilter}
+          onChange={resetPageThen(setStatusFilter)}
           options={[
             { value: '',            label: 'Alle' },
             { value: 'queued',      label: 'In Warteschlange' },
@@ -98,7 +122,7 @@ function AuftraegeTab() {
         <Input
           label="Suche (Datei)"
           value={search}
-          onChange={setSearch}
+          onChange={resetPageThen(setSearch)}
           placeholder="z.B. FBA15…"
         />
         <Total count={q.data?.total} loading={q.isLoading} />
@@ -107,17 +131,28 @@ function AuftraegeTab() {
       <DataTable
         columns={[
           { key: 'fba_code',     label: 'FBA',       w: 140, render: r => r.fbaCode || '—', mono: true },
-          { key: 'file_name',    label: 'Datei',     w: 280, render: r => r.fileName },
-          { key: 'status',       label: 'Status',    w: 130, render: r => <StatusBadge status={r.status} /> },
+          { key: 'file_name',    label: 'Datei',     w: 280, render: r => r.fileName, sortable: true },
+          { key: 'status',       label: 'Status',    w: 130, render: r => <StatusBadge status={r.status} />, sortable: true },
           { key: 'pallets',      label: 'Pal.',      w: 60,  render: r => r.palletCount, mono: true, align: 'right' },
           { key: 'articles',     label: 'Art.',      w: 60,  render: r => r.articleCount, mono: true, align: 'right' },
           { key: 'assigned',     label: 'Bearbeiter', w: 130, render: r => r.assignedToUserName || '—' },
-          { key: 'duration',     label: 'Dauer',     w: 80,  render: r => r.durationSec != null ? formatDuration(r.durationSec) : '—', align: 'right' },
-          { key: 'finished',     label: 'Abgeschl.', w: 140, render: r => r.finishedAt ? formatDateTime(r.finishedAt) : '—' },
+          { key: 'duration_sec', label: 'Dauer',     w: 80,  render: r => r.durationSec != null ? formatDuration(r.durationSec) : '—', align: 'right', sortable: true },
+          { key: 'finished_at',  label: 'Abgeschl.', w: 140, render: r => r.finishedAt ? formatDateTime(r.finishedAt) : '—', sortable: true },
+          { key: 'created_at',   label: 'Erstellt',  w: 140, render: r => formatDateTime(r.createdAt), sortable: true },
         ]}
         items={q.data?.items}
         loading={q.isLoading}
         empty="Keine Aufträge gefunden."
+        sortBy={sortBy}
+        sortDir={sortDir}
+        onSort={onSort}
+      />
+
+      <Pagination
+        page={page}
+        total={q.data?.total ?? 0}
+        limit={PAGE_SIZE}
+        onPage={setPage}
       />
     </div>
   );
@@ -177,16 +212,22 @@ function UsersTab() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   TAB: AUDIT LOG
+   TAB: AUDIT LOG  (action filter + pagination)
    ════════════════════════════════════════════════════════════════════════ */
 
 function AuditTab() {
   const [actionFilter, setActionFilter] = useState('');
+  const [page, setPage] = useState(0);
 
   const q = useQuery({
-    queryKey: ['admin', 'audit', actionFilter],
-    queryFn: () => adminListAudit({ action: actionFilter, limit: 200 }),
+    queryKey: ['admin', 'audit', actionFilter, page],
+    queryFn: () => adminListAudit({
+      action: actionFilter,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+    }),
     refetchInterval: 5000,
+    placeholderData: (prev) => prev,
   });
 
   return (
@@ -195,7 +236,7 @@ function AuditTab() {
         <Select
           label="Aktion"
           value={actionFilter}
-          onChange={setActionFilter}
+          onChange={(v) => { setActionFilter(v); setPage(0); }}
           options={[
             { value: '',                 label: 'Alle' },
             { value: 'upload',           label: 'Upload' },
@@ -222,6 +263,13 @@ function AuditTab() {
         loading={q.isLoading}
         empty="Keine Einträge."
       />
+
+      <Pagination
+        page={page}
+        total={q.data?.total ?? 0}
+        limit={PAGE_SIZE}
+        onPage={setPage}
+      />
     </div>
   );
 }
@@ -238,7 +286,7 @@ function MetaCell({ meta }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   TAB: KPI
+   TAB: KPI  (cards + 7-day bar chart + top-users horizontal bars)
    ════════════════════════════════════════════════════════════════════════ */
 
 function KpiTab() {
@@ -254,9 +302,9 @@ function KpiTab() {
   const s = q.data;
   return (
     <div>
-      {/* Top row: live status */}
+      {/* Live status */}
       <SectionHeader title="Aktuell" sub="Was gerade läuft." />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div style={kpiGrid}>
         <Kpi label="In Warteschlange" value={s.queuedNow}      sub="zu erledigen" />
         <Kpi label="In Bearbeitung"   value={s.inProgressNow}  sub="aktiv"        tone="warn" />
         <Kpi label="Abgeschlossen total" value={s.completedTotal} sub="alle Zeit" tone="success" />
@@ -264,7 +312,7 @@ function KpiTab() {
 
       {/* Throughput */}
       <SectionHeader title="Durchsatz" sub="Letzte 7 Tage." />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
+      <div style={kpiGrid}>
         <Kpi label="Heute"            value={s.completedToday}    sub="abgeschlossen" />
         <Kpi label="Diese Woche"      value={s.completedThisWeek} sub="abgeschlossen" />
         <Kpi
@@ -274,23 +322,96 @@ function KpiTab() {
         />
       </div>
 
+      {/* 7-day chart */}
+      <SectionHeader title="Verlauf" sub="Abgeschlossene Aufträge pro Tag." />
+      <Card style={{ padding: 20, marginBottom: 24 }}>
+        <DailyChart data={s.completedPerDay} />
+      </Card>
+
       {/* Top users */}
       <SectionHeader title="Top-Bearbeiter" sub="Nach Anzahl abgeschlossener Aufträge." />
-      <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <DataTable
-          columns={[
-            { key: 'rank', label: '#',     w: 40,  render: (_, i) => i + 1, mono: true, align: 'right' },
-            { key: 'name', label: 'Name',  w: 200, render: r => r.name },
-            { key: 'count', label: 'Aufträge', w: 100, render: r => r.count, mono: true, align: 'right' },
-            { key: 'total', label: 'Gesamtzeit', w: 120, render: r => formatDuration(r.totalSeconds), align: 'right' },
-            { key: 'avg', label: 'Ø Zeit', w: 100, render: r => r.count > 0 ? formatDuration(Math.round(r.totalSeconds / r.count)) : '—', align: 'right' },
-          ]}
-          items={s.topUsers}
-          loading={false}
-          empty="Noch keine abgeschlossenen Aufträge."
-          flat
-        />
+      <Card style={{ padding: 20 }}>
+        <TopUsersChart users={s.topUsers} />
       </Card>
+    </div>
+  );
+}
+
+function DailyChart({ data }) {
+  if (!data || data.length === 0) {
+    return <PadCenter>Keine Daten.</PadCenter>;
+  }
+  const formatted = data.map((d) => ({
+    ...d,
+    label: new Date(d.date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }),
+  }));
+  return (
+    <div style={{ width: '100%', height: 220 }}>
+      <ResponsiveContainer>
+        <BarChart data={formatted} margin={{ top: 4, right: 12, bottom: 4, left: -16 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={T.border.subtle} />
+          <XAxis dataKey="label" stroke={T.text.subtle} tick={{ fontSize: 11, fontFamily: T.font.ui }} tickLine={false} />
+          <YAxis stroke={T.text.subtle} tick={{ fontSize: 11, fontFamily: T.font.ui }} tickLine={false} allowDecimals={false} />
+          <Tooltip
+            cursor={{ fill: T.bg.surface3 }}
+            contentStyle={{
+              background: T.bg.surface,
+              border: `1px solid ${T.border.primary}`,
+              borderRadius: T.radius.md,
+              fontFamily: T.font.ui,
+              fontSize: 12,
+            }}
+          />
+          <Bar dataKey="count" fill={T.accent.main} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function TopUsersChart({ users }) {
+  if (!users || users.length === 0) {
+    return <PadCenter>Noch keine abgeschlossenen Aufträge.</PadCenter>;
+  }
+  // Show as horizontal bars + sidecar with avg time per user
+  return (
+    <div style={{ width: '100%', height: Math.max(180, users.length * 48) }}>
+      <ResponsiveContainer>
+        <BarChart
+          data={users.map((u) => ({
+            ...u,
+            avg: u.count > 0 ? Math.round(u.totalSeconds / u.count) : 0,
+          }))}
+          layout="vertical"
+          margin={{ top: 4, right: 24, bottom: 4, left: 16 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke={T.border.subtle} horizontal={false} />
+          <XAxis type="number" stroke={T.text.subtle} tick={{ fontSize: 11, fontFamily: T.font.ui }} tickLine={false} allowDecimals={false} />
+          <YAxis type="category" dataKey="name" stroke={T.text.subtle} tick={{ fontSize: 12, fontFamily: T.font.ui }} tickLine={false} width={120} />
+          <Tooltip
+            cursor={{ fill: T.bg.surface3 }}
+            contentStyle={{
+              background: T.bg.surface,
+              border: `1px solid ${T.border.primary}`,
+              borderRadius: T.radius.md,
+              fontFamily: T.font.ui,
+              fontSize: 12,
+            }}
+            formatter={(value, name, item) => {
+              if (name === 'count') {
+                const avg = item.payload.avg;
+                return [`${value} (Ø ${formatDuration(avg)})`, 'Aufträge'];
+              }
+              return [value, name];
+            }}
+          />
+          <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+            {users.map((_, i) => (
+              <Cell key={i} fill={[T.accent.main, T.status.success.main, T.status.warn.main, T.category.HEIPA.color, T.category.VEIT.color][i % 5]} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -400,7 +521,29 @@ function Total({ count, loading }) {
   );
 }
 
-function DataTable({ columns, items, loading, empty, flat }) {
+function Pagination({ page, total, limit, onPage }) {
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  if (total <= limit) return null;
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: 8,
+      padding: '14px 4px 4px',
+    }}>
+      <span style={{ fontSize: 12, color: T.text.subtle, fontFamily: T.font.ui }}>
+        Seite <strong style={{ color: T.text.primary, fontVariantNumeric: 'tabular-nums' }}>
+          {page + 1}
+        </strong> / {pageCount} ({total} insgesamt)
+      </span>
+      <button onClick={() => onPage(page - 1)} disabled={page === 0} style={pageBtn}>‹</button>
+      <button onClick={() => onPage(page + 1)} disabled={page >= pageCount - 1} style={pageBtn}>›</button>
+    </div>
+  );
+}
+
+function DataTable({ columns, items, loading, empty, flat, sortBy, sortDir, onSort }) {
   if (loading && !items) return <PadCenter>Lade…</PadCenter>;
   if (!items || items.length === 0) {
     return <PadCenter>{empty}</PadCenter>;
@@ -415,26 +558,38 @@ function DataTable({ columns, items, loading, empty, flat }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: T.font.ui }}>
         <thead>
           <tr>
-            {columns.map((c) => (
-              <th
-                key={c.key}
-                style={{
-                  textAlign: c.align || 'left',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: T.text.subtle,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.04em',
-                  padding: '12px 14px',
-                  borderBottom: `1px solid ${T.border.primary}`,
-                  width: c.w,
-                  whiteSpace: 'nowrap',
-                  background: T.bg.surface2,
-                }}
-              >
-                {c.label}
-              </th>
-            ))}
+            {columns.map((c) => {
+              const sortable = c.sortable && onSort;
+              const isSorted = sortable && sortBy === c.key;
+              return (
+                <th
+                  key={c.key}
+                  onClick={sortable ? () => onSort(c.key) : undefined}
+                  style={{
+                    textAlign: c.align || 'left',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: isSorted ? T.text.primary : T.text.subtle,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    padding: '12px 14px',
+                    borderBottom: `1px solid ${T.border.primary}`,
+                    width: c.w,
+                    whiteSpace: 'nowrap',
+                    background: T.bg.surface2,
+                    cursor: sortable ? 'pointer' : 'default',
+                    userSelect: 'none',
+                  }}
+                >
+                  {c.label}
+                  {isSorted && (
+                    <span style={{ marginLeft: 4, color: T.accent.main }}>
+                      {sortDir === 'desc' ? '↓' : '↑'}
+                    </span>
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -574,4 +729,25 @@ const smallBtn = {
   fontSize: 12,
   fontFamily: T.font.ui,
   color: T.text.primary,
+};
+
+const pageBtn = {
+  width: 28,
+  height: 28,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: T.bg.surface,
+  border: `1px solid ${T.border.strong}`,
+  borderRadius: T.radius.sm,
+  cursor: 'pointer',
+  fontSize: 14,
+  color: T.text.primary,
+};
+
+const kpiGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, 1fr)',
+  gap: 12,
+  marginBottom: 24,
 };

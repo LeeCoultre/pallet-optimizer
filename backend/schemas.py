@@ -107,6 +107,8 @@ class AdminStats(BaseModel):
     completed_this_week: int
     avg_duration_sec: Optional[float] = None
     top_users: list[dict[str, Any]] = Field(default_factory=list)
+    # 7-day rolling: [{date: 'YYYY-MM-DD', count: int}, ...] (oldest first)
+    completed_per_day: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ─── Auftraege — request payloads ────────────────────────────────────

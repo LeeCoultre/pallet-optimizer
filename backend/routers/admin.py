@@ -66,11 +66,23 @@ async def admin_ping(admin: User = Depends(require_admin)):
 
 # ─── 2.8 — All Auftraege ─────────────────────────────────────────────
 
+# Whitelist sortable columns — never let raw user input touch ORDER BY.
+_SORTABLE = {
+    "created_at":   Auftrag.created_at,
+    "file_name":    Auftrag.file_name,
+    "status":       Auftrag.status,
+    "finished_at":  Auftrag.finished_at,
+    "duration_sec": Auftrag.duration_sec,
+}
+
+
 @router.get("/auftraege", response_model=Paginated[AuftragSummary])
 async def admin_list_auftraege(
     status_: Optional[AuftragStatus] = Query(None, alias="status"),
     assigned_to: Optional[UUID] = Query(None),
     search: Optional[str] = Query(None, description="case-insensitive match on file_name"),
+    sort_by: str = Query("created_at"),
+    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -83,14 +95,17 @@ async def admin_list_auftraege(
     if search:
         base = base.where(Auftrag.file_name.ilike(f"%{search}%"))
 
+    sort_col = _SORTABLE.get(sort_by, Auftrag.created_at)
+    order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+    # Tie-break by id so paginated results are stable across requests.
+    order_clause = (order, Auftrag.id.desc())
+
     total = (
         await db.execute(select(func.count()).select_from(base.subquery()))
     ).scalar_one()
     rows = (
         await db.execute(
-            base.order_by(Auftrag.created_at.desc())
-            .limit(limit)
-            .offset(offset)
+            base.order_by(*order_clause).limit(limit).offset(offset)
         )
     ).scalars().all()
 
@@ -284,6 +299,28 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         for r in top_rows
     ]
 
+    # 7-day rolling: count completions grouped by day; fill zero-days
+    # so the chart shows a continuous 7-bar series.
+    seven_start = today_start - timedelta(days=6)
+    daily_rows = (
+        await db.execute(
+            select(
+                func.date_trunc("day", Auftrag.finished_at).label("day"),
+                func.count(Auftrag.id),
+            )
+            .where(
+                Auftrag.status == AuftragStatus.completed,
+                Auftrag.finished_at >= seven_start,
+            )
+            .group_by("day")
+        )
+    ).all()
+    by_day = {row[0].date(): int(row[1]) for row in daily_rows if row[0]}
+    completed_per_day = []
+    for i in range(7):
+        d = (seven_start + timedelta(days=i)).date()
+        completed_per_day.append({"date": d.isoformat(), "count": by_day.get(d, 0)})
+
     return AdminStats(
         total_auftraege=total,
         queued_now=queued,
@@ -293,4 +330,5 @@ async def admin_stats(db: AsyncSession = Depends(get_db)):
         completed_this_week=completed_week,
         avg_duration_sec=float(avg_duration) if avg_duration is not None else None,
         top_users=top_users,
+        completed_per_day=completed_per_day,
     )

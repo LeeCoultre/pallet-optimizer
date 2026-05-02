@@ -42,18 +42,25 @@ async def clean_db():
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def wipe_test_users_after_suite():
     """We share the dev/prod Postgres with the running app, so the suite
-    ends by pruning any *@test rows that might leak after the final test
-    (clean_db only runs BEFORE each test). Audit rows reference users
-    via NOT NULL FK, so cascade those first."""
+    ends by pruning any *@test rows that might leak after the final
+    test (clean_db only runs BEFORE each test).
+
+    Cascade order matches FK directions:
+      audit_log.user_id  → users.id  (NOT NULL, no ON DELETE)
+      auftraege.created_by_user_id   → users.id (nullable)
+      auftraege.assigned_to_user_id  → users.id (nullable)
+    Real Clerk-provisioned users are untouched — their email is never *@test.
+    """
     yield
     async with engine.begin() as conn:
+        sub = "(SELECT id FROM users WHERE email LIKE '%@test')"
+        await conn.execute(text(f"DELETE FROM audit_log WHERE user_id IN {sub}"))
         await conn.execute(text(
-            "DELETE FROM audit_log WHERE user_id IN "
-            "(SELECT id FROM users WHERE email LIKE '%@test')"
+            f"DELETE FROM auftraege "
+            f"WHERE created_by_user_id IN {sub} "
+            f"OR assigned_to_user_id IN {sub}"
         ))
-        await conn.execute(text(
-            "DELETE FROM users WHERE email LIKE '%@test'"
-        ))
+        await conn.execute(text("DELETE FROM users WHERE email LIKE '%@test'"))
 
 
 @pytest_asyncio.fixture

@@ -122,8 +122,15 @@ function qs(params) {
   return s ? `?${s}` : '';
 }
 
-export const adminListAuftraege = (params = {}) =>
-  call('GET', `/api/admin/auftraege${qs(params)}`);
+/* params: { status, assignedTo, search, sortBy, sortDir, limit, offset } */
+export const adminListAuftraege = (params = {}) => {
+  // camel→snake for query string keys (call() only handles request bodies)
+  const snake = {};
+  for (const [k, v] of Object.entries(params)) {
+    snake[k.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())] = v;
+  }
+  return call('GET', `/api/admin/auftraege${qs(snake)}`);
+};
 
 export const adminListUsers = () =>
   call('GET', '/api/admin/users');
