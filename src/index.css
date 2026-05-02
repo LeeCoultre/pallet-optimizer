@@ -30,6 +30,9 @@
   --font-display: 'Montserrat', system-ui, sans-serif;
   --font-ui:      'Inter', system-ui, -apple-system, sans-serif;
   --font-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+
+  /* Updated dynamically by Sidebar when the user toggles collapse. */
+  --sidebar-width: 224px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

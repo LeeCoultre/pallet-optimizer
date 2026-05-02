@@ -408,7 +408,7 @@ function StickyBar({ queueRemaining, onSaveAndNext }) {
       WebkitBackdropFilter: 'blur(14px)',
       borderTop: `1px solid ${T.border.primary}`,
       display: 'flex',
-      marginLeft: SIDEBAR_WIDTH,
+      marginLeft: 'var(--sidebar-width)',
     }}>
       <div style={{
         display: 'flex',
