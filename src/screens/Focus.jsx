@@ -43,6 +43,12 @@ export default function FocusScreen() {
   const [copiedCode, setCopiedCode] = useState(null);   // persistent until article changes
   const [flashUse,   setFlashUse]   = useState(null);   // short pulse on use-item copy
 
+  /* Track which items on the CURRENT pallet have had their Artikel-Code
+     copied during this session, so the flow strip can flag them green.
+     Reset whenever the pallet changes. */
+  const [copiedItemIdxs, setCopiedItemIdxs] = useState(() => new Set());
+  useEffect(() => { setCopiedItemIdxs(new Set()); }, [palletIdx]);
+
   const totalArticles = rawPallets.reduce((s, p) => s + p.items.length, 0);
   const completedCount = Object.keys(completedKeysObj).length;
   const overallPct = totalArticles > 0 ? completedCount / totalArticles : 0;
@@ -124,6 +130,11 @@ export default function FocusScreen() {
     if (!text) return;
     copyToClipboard(text);
     setCopiedCode(text);
+    setCopiedItemIdxs((prev) => {
+      const next = new Set(prev);
+      next.add(itemIdx);
+      return next;
+    });
   };
 
   const copyUseItem = (text) => {
@@ -162,6 +173,15 @@ export default function FocusScreen() {
       />
 
       <PalletFlow pallets={rawPallets} currentIdx={palletIdx} />
+
+      <ItemFlow
+        items={rawPallet.items}
+        palletId={pallet.id}
+        currentIdx={itemIdx}
+        completedKeys={completedKeysObj}
+        copiedItemIdxs={copiedItemIdxs}
+        onPick={(i) => setCurrentItemIdx(i)}
+      />
 
       <main style={{
         position: 'relative',
@@ -385,6 +405,94 @@ function PalletFlow({ pallets, currentIdx }) {
         );
       })}
     </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ITEM FLOW — sticky strip listing every article of the current pallet,
+   coloured by copy state so the operator never loses context. Click to
+   jump to that item. */
+function ItemFlow({ items, palletId, currentIdx, completedKeys, copiedItemIdxs, onPick }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div style={{
+      position: 'sticky',
+      top: 99,                  /* SlimTop (55) + PalletFlow row (~44) */
+      zIndex: 8,
+      background: T.bg.surface,
+      borderBottom: `1px solid ${T.border.primary}`,
+      padding: '8px 32px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      flexWrap: 'wrap',
+    }}>
+      <span style={{
+        fontSize: 11,
+        color: T.text.subtle,
+        fontWeight: 500,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        marginRight: 4,
+      }}>
+        Artikel
+      </span>
+      {items.map((it, i) => {
+        const code = it.fnsku || it.sku;
+        const completedKey = `${palletId}|${i}|${code}`;
+        const isCompleted = !!completedKeys?.[completedKey];
+        const isCopied = copiedItemIdxs?.has?.(i);
+        const isActive = i === currentIdx;
+        return (
+          <ItemChip
+            key={i}
+            idx={i + 1}
+            isActive={isActive}
+            isDone={isCompleted || isCopied}
+            onClick={() => onPick(i)}
+            title={
+              `${it.title || code}\n` +
+              `${(isCompleted || isCopied) ? '✓ Code kopiert' : '✗ noch nicht kopiert'}` +
+              `${isActive ? ' · aktiv' : ''}`
+            }
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function ItemChip({ idx, isActive, isDone, onClick, title }) {
+  const c = isDone
+    ? { bg: T.status.success.bg,  border: T.status.success.border, text: T.status.success.text }
+    : { bg: T.status.danger.bg,   border: T.status.danger.border,  text: T.status.danger.text  };
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        minWidth: 30,
+        height: 26,
+        padding: '0 8px',
+        background: c.bg,
+        border: `${isActive ? 2 : 1}px solid ${isActive ? T.accent.main : c.border}`,
+        borderRadius: T.radius.sm,
+        color: c.text,
+        fontFamily: T.font.mono,
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: 'pointer',
+        fontVariantNumeric: 'tabular-nums',
+        transition: 'transform 120ms, box-shadow 120ms',
+        transform: isActive ? 'translateY(-1px)' : 'none',
+        boxShadow: isActive ? `0 2px 8px ${T.accent.main}40` : 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {idx}
+    </button>
   );
 }
 
