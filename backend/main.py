@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from .routers import packing, xlsx_import
+from .routers import auftraege, history, packing, users, xlsx_import
 
 app = FastAPI(title="Pallet Loading Optimizer", version="1.0.0")
 
@@ -16,6 +16,9 @@ app.add_middleware(
 
 app.include_router(packing.router, prefix="/api", tags=["packing"])
 app.include_router(xlsx_import.router, prefix="/api", tags=["import"])
+app.include_router(auftraege.router)  # /api/auftraege
+app.include_router(users.router)      # /api/users, /api/me
+app.include_router(history.router)    # /api/history
 
 
 @app.get("/health")
