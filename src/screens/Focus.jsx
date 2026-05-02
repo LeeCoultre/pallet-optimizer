@@ -43,11 +43,11 @@ export default function FocusScreen() {
   const [copiedCode, setCopiedCode] = useState(null);   // persistent until article changes
   const [flashUse,   setFlashUse]   = useState(null);   // short pulse on use-item copy
 
-  /* Track which items on the CURRENT pallet have had their Artikel-Code
-     copied during this session, so the flow strip can flag them green.
-     Reset whenever the pallet changes. */
-  const [copiedItemIdxs, setCopiedItemIdxs] = useState(() => new Set());
-  useEffect(() => { setCopiedItemIdxs(new Set()); }, [palletIdx]);
+  /* Track which items have had their Artikel-Code copied during this
+     session — keyed by `${palletIdx}|${itemIdx}` so going back to a
+     previous pallet preserves the flags. Only an actual copy click
+     turns a chip green; completion ("Artikel abschließen") doesn't. */
+  const [copiedKeys, setCopiedKeys] = useState(() => new Set());
 
   const totalArticles = rawPallets.reduce((s, p) => s + p.items.length, 0);
   const completedCount = Object.keys(completedKeysObj).length;
@@ -130,9 +130,9 @@ export default function FocusScreen() {
     if (!text) return;
     copyToClipboard(text);
     setCopiedCode(text);
-    setCopiedItemIdxs((prev) => {
+    setCopiedKeys((prev) => {
       const next = new Set(prev);
-      next.add(itemIdx);
+      next.add(`${palletIdx}|${itemIdx}`);
       return next;
     });
   };
@@ -177,9 +177,9 @@ export default function FocusScreen() {
       <ItemFlow
         items={rawPallet.items}
         palletId={pallet.id}
+        palletIdx={palletIdx}
         currentIdx={itemIdx}
-        completedKeys={completedKeysObj}
-        copiedItemIdxs={copiedItemIdxs}
+        copiedKeys={copiedKeys}
         onPick={(i) => setCurrentItemIdx(i)}
       />
 
@@ -409,10 +409,12 @@ function PalletFlow({ pallets, currentIdx }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   ITEM FLOW — sticky strip listing every article of the current pallet,
-   coloured by copy state so the operator never loses context. Click to
-   jump to that item. */
-function ItemFlow({ items, palletId, currentIdx, completedKeys, copiedItemIdxs, onPick }) {
+   ITEM FLOW — sticky strip listing every article of the current pallet.
+   Green = the operator clicked "kopieren" on the Artikel-Code.
+   Red   = code not copied yet (default state for every item).
+   Completion via "Artikel abschließen" alone does NOT turn it green —
+   only the explicit copy action does. Click a chip to jump to it. */
+function ItemFlow({ items, palletIdx, currentIdx, copiedKeys, onPick }) {
   if (!items || items.length === 0) return null;
   return (
     <div style={{
@@ -438,21 +440,18 @@ function ItemFlow({ items, palletId, currentIdx, completedKeys, copiedItemIdxs, 
         Artikel
       </span>
       {items.map((it, i) => {
-        const code = it.fnsku || it.sku;
-        const completedKey = `${palletId}|${i}|${code}`;
-        const isCompleted = !!completedKeys?.[completedKey];
-        const isCopied = copiedItemIdxs?.has?.(i);
+        const isCopied = copiedKeys?.has?.(`${palletIdx}|${i}`);
         const isActive = i === currentIdx;
         return (
           <ItemChip
             key={i}
             idx={i + 1}
             isActive={isActive}
-            isDone={isCompleted || isCopied}
+            isDone={isCopied}
             onClick={() => onPick(i)}
             title={
-              `${it.title || code}\n` +
-              `${(isCompleted || isCopied) ? '✓ Code kopiert' : '✗ noch nicht kopiert'}` +
+              `${it.title || it.fnsku || it.sku || ''}\n` +
+              `${isCopied ? '✓ Code kopiert' : '✗ noch nicht kopiert'}` +
               `${isActive ? ' · aktiv' : ''}`
             }
           />
