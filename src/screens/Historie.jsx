@@ -2,7 +2,9 @@
    Design System v3 (siehe DESIGN.md). */
 
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
+import { getAuftrag } from '../marathonApi.js';
 import {
   Page, Topbar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
@@ -243,150 +245,230 @@ function Row({ entry, index, isLast, isOpen, onToggle, onRemove }) {
       </div>
 
       {isOpen && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            padding: '14px 20px 20px 60px',
-            background: T.bg.surface2,
-            borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
-            cursor: 'default',
-          }}
-        >
-          {/* Pallet timings */}
-          <div style={{
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: T.text.subtle,
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-            marginBottom: 10,
-          }}>
-            Palettenzeiten ({Object.keys(entry.palletTimings || {}).length})
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 20 }}>
-            {Object.entries(entry.palletTimings || {}).map(([id, t]) => {
-              const dur = t.startedAt && t.finishedAt
-                ? Math.round((t.finishedAt - t.startedAt) / 1000) : null;
-              return (
-                <span key={id} style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '4px 10px',
-                  background: T.bg.surface,
-                  border: `1px solid ${T.border.primary}`,
-                  borderRadius: T.radius.md,
-                  fontFamily: T.font.mono,
-                  fontSize: 11.5,
-                  color: T.text.secondary,
-                }}>
-                  <span style={{ color: T.text.primary, fontWeight: 500 }}>{id}</span>
-                  <span style={{ color: T.text.faint }}>·</span>
-                  <span style={{ color: T.accent.main, fontWeight: 500 }}>
-                    {dur != null ? formatMmSs(dur) : '—'}
-                  </span>
-                </span>
-              );
-            })}
-            {Object.keys(entry.palletTimings || {}).length === 0 && (
-              <span style={{ fontSize: 12.5, color: T.text.faint }}>
-                Keine Palettenzeiten erfasst.
-              </span>
-            )}
-          </div>
-
-          {/* Articles */}
-          <div style={{
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: T.text.subtle,
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-            marginBottom: 10,
-          }}>
-            Artikel ({entry.articles?.length || 0})
-          </div>
-          <div style={{
-            border: `1px solid ${T.border.primary}`,
-            background: T.bg.surface,
-            borderRadius: T.radius.md,
-            overflow: 'hidden',
-            maxHeight: 320,
-            overflowY: 'auto',
-          }}>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '70px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
-              padding: '8px 14px',
-              background: T.bg.surface2,
-              borderBottom: `1px solid ${T.border.primary}`,
-              fontSize: 11,
-              fontWeight: 500,
-              color: T.text.subtle,
-              position: 'sticky',
-              top: 0,
-            }}>
-              <span>Palette</span>
-              <span>Name</span>
-              <span>Code</span>
-              <span>Use-Item</span>
-              <span style={{ textAlign: 'right' }}>Menge</span>
-            </div>
-            {(entry.articles || []).slice(0, 200).map((a, j) => (
-              <div key={j} style={{
-                display: 'grid',
-                gridTemplateColumns: '70px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
-                padding: '8px 14px',
-                borderBottom: j < (entry.articles?.length || 0) - 1 ? `1px solid ${T.border.subtle}` : 'none',
-                fontSize: 12.5,
-                color: T.text.secondary,
-                alignItems: 'center',
-              }}>
-                <span style={{
-                  fontFamily: T.font.mono,
-                  fontSize: 11.5,
-                  color: T.text.faint,
-                }}>
-                  {a.palletId}
-                </span>
-                <span style={{
-                  color: T.text.primary,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {a.title}
-                </span>
-                <span style={{
-                  fontFamily: T.font.mono,
-                  fontSize: 11.5,
-                  color: T.text.muted,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {a.fnsku || a.sku || '—'}
-                </span>
-                <span style={{
-                  fontFamily: T.font.mono,
-                  fontSize: 11.5,
-                  color: T.text.subtle,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {a.useItem || '—'}
-                </span>
-                <span style={{
-                  fontWeight: 600,
-                  color: T.text.primary,
-                  textAlign: 'right',
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  {a.units || 0}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ExpandedDetail entry={entry} isLast={isLast} />
       )}
     </>
   );
 }
+
+/* ════════════════════════════════════════════════════════════════════════
+   EXPANDED DETAIL — lazy-fetched on open.
+
+   /api/history returns AuftragSummary (no parsed JSONB) so the list query
+   stays cheap; when a row opens we fetch the full Detail for that one
+   Auftrag and flatten parsed.pallets → articles[]. Cached forever
+   (history rows are immutable). */
+function ExpandedDetail({ entry, isLast }) {
+  const detailQ = useQuery({
+    queryKey: ['auftrag', entry.id],
+    queryFn: () => getAuftrag(entry.id),
+    staleTime: Infinity,
+    refetchInterval: false,
+  });
+
+  const articles = useMemo(() => {
+    const pallets = detailQ.data?.parsed?.pallets || [];
+    return pallets.flatMap((p) =>
+      p.items.map((it, i) => ({
+        palletId: p.id,
+        itemIdx:  i,
+        sku:      it.sku,
+        fnsku:    it.fnsku,
+        title:    it.title,
+        units:    it.units,
+        useItem:  it.useItem,
+        category: it.category,
+      })),
+    );
+  }, [detailQ.data]);
+
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        padding: '14px 20px 20px 60px',
+        background: T.bg.surface2,
+        borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
+        cursor: 'default',
+      }}
+    >
+      {/* Pallet timings (already in summary, no fetch needed) */}
+      <div style={sectionLabel}>
+        Palettenzeiten ({Object.keys(entry.palletTimings || {}).length})
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 20 }}>
+        {Object.entries(entry.palletTimings || {}).map(([id, t]) => {
+          const dur = t.startedAt && t.finishedAt
+            ? Math.round((t.finishedAt - t.startedAt) / 1000) : null;
+          return (
+            <span key={id} style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              background: T.bg.surface,
+              border: `1px solid ${T.border.primary}`,
+              borderRadius: T.radius.md,
+              fontFamily: T.font.mono,
+              fontSize: 11.5,
+              color: T.text.secondary,
+            }}>
+              <span style={{ color: T.text.primary, fontWeight: 500 }}>{id}</span>
+              <span style={{ color: T.text.faint }}>·</span>
+              <span style={{ color: T.accent.main, fontWeight: 500 }}>
+                {dur != null ? formatMmSs(dur) : '—'}
+              </span>
+            </span>
+          );
+        })}
+        {Object.keys(entry.palletTimings || {}).length === 0 && (
+          <span style={{ fontSize: 12.5, color: T.text.faint }}>
+            Keine Palettenzeiten erfasst.
+          </span>
+        )}
+      </div>
+
+      {/* Articles header */}
+      <div style={sectionLabel}>
+        Artikel
+        {detailQ.isLoading && <span style={{ marginLeft: 6, color: T.text.faint, fontWeight: 400 }}>lädt…</span>}
+        {!detailQ.isLoading && ` (${articles.length})`}
+      </div>
+
+      {detailQ.isError && (
+        <div style={{
+          padding: '12px 14px',
+          background: T.status.danger.bg,
+          border: `1px solid ${T.status.danger.border}`,
+          borderRadius: T.radius.md,
+          color: T.status.danger.text,
+          fontSize: 12.5,
+        }}>
+          Konnte Artikel nicht laden: {detailQ.error?.message || 'Fehler'}
+        </div>
+      )}
+
+      {!detailQ.isError && (
+        <div style={{
+          border: `1px solid ${T.border.primary}`,
+          background: T.bg.surface,
+          borderRadius: T.radius.md,
+          overflow: 'hidden',
+          maxHeight: 320,
+          overflowY: 'auto',
+        }}>
+          <div style={articlesHeader}>
+            <span>Palette</span>
+            <span>Name</span>
+            <span>Code</span>
+            <span>Use-Item</span>
+            <span style={{ textAlign: 'right' }}>Menge</span>
+          </div>
+
+          {detailQ.isLoading && (
+            <div style={{
+              padding: '24px 14px',
+              textAlign: 'center',
+              fontSize: 12.5,
+              color: T.text.faint,
+            }}>
+              Artikel werden geladen…
+            </div>
+          )}
+
+          {!detailQ.isLoading && articles.length === 0 && (
+            <div style={{
+              padding: '24px 14px',
+              textAlign: 'center',
+              fontSize: 12.5,
+              color: T.text.faint,
+            }}>
+              Keine Artikel-Daten gespeichert.
+            </div>
+          )}
+
+          {articles.slice(0, 200).map((a, j) => (
+            <div key={j} style={{
+              ...articlesRow,
+              borderBottom: j < articles.length - 1
+                ? `1px solid ${T.border.subtle}`
+                : 'none',
+            }}>
+              <span style={{
+                fontFamily: T.font.mono,
+                fontSize: 11.5,
+                color: T.text.faint,
+              }}>
+                {a.palletId}
+              </span>
+              <span style={{
+                color: T.text.primary,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {a.title || '—'}
+              </span>
+              <span style={{
+                fontFamily: T.font.mono,
+                fontSize: 11.5,
+                color: T.text.muted,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {a.fnsku || a.sku || '—'}
+              </span>
+              <span style={{
+                fontFamily: T.font.mono,
+                fontSize: 11.5,
+                color: T.text.subtle,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {a.useItem || '—'}
+              </span>
+              <span style={{
+                fontWeight: 600,
+                color: T.text.primary,
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {a.units || 0}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const sectionLabel = {
+  fontSize: 11.5,
+  fontWeight: 600,
+  color: T.text.subtle,
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  marginBottom: 10,
+};
+
+const articlesHeader = {
+  display: 'grid',
+  gridTemplateColumns: '70px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
+  padding: '8px 14px',
+  background: T.bg.surface2,
+  borderBottom: `1px solid ${T.border.primary}`,
+  fontSize: 11,
+  fontWeight: 500,
+  color: T.text.subtle,
+  position: 'sticky',
+  top: 0,
+};
+
+const articlesRow = {
+  display: 'grid',
+  gridTemplateColumns: '70px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
+  padding: '8px 14px',
+  fontSize: 12.5,
+  color: T.text.secondary,
+  alignItems: 'center',
+};
 
 /* ════════════════════════════════════════════════════════════════════════ */
 const tableHeader = {
