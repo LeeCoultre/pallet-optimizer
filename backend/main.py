@@ -1,15 +1,29 @@
+import os
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
 from .routers import auftraege, history, packing, users, xlsx_import
 
 app = FastAPI(title="Pallet Loading Optimizer", version="1.0.0")
 
+# Same-origin in prod (single-service Railway deploy) → CORS doesn't apply.
+# Local dev runs Vite on 5176 + uvicorn on 8001, different origins, CORS needed.
+# Override via CORS_ALLOWED_ORIGINS env var (comma-separated) for split deploys.
+_default_origins = "http://localhost:5176,http://127.0.0.1:5176"
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ALLOWED_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
