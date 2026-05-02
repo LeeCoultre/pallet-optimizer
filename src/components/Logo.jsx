@@ -1,11 +1,15 @@
 /* ─────────────────────────────────────────────────────────────────────────
    Marathon — brand mark + wordmark.
-   Mark   = standalone icon (sailboat-ish geometry)
-   Wordmark = icon + "MARATHON" text in display font
-   Source: public/brand/marathon-icon.svg + marathon-wordmark.svg
+
+   Mark: black rounded square with three chevrons (» »); the third one
+   uses the accent color so the icon stays in sync if the user customizes
+   the accent palette in Einstellungen.
+
+   The accent stroke reads `var(--accent)` (set in index.css and at runtime
+   by applyAccent()), so retheming propagates without a re-render.
    ───────────────────────────────────────────────────────────────────────── */
 
-export function Mark({ size = 28, color = '#0A0A0B', bg }) {
+export function Mark({ size = 28 }) {
   return (
     <svg
       width={size}
@@ -15,27 +19,15 @@ export function Mark({ size = 28, color = '#0A0A0B', bg }) {
       xmlns="http://www.w3.org/2000/svg"
       style={{ display: 'block' }}
     >
-      {bg && <rect width="503" height="503" rx="70" fill={bg} />}
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M249.984 98L89.2911 296.417C80.3756 307.426 80.3756 323.17 89.2911 334.179L146.647 405L322.632 187.702L249.984 98ZM146.647 331.217L133.754 315.298L249.984 171.783L262.876 187.701L146.647 331.217Z"
-        fill={color}
-      />
-      <path
-        d="M408.624 387.569C435.792 354.023 435.792 312.692 408.624 279.146L363.894 223.913C353.935 211.616 329.036 211.616 319.077 223.912L276.307 276.724C271.686 282.431 271.686 289.463 276.307 295.17L357.475 395.391C367.434 407.687 392.332 407.688 402.291 395.391L408.624 387.569Z"
-        fill={color}
-      />
-      <path
-        d="M253.061 318.445L181.647 405H328.777L253.061 318.445Z"
-        fill={color}
-      />
+      <rect width="503" height="503" rx="111" fill="black" />
+      <path d="M128 147L218 252L128 357" stroke="#F3F1EC" strokeWidth="39" strokeLinecap="square" />
+      <path d="M225 147L317 252L225 357" stroke="#F3F1EC" strokeWidth="39" strokeLinecap="square" />
+      <path d="M324 147L414 252L324 357" stroke="var(--accent)" strokeWidth="39" strokeLinecap="square" />
     </svg>
   );
 }
 
-/* Wordmark: icon + "MARATHON" rendered as proper typography (so it scales &
-   inherits font features), with optional accent dot or tagline. */
+/* Wordmark: icon + "MARATHON" in display font, optional dot/tagline. */
 export function Wordmark({ iconSize = 28, textSize = 16, color = 'var(--ink)', accentDot = false, tagline }) {
   return (
     <span style={{
@@ -44,7 +36,7 @@ export function Wordmark({ iconSize = 28, textSize = 16, color = 'var(--ink)', a
       gap: 10,
       lineHeight: 1,
     }}>
-      <Mark size={iconSize} color={color === 'var(--ink)' ? '#0A0A0B' : color} />
+      <Mark size={iconSize} />
       <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1.05 }}>
         <span style={{
           fontFamily: 'var(--font-display)',

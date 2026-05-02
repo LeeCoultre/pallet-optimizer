@@ -4,6 +4,11 @@ import { ClerkProvider } from '@clerk/clerk-react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.jsx'
+import { applyAccent, getStoredAccent } from './utils/accent.js'
+
+/* Apply the user's saved accent color before React mounts so the first
+   paint already has the right palette (no flash of the default orange). */
+applyAccent(getStoredAccent())
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 if (!CLERK_KEY) {

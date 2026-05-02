@@ -9,7 +9,16 @@ export const T = {
   border: { primary: '#E5E7EB', subtle: '#F3F4F6', strong: '#D1D5DB' },
   text:   { primary: '#111827', secondary: '#374151', muted: '#52525B', subtle: '#6B7280', faint: '#9CA3AF' },
 
-  accent: { main: '#4F46E5', hover: '#4338CA', text: '#3730A3', bg: '#EEF2FF', border: '#C7D2FE' },
+  /* Accent reads CSS vars set by src/utils/accent.js — change the var,
+     every component re-paints automatically without React re-rendering.
+     Default palette derived from #FF5B1F (Marathon orange). */
+  accent: {
+    main:   'var(--accent)',
+    hover:  'var(--accent-hover)',
+    text:   'var(--accent-text)',
+    bg:     'var(--accent-bg)',
+    border: 'var(--accent-border)',
+  },
 
   status: {
     success: { main: '#10B981', bg: '#ECFDF5', text: '#047857', border: '#A7F3D0' },

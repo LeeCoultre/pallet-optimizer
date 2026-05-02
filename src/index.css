@@ -1,5 +1,8 @@
 /* Marathon — global base. White theme, Figure.ai breathing space + Marathon
-   (game) industrial detailing. Single chromatic accent: indigo. */
+   (game) industrial detailing.
+   Accent palette is themable — defaults below match the brand orange
+   #FF5B1F; a runtime override comes from src/utils/accent.js (reads
+   localStorage at boot, exposes Einstellungen color picker). */
 
 :root {
   --bg:        #FFFFFF;
@@ -14,9 +17,15 @@
   --ink-3:     #6E6E78;
   --ink-4:     #A0A0A8;
   --ink-5:     #C4C4CB;
-  --accent:    #5B62D8;
-  --accent-2:  #4951C7;
-  --accent-soft: rgba(91, 98, 216, 0.08);
+
+  /* Accent — five derived shades, all set at runtime by applyAccent(). */
+  --accent:        #FF5B1F;
+  --accent-hover:  #E04E15;
+  --accent-text:   #B83C0E;
+  --accent-bg:     #FFF1EC;
+  --accent-border: #FFCBB5;
+  --accent-2:      #E04E15;       /* legacy alias */
+  --accent-soft:   rgba(255, 91, 31, 0.08);
 
   --font-display: 'Montserrat', system-ui, sans-serif;
   --font-ui:      'Inter', system-ui, -apple-system, sans-serif;

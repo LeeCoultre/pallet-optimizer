@@ -35,7 +35,8 @@ export function sortPallets(pallets) {
 /* ─── pallet stats (volume / weight estimate) ─────────────────────────── */
 const PALLET_VOL_M3 = 120 * 80 * 165 / 1e6;       // 1.584 m³
 const DEFAULT_KG_PER_CARTON = 0.55;
-const PALLET_WEIGHT_CAP_KG = 700;
+/* No max-weight constraint in this warehouse — weightKg is tracked for
+   display only ("geschätzt"), never as a hard limit or scoring input. */
 
 function itemBoxVolCm3(it) {
   if (it.category === 'thermorollen') {
@@ -81,7 +82,6 @@ function primaryCategory(items) {
    Hard-Constraints (eligibility + canFit):
      • ≥2 unique Artikel auf der Ziel-Palette (sonst „Single SKU")
      • Volumen + ItemVolumen ≤ 1.584 m³
-     • Gewicht + ItemGewicht ≤ 700 kg
 
    Scoring (höher = besser):
      +50000  useItem-Match    — gleiche Katalog-ID (EAN/X-Code)
@@ -196,8 +196,7 @@ function enrichEsku(item) {
 }
 
 function canFit(ps, e) {
-  if (ps.volCm3   + e.volCm3   > PALLET_VOL_CM3)        return false;
-  if (ps.weightKg + e.weightKg > PALLET_WEIGHT_CAP_KG) return false;
+  if (ps.volCm3 + e.volCm3 > PALLET_VOL_CM3) return false;
   return true;
 }
 
@@ -205,7 +204,7 @@ function scoreEsku(e, ps) {
   const breakdown = {
     useItemMatch: false, formatMatch: false, brandMatch: false,
     categoryMatch: false, categoryConflict: false,
-    fillScore: 0, weightScore: 0,
+    fillScore: 0,
   };
   let score = 0;
 
@@ -234,10 +233,6 @@ function scoreEsku(e, ps) {
   const fillAfter = (ps.volCm3 + e.volCm3) / PALLET_VOL_CM3;
   breakdown.fillScore = Math.round((1 - Math.min(1, Math.abs(SWEET_SPOT_PCT - fillAfter))) * 100);
   score += breakdown.fillScore;
-
-  const weightFracAfter = (ps.weightKg + e.weightKg) / PALLET_WEIGHT_CAP_KG;
-  breakdown.weightScore = Math.round((1 - Math.min(1, weightFracAfter)) * 50);
-  score += breakdown.weightScore;
 
   return { score, breakdown };
 }

@@ -1,7 +1,11 @@
 /* Einstellungen — System-Daten und Voreinstellungen.
    Design System v3 (siehe DESIGN.md). */
 
+import { useState } from 'react';
 import { useAppState } from '../state.jsx';
+import {
+  applyAccent, getStoredAccent, setStoredAccent, resetAccent, DEFAULT_ACCENT,
+} from '../utils/accent.js';
 import {
   Page, Topbar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
@@ -81,8 +85,7 @@ export default function EinstellungenScreen() {
         >
           <Row label="Bodenfläche"  value="1.200 × 800 mm" mono />
           <Row label="Maximalhöhe"  value="1.650 mm"       mono />
-          <Row label="Maximalvolumen" value="1,584 m³"     mono />
-          <Row label="Maximalgewicht" value="700 kg"       mono isLast />
+          <Row label="Maximalvolumen" value="1,584 m³"     mono isLast />
         </SettingsCard>
 
         {/* Branding */}
@@ -92,22 +95,7 @@ export default function EinstellungenScreen() {
           last
         >
           <Row label="Build" value="2.0.0" mono />
-          <Row
-            label="Akzentfarbe"
-            value={
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <span style={{
-                  width: 14, height: 14,
-                  background: T.accent.main,
-                  borderRadius: 4,
-                  border: `1px solid ${T.accent.border}`,
-                }} />
-                <span style={{ fontFamily: T.font.mono, fontSize: 13, color: T.text.primary }}>
-                  {T.accent.main}
-                </span>
-              </span>
-            }
-          />
+          <AccentRow />
           <Row label="Schriften"     value="Inter · JetBrains Mono" />
           <Row label="Design-System" value="Marathon · v3" mono isLast />
         </SettingsCard>
@@ -126,6 +114,118 @@ function SettingsCard({ title, sub, children, last }) {
         {children}
       </Card>
     </section>
+  );
+}
+
+/* ── Akzentfarbe row — color picker that drives the CSS-var palette.
+   Live preview on every keystroke, persists to localStorage on commit
+   (or onBlur for the hex text input). Reset returns to brand default. */
+function AccentRow() {
+  const [color, setColor] = useState(getStoredAccent);
+  const PRESETS = [
+    DEFAULT_ACCENT,   // Marathon orange
+    '#5B62D8',        // indigo (legacy)
+    '#10B981',        // emerald
+    '#0EA5E9',        // sky
+    '#A855F7',        // violet
+    '#EC4899',        // pink
+    '#0A0A0B',        // black
+  ];
+
+  const apply = (next) => {
+    setColor(next);
+    applyAccent(next);
+    setStoredAccent(next);
+  };
+
+  const onText = (raw) => {
+    /* Live preview but only persist if it parses as a 6-digit hex. */
+    const hex = raw.startsWith('#') ? raw : `#${raw}`;
+    setColor(hex.toUpperCase());
+    if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+      applyAccent(hex);
+      setStoredAccent(hex);
+    }
+  };
+
+  const onReset = () => setColor(resetAccent());
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      padding: '14px 0',
+      borderBottom: `1px solid ${T.border.subtle}`,
+      gap: 16,
+      flexWrap: 'wrap',
+    }}>
+      <span style={{ fontSize: 13.5, color: T.text.secondary, minWidth: 120 }}>
+        Akzentfarbe
+      </span>
+
+      {/* Native picker */}
+      <input
+        type="color"
+        value={color}
+        onChange={(e) => apply(e.target.value.toUpperCase())}
+        style={{
+          width: 36, height: 36,
+          padding: 0, border: `1px solid ${T.border.strong}`,
+          borderRadius: T.radius.sm, cursor: 'pointer',
+          background: 'transparent',
+        }}
+        title="Klicke, um eine Farbe zu wählen"
+      />
+
+      {/* Hex text */}
+      <input
+        type="text"
+        value={color}
+        onChange={(e) => onText(e.target.value)}
+        spellCheck={false}
+        style={{
+          width: 100,
+          padding: '6px 10px',
+          border: `1px solid ${T.border.strong}`,
+          borderRadius: T.radius.sm,
+          fontFamily: T.font.mono,
+          fontSize: 13,
+          color: T.text.primary,
+          background: T.bg.surface,
+          outline: 'none',
+          textTransform: 'uppercase',
+        }}
+      />
+
+      {/* Presets */}
+      <div style={{ display: 'inline-flex', gap: 6 }}>
+        {PRESETS.map((p) => (
+          <button
+            key={p}
+            onClick={() => apply(p)}
+            title={p}
+            style={{
+              width: 22, height: 22,
+              borderRadius: '50%',
+              background: p,
+              border: color.toUpperCase() === p.toUpperCase()
+                ? `2px solid ${T.text.primary}`
+                : `1px solid ${T.border.strong}`,
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          />
+        ))}
+      </div>
+
+      <span style={{ flex: 1 }} />
+
+      {color.toUpperCase() !== DEFAULT_ACCENT.toUpperCase() && (
+        <Button variant="subtle" size="sm" onClick={onReset}>
+          Zurücksetzen
+        </Button>
+      )}
+    </div>
   );
 }
 
