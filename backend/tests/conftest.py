@@ -39,6 +39,23 @@ async def clean_db():
     app.dependency_overrides.pop(get_current_user, None)
 
 
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def wipe_test_users_after_suite():
+    """We share the dev/prod Postgres with the running app, so the suite
+    ends by pruning any *@test rows that might leak after the final test
+    (clean_db only runs BEFORE each test). Audit rows reference users
+    via NOT NULL FK, so cascade those first."""
+    yield
+    async with engine.begin() as conn:
+        await conn.execute(text(
+            "DELETE FROM audit_log WHERE user_id IN "
+            "(SELECT id FROM users WHERE email LIKE '%@test')"
+        ))
+        await conn.execute(text(
+            "DELETE FROM users WHERE email LIKE '%@test'"
+        ))
+
+
 @pytest_asyncio.fixture
 async def admin():
     async with AsyncSessionLocal() as s:
