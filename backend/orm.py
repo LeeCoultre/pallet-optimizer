@@ -1,0 +1,190 @@
+"""SQLAlchemy ORM models for Marathon.
+
+Three tables:
+  - users        — auth subjects (admin/user roles)
+  - auftraege    — single row covers the full lifecycle:
+                   queued → in_progress → completed (or → error)
+  - audit_log    — append-only trail of user actions
+
+`parsed`, `validation`, `completed_keys`, `pallet_timings` are JSONB —
+hierarchical data always read together with the row, no SQL queries
+into them planned for Sprint 1.
+"""
+
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime
+from typing import Any, Optional
+
+from sqlalchemy import (
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from backend.database import Base
+
+
+# ─── Enums (mapped to native PostgreSQL enum types) ──────────────────
+
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    user = "user"
+
+
+class AuftragStatus(str, enum.Enum):
+    queued = "queued"
+    in_progress = "in_progress"
+    completed = "completed"
+    error = "error"
+
+
+class WorkflowStep(str, enum.Enum):
+    pruefen = "pruefen"
+    focus = "focus"
+    abschluss = "abschluss"
+
+
+# ─── users ───────────────────────────────────────────────────────────
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(UserRole, name="user_role"),
+        nullable=False,
+        default=UserRole.user,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<User {self.name} ({self.role.value})>"
+
+
+# ─── auftraege ───────────────────────────────────────────────────────
+
+class Auftrag(Base):
+    __tablename__ = "auftraege"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+    # Source
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parsed: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    validation: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    # Lifecycle
+    status: Mapped[AuftragStatus] = mapped_column(
+        SAEnum(AuftragStatus, name="auftrag_status"),
+        nullable=False,
+        default=AuftragStatus.queued,
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Provenance
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    queue_position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Workflow state — null until 'start', filled while in_progress, kept after complete
+    assigned_to_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    duration_sec: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    step: Mapped[Optional[WorkflowStep]] = mapped_column(
+        SAEnum(WorkflowStep, name="workflow_step"), nullable=True
+    )
+    current_pallet_idx: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    current_item_idx: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    completed_keys: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    pallet_timings: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("idx_auftraege_status", "status"),
+        Index(
+            "idx_auftraege_assigned",
+            "assigned_to_user_id",
+            postgresql_where=text("status = 'in_progress'"),
+        ),
+        Index(
+            "idx_auftraege_finished",
+            "finished_at",
+            postgresql_where=text("status = 'completed'"),
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Auftrag {self.file_name} [{self.status.value}]>"
+
+
+# ─── audit_log ───────────────────────────────────────────────────────
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    auftrag_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("auftraege.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(50), nullable=False)
+    meta: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_audit_user_created", "user_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AuditLog {self.action} by {self.user_id}>"
