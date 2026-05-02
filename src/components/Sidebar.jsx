@@ -108,10 +108,13 @@ export function Sidebar({ route, onRoute }) {
         ))}
       </nav>
 
-      {!collapsed && <QueueSection />}
-
-      {/* spacer pushes everything below to the bottom */}
-      <div style={{ flex: 1, minHeight: 0 }} />
+      {/* QueueSection has flex:1 internally — let it fill all remaining
+          space so long queues actually scroll inside their container.
+          When collapsed we render a plain spacer instead, otherwise
+          UserSwitcher would float to the top. */}
+      {!collapsed
+        ? <QueueSection />
+        : <div style={{ flex: 1, minHeight: 0 }} />}
 
       {current && !collapsed && (
         <CurrentProgress current={current} onClick={() => onRoute('workspace')} />

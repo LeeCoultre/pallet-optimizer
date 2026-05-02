@@ -1,11 +1,10 @@
 /* Focus-Modus — Schritt 03. Cinema mode: ein Artikel im Fokus.
    Design System v3 (siehe DESIGN.md). */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useAppState } from '../state.jsx';
 import { focusItemView } from '../utils/auftragHelpers.js';
 import { detectWiederholt } from '../utils/wiederholtLogic.js';
-import { SIDEBAR_WIDTH } from '../components/Sidebar.jsx';
 import { Page, Card, Badge, Button, Meta, T } from '../components/ui.jsx';
 
 const CAT = {
@@ -57,14 +56,35 @@ export default function FocusScreen() {
   for (let i = 0; i < palletIdx; i++) articlesBefore += rawPallets[i].items.length;
   const overallPos = articlesBefore + itemIdx + 1;
 
+  /* Returns the indices of items on the current pallet whose Artikel-
+     Code has NOT been copied yet — used to gate pallet transitions. */
+  const missingCopies = useMemo(() => {
+    if (!rawPallet) return [];
+    const out = [];
+    for (let i = 0; i < rawPallet.items.length; i++) {
+      if (!copiedKeys.has(`${palletIdx}|${i}`)) out.push(i);
+    }
+    return out;
+  }, [rawPallet, palletIdx, copiedKeys]);
+  const allPalletCopied = missingCopies.length === 0;
+  const isLastItemOfPallet = rawPallet && itemIdx === rawPallet.items.length - 1;
+
+  const blockMessage = () =>
+    `Bitte zuerst alle Artikel-Codes der aktuellen Palette kopieren ` +
+    `(${missingCopies.length} fehlen noch), bevor du diese Palette abschließt.`;
+
   const goNextItem = useCallback(() => {
     if (!rawPallet) return;
     if (itemIdx + 1 < rawPallet.items.length) {
       setCurrentItemIdx(itemIdx + 1);
     } else if (palletIdx + 1 < rawPallets.length) {
+      if (!allPalletCopied) {
+        alert(blockMessage());
+        return;
+      }
       setCurrentPalletIdx(palletIdx + 1);
     }
-  }, [rawPallet, itemIdx, palletIdx, rawPallets, setCurrentItemIdx, setCurrentPalletIdx]);
+  }, [rawPallet, itemIdx, palletIdx, rawPallets, allPalletCopied, setCurrentItemIdx, setCurrentPalletIdx]);
 
   const goPrevItem = useCallback(() => {
     if (itemIdx > 0) setCurrentItemIdx(itemIdx - 1);
@@ -77,10 +97,18 @@ export default function FocusScreen() {
 
   const handleFertig = useCallback(() => {
     if (!rawPallet || !rawItem) return;
+    /* Block "Artikel abschließen" on the LAST item of a pallet until
+       every item's code has been copied — completing the last item
+       advances pallet and we don't want that without all codes. */
+    if (isLastItemOfPallet && !allPalletCopied) {
+      alert(blockMessage());
+      return;
+    }
     const hit = detectWiederholt(rawPallets, palletIdx, itemIdx);
     completeCurrentItem();
     if (hit) setWiederholt(hit);
-  }, [rawPallet, rawItem, rawPallets, palletIdx, itemIdx, completeCurrentItem]);
+  }, [rawPallet, rawItem, rawPallets, palletIdx, itemIdx, completeCurrentItem,
+      isLastItemOfPallet, allPalletCopied]);
 
   /* Wiederholt auto-dismiss after 5s */
   useEffect(() => {

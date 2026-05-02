@@ -4,7 +4,6 @@
 import { useMemo } from 'react';
 import { useAppState } from '../state.jsx';
 import { pruefenView, palletTimingRows, categoryDistribution } from '../utils/auftragHelpers.js';
-import { SIDEBAR_WIDTH } from '../components/Sidebar.jsx';
 import {
   Page, Topbar, StepperBar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
