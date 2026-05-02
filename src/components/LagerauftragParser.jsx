@@ -1,5 +1,18 @@
 import { useState, useMemo, useRef, useCallback, useEffect, Fragment } from 'react';
 import mammoth from 'mammoth';
+import {
+  detectCodeType,
+  normalizeHeight,
+  parseTitleMeta,
+  classifyItem,
+  categoryRank,
+  parseLagerauftragText,
+  validateParsing,
+  setHeightsConfig,
+  CATEGORY_ORDER,
+  CATEGORY_LABELS,
+  CATEGORY_COLORS,
+} from '../utils/parseLagerauftrag';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Module-scope: inject fonts + global styles ONCE
@@ -9,7 +22,7 @@ if (typeof document !== 'undefined' && !document.getElementById('lp-fonts')) {
   link.id = 'lp-fonts';
   link.rel = 'stylesheet';
   link.href =
-    'https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap';
+    'https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap';
   document.head.appendChild(link);
 }
 
@@ -17,21 +30,28 @@ if (typeof document !== 'undefined' && !document.getElementById('lp-styles')) {
   const style = document.createElement('style');
   style.id = 'lp-styles';
   style.textContent = `
-    .lp-root { font-family: 'DM Sans', system-ui, -apple-system, sans-serif; }
+    .lp-root {
+      font-family: 'Montserrat', system-ui, -apple-system, sans-serif;
+      /* Subtle radial glow at top-center — gives depth without distraction */
+      background:
+        radial-gradient(ellipse 1400px 700px at 50% -200px, rgba(91,98,216,0.04), transparent 60%),
+        #FAFAFB;
+      color: #111827;
+    }
     .lp-mono { font-family: 'DM Mono', ui-monospace, Menlo, monospace; }
     .lp-root *::-webkit-scrollbar { width: 10px; height: 10px; }
     .lp-root *::-webkit-scrollbar-track { background: transparent; }
     .lp-root *::-webkit-scrollbar-thumb {
-      background: #d0cbc0;
+      background: #D4D4D8;
       border-radius: 6px;
-      border: 2px solid #f8f7f4;
+      border: 2px solid #FAFAFB;
     }
-    .lp-root *::-webkit-scrollbar-thumb:hover { background: #a8a39c; }
-    .lp-btn-hover:hover { background: #2a2421 !important; }
-    .lp-btn2-hover:hover { background: #f8f7f4 !important; border-color: #d0cbc0 !important; }
+    .lp-root *::-webkit-scrollbar-thumb:hover { background: #A1A1AA; }
+    .lp-btn-hover:hover { background: #4F56C7 !important; }
+    .lp-btn2-hover:hover { background: #F4F4F5 !important; border-color: #D4D4D8 !important; }
     .lp-row-hover { transition: background-color 0.12s ease; }
-    .lp-row-hover:hover { background: #f8f7f4; }
-    .lp-row-active { background: #eff6ff !important; box-shadow: inset 2px 0 0 #2563eb; }
+    .lp-row-hover:hover { background: #F4F4F5; }
+    .lp-row-active { background: rgba(91,98,216,0.08) !important; box-shadow: inset 2px 0 0 #5B62D8; }
     .lp-card-fade { opacity: 0; transform: translateY(8px); animation: lpFadeUp 0.3s ease forwards; }
     @keyframes lpFadeUp {
       to { opacity: 1; transform: translateY(0); }
@@ -69,18 +89,411 @@ if (typeof document !== 'undefined' && !document.getElementById('lp-styles')) {
       100% { background-position: 400px 0; }
     }
     .lp-shimmer {
-      background: linear-gradient(90deg, #f4f1eb 0%, #faf8f3 50%, #f4f1eb 100%);
+      background: linear-gradient(90deg, #F4F4F5 0%, #FAFAFB 50%, #F4F4F5 100%);
       background-size: 800px 100%;
       animation: lpShimmer 1.4s linear infinite;
     }
     @keyframes lpFadeBg {
-      from { background-color: #fff7c2; }
+      from { background-color: rgba(217,119,6,0.18); }
       to { background-color: transparent; }
     }
     .lp-flash { animation: lpFadeBg 1.2s ease forwards; }
     @keyframes lpRingExpand {
-      0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.6); }
-      100% { box-shadow: 0 0 0 14px rgba(37,99,235,0); }
+      0% { box-shadow: 0 0 0 0 rgba(91,98,216,0.5); }
+      100% { box-shadow: 0 0 0 14px rgba(91,98,216,0); }
+    }
+    @keyframes lpHeroGlow {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50%      { opacity: 0.85; transform: scale(1.05); }
+    }
+    @keyframes lpHeroFloat {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-6px); }
+    }
+    .lp-dropzone-hero {
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(91,98,216,0.05), transparent 70%),
+        #FFFFFF;
+    }
+    .lp-dropzone-hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background-image: radial-gradient(rgba(91,98,216,0.20) 1px, transparent 1px);
+      background-size: 24px 24px;
+      mask-image: radial-gradient(circle at 50% 50%, black 30%, transparent 75%);
+      -webkit-mask-image: radial-gradient(circle at 50% 50%, black 30%, transparent 75%);
+      opacity: 0.45;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    .lp-dropzone-hero.is-over::before { opacity: 1; }
+    .lp-dropzone-hero.is-over {
+      border-color: #5B62D8 !important;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(91,98,216,0.12), transparent 70%),
+        #FFFFFF !important;
+      box-shadow: 0 0 0 1px #5B62D8, 0 0 40px rgba(91,98,216,0.20);
+    }
+    .lp-hero-icon { animation: lpHeroFloat 3s ease-in-out infinite; }
+    .lp-hero-glow-ring { animation: lpHeroGlow 2.4s ease-in-out infinite; }
+
+    /* ╔════════════════════════════════════════════════════════════════════╗
+       ║  APP SHELL — Sidebar + TopBar + Content (Workspace + Workflow)    ║
+       ╚════════════════════════════════════════════════════════════════════╝ */
+    .lp-shell { display: flex; min-height: 100vh; }
+
+    /* ── Sidebar — permanently fixed on desktop, hidden on mobile ───── */
+    .lp-sidebar {
+      width: 240px; flex-shrink: 0;
+      background: #FFFFFF;
+      border-right: 1px solid #EBEBEF;
+      display: flex; flex-direction: column;
+      padding: 18px 12px 14px; gap: 4px;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      height: 100vh; overflow-y: auto;
+      z-index: 40;
+    }
+    /* Push main content over to make room for the fixed sidebar */
+    .lp-shell > .lp-main { margin-left: 240px; }
+    @media (max-width: 768px) {
+      .lp-shell > .lp-main { margin-left: 0; }
+    }
+    .lp-sidebar-brand {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 10px 14px;
+      border-bottom: 1px solid #EBEBEF;
+      margin-bottom: 6px;
+    }
+    .lp-sidebar-brand-logo {
+      width: 32px; height: 32px; flex-shrink: 0;
+      border-radius: 8px;
+      background: #FFFFFF;
+      border: 1px solid #EBEBEF;
+      display: inline-flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(17,24,39,0.04);
+    }
+    .lp-sidebar-brand-logo img {
+      width: 100%; height: 100%; display: block;
+      object-fit: contain;
+    }
+    .lp-sidebar-section-label {
+      font-size: 9.5px; font-weight: 700;
+      letter-spacing: 1.4px; text-transform: uppercase;
+      color: #A1A1AA;
+      padding: 12px 12px 6px;
+    }
+    .lp-sidebar-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      color: #52525B;
+      cursor: pointer; border: 1px solid transparent;
+      background: transparent;
+      width: 100%; text-align: left;
+      transition: background 0.12s ease, color 0.12s ease;
+      font-family: inherit;
+    }
+    .lp-sidebar-item:hover:not(:disabled) {
+      background: #F4F4F5; color: #111827;
+    }
+    .lp-sidebar-item.is-active {
+      background: rgba(91,98,216,0.08);
+      color: #111827;
+      box-shadow: inset 0 0 0 1px rgba(91,98,216,0.18);
+    }
+    .lp-sidebar-item:disabled { opacity: 0.4; cursor: not-allowed; }
+    .lp-sidebar-icon {
+      width: 18px; height: 18px; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+    .lp-sidebar-badge {
+      margin-left: auto;
+      font-size: 10px; padding: 1px 6px;
+      border-radius: 999px;
+      background: rgba(91,98,216,0.10);
+      color: #5B62D8;
+      font-family: 'DM Mono', monospace;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.3px;
+      font-weight: 600;
+    }
+    .lp-sidebar-spacer { flex: 1; }
+    .lp-sidebar-meta {
+      padding: 10px 12px;
+      font-size: 10px; color: #A1A1AA;
+      letter-spacing: 0.4px;
+      border-top: 1px solid #EBEBEF;
+      margin-top: 8px;
+    }
+
+    /* ── Palette mini-list inside sidebar (Workspace mode) ─────────── */
+    .lp-pal-list {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 2px 0 4px;
+    }
+    .lp-pal-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      background: transparent;
+      border: 1px solid transparent;
+      width: 100%;
+      font-family: inherit;
+      transition: background 0.12s ease;
+      text-align: left;
+    }
+    .lp-pal-item:hover { background: #F4F4F5; }
+    .lp-pal-item.is-active {
+      background: rgba(91,98,216,0.08);
+      box-shadow: inset 0 0 0 1px rgba(91,98,216,0.18);
+    }
+    .lp-pal-id {
+      font-size: 11.5px; font-weight: 600;
+      font-family: 'DM Mono', monospace;
+      color: #111827;
+      letter-spacing: -0.2px;
+      min-width: 38px;
+    }
+    .lp-pal-mini-bar {
+      flex: 1; height: 4px;
+      background: #F4F4F5;
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+    .lp-pal-mini-bar > span {
+      position: absolute; top: 0; left: 0; height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+    .lp-pal-pct {
+      font-size: 10px;
+      font-family: 'DM Mono', monospace;
+      font-variant-numeric: tabular-nums;
+      color: #71717A;
+      min-width: 28px;
+      text-align: right;
+    }
+
+    /* ── Layout-Mode Toggle ─────────────────────────────────────────── */
+    .lp-mode-toggle {
+      display: flex; gap: 0;
+      padding: 3px;
+      background: #F4F4F5;
+      border-radius: 8px;
+      margin: 0 4px 4px;
+    }
+    .lp-mode-toggle-btn {
+      flex: 1;
+      padding: 6px 10px;
+      border: none;
+      background: transparent;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 11px; font-weight: 600;
+      color: #71717A;
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      transition: all 0.15s ease;
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    }
+    .lp-mode-toggle-btn.is-active {
+      background: #FFFFFF;
+      color: #111827;
+      box-shadow: 0 1px 2px rgba(17,24,39,0.06), 0 0 0 1px rgba(17,24,39,0.04);
+    }
+
+    /* ── Main area ──────────────────────────────────────────────────── */
+    .lp-main {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column;
+      background:
+        radial-gradient(ellipse 1400px 700px at 50% -200px, rgba(91,98,216,0.04), transparent 60%),
+        #FAFAFB;
+    }
+    .lp-topbar {
+      position: sticky; top: 0; z-index: 35;
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 28px;
+      border-bottom: 1px solid #EBEBEF;
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      flex-wrap: wrap;
+    }
+    .lp-topbar-title {
+      font-size: 15px; font-weight: 600;
+      color: #111827; letter-spacing: -0.2px;
+    }
+    .lp-topbar-context {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11.5px; color: #71717A;
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.3px;
+    }
+    .lp-topbar-context .sep { color: #D4D4D8; }
+    .lp-content {
+      flex: 1;
+      padding: 32px 28px 120px;
+      max-width: 1240px; width: 100%;
+      margin: 0 auto;
+      box-sizing: border-box;
+    }
+    .lp-content.is-empty {
+      display: flex; align-items: center; justify-content: center;
+      min-height: calc(100vh - 60px);
+    }
+
+    /* ── Workflow Stepper ───────────────────────────────────────────── */
+    .lp-stepper {
+      display: flex; align-items: center; gap: 0;
+      padding: 18px 28px 14px;
+      background: #FFFFFF;
+      border-bottom: 1px solid #EBEBEF;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+    .lp-step {
+      flex: 1; min-width: 120px;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 6px;
+      cursor: pointer;
+      background: transparent; border: none;
+      font-family: inherit;
+      padding: 4px 8px;
+      position: relative;
+    }
+    .lp-step::after {
+      content: '';
+      position: absolute;
+      top: 14px; left: calc(50% + 14px); right: calc(-50% + 14px);
+      height: 2px;
+      background: #EBEBEF;
+      z-index: 0;
+    }
+    .lp-step:last-child::after { display: none; }
+    .lp-step.is-done::after { background: #5B62D8; }
+    .lp-step-circle {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      border: 2px solid #EBEBEF;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700;
+      color: #A1A1AA;
+      font-family: 'DM Mono', monospace;
+      position: relative; z-index: 1;
+      transition: all 0.2s ease;
+    }
+    .lp-step.is-current .lp-step-circle {
+      background: #5B62D8;
+      border-color: #5B62D8;
+      color: #fff;
+      box-shadow: 0 0 0 4px rgba(91,98,216,0.15);
+    }
+    .lp-step.is-done .lp-step-circle {
+      background: #5B62D8;
+      border-color: #5B62D8;
+      color: #fff;
+    }
+    .lp-step-label {
+      font-size: 11px; font-weight: 600;
+      color: #71717A;
+      letter-spacing: 0.2px;
+      text-align: center;
+    }
+    .lp-step.is-current .lp-step-label,
+    .lp-step.is-done .lp-step-label { color: #111827; }
+
+    /* ── Mode tabs (inside Paletten view) ──────────────────────────── */
+    .lp-tabs {
+      display: inline-flex; gap: 0;
+      padding: 3px;
+      background: #F4F4F5;
+      border-radius: 9px;
+    }
+    .lp-tab {
+      padding: 7px 14px;
+      border: none; background: transparent;
+      border-radius: 7px;
+      font-family: inherit;
+      font-size: 12.5px; font-weight: 600;
+      color: #52525B;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .lp-tab.is-active {
+      background: #FFFFFF;
+      color: #111827;
+      box-shadow: 0 1px 2px rgba(17,24,39,0.06), 0 0 0 1px rgba(17,24,39,0.04);
+    }
+    .lp-tab:hover:not(.is-active) { color: #111827; }
+
+    /* ── Mobile menu + bottom-tabs ─────────────────────────────────── */
+    .lp-mobile-menu-btn {
+      display: none;
+      width: 36px; height: 36px;
+      align-items: center; justify-content: center;
+      border-radius: 8px;
+      background: transparent;
+      border: 1px solid #D4D4D8;
+      color: #52525B;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .lp-mobile-tabs {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 50;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-top: 1px solid #EBEBEF;
+      padding: 6px 10px calc(env(safe-area-inset-bottom, 0px) + 6px);
+    }
+    .lp-mobile-tabs-inner {
+      display: flex; gap: 4px;
+      max-width: 480px; margin: 0 auto;
+    }
+    .lp-mobile-tab {
+      flex: 1;
+      display: inline-flex; flex-direction: column; align-items: center;
+      gap: 2px;
+      padding: 7px 4px 5px;
+      border-radius: 8px;
+      background: transparent; border: none;
+      color: #71717A;
+      font-family: inherit;
+      font-size: 9.5px; font-weight: 600;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: color 0.12s ease, background 0.12s ease;
+    }
+    .lp-mobile-tab .lp-mobile-tab-icon { font-size: 17px; line-height: 1; }
+    .lp-mobile-tab.is-active {
+      color: #5B62D8;
+      background: rgba(91,98,216,0.08);
+    }
+    .lp-mobile-tab:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Responsive ─────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .lp-sidebar { display: none; }
+      .lp-mobile-menu-btn { display: inline-flex; }
+      .lp-mobile-tabs { display: block; }
+      .lp-content { padding: 20px 16px 96px; }
+      .lp-topbar { padding: 12px 16px; }
+      .lp-stepper { padding: 14px 16px 10px; }
+      .lp-step { min-width: 80px; }
+      .lp-step-label { font-size: 9.5px; }
     }
     /* Liquid-Wave: bewegende Sinus-Kurve oben auf der Füllung */
     @keyframes lpWaveFlow {
@@ -165,41 +578,47 @@ if (typeof document !== 'undefined' && !document.getElementById('lp-styles')) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Tokens
+   Design Tokens — Light theme inspired by Linear.app (light mode) + Stripe
    ───────────────────────────────────────────────────────────────────────── */
 const T = {
-  bg: '#F8F7F4',
+  /* Surfaces */
+  bg: '#FAFAFB',
   surface: '#FFFFFF',
-  border: '#E8E5DF',
-  borderStrong: '#D0CBC0',
-  text: '#1A1714',
-  textSub: '#6B6560',
-  textMuted: '#A8A39C',
-  accent: '#1A1714',
+  surfaceRaised: '#FFFFFF',
+
+  /* Borders */
+  border: '#EBEBEF',
+  borderStrong: '#D4D4D8',
+
+  /* Text — three levels of hierarchy */
+  text: '#111827',
+  textSub: '#52525B',
+  textMuted: '#A1A1AA',
+
+  /* Accent — Linear's signature indigo */
+  accent: '#5B62D8',
+  accentHover: '#4F56C7',
+  accentBg: 'rgba(91,98,216,0.08)',
+
+  /* Status colors */
   blue: '#2563EB',
-  blueBg: '#EFF6FF',
+  blueBg: 'rgba(37,99,235,0.08)',
   green: '#16A34A',
-  greenBg: '#F0FDF4',
+  greenBg: 'rgba(22,163,74,0.08)',
   amber: '#D97706',
-  amberBg: '#FFFBEB',
+  amberBg: 'rgba(217,119,6,0.10)',
+  red: '#DC2626',
+  redBg: 'rgba(220,38,38,0.08)',
   purple: '#7C3AED',
-  purpleBg: '#F5F3FF',
-  shadowSm: '0 1px 3px rgba(0,0,0,0.06)',
-  shadowMd: '0 4px 12px rgba(0,0,0,0.08)',
-  shadowLg: '0 20px 40px rgba(0,0,0,0.12)',
+  purpleBg: 'rgba(124,58,237,0.08)',
+
+  /* Shadows — layered for depth on white */
+  shadowSm: '0 1px 2px rgba(17,24,39,0.04), 0 1px 3px rgba(17,24,39,0.06)',
+  shadowMd: '0 4px 12px rgba(17,24,39,0.06), 0 2px 4px rgba(17,24,39,0.04)',
+  shadowLg: '0 24px 48px rgba(17,24,39,0.10), 0 8px 16px rgba(17,24,39,0.06)',
 };
 
-/* ─────────────────────────────────────────────────────────────────────────
-   PARSING
-   ───────────────────────────────────────────────────────────────────────── */
-function detectCodeType(fnsku) {
-  if (!fnsku) return 'OTHER';
-  if (/^X001/i.test(fnsku)) return 'X001';
-  if (/^X002/i.test(fnsku)) return 'X002';
-  if (/^X000/i.test(fnsku)) return 'X000';
-  if (/^B0/i.test(fnsku) || /^BO/i.test(fnsku)) return 'B0';
-  return 'OTHER';
-}
+/* PARSING — moved to ../utils/parseLagerauftrag.js (testable module) */
 
 /* ─────────────────────────────────────────────────────────────────────────
    ADMIN CONFIG — alle redaktionellen Tabellen werden in sessionStorage
@@ -207,7 +626,7 @@ function detectCodeType(fnsku) {
    Versionierung: bei Schema-Änderungen ADMIN_CONFIG_VERSION erhöhen.
    ───────────────────────────────────────────────────────────────────────── */
 const ADMIN_CONFIG_KEY = 'lagerauftrag.admin.config.v2';
-const ADMIN_CONFIG_VERSION = 2;
+const ADMIN_CONFIG_VERSION = 3;     // v3: Excel-genaue Maße + maxPerPallet
 
 /* ── Box-Katalog v2: erweitertes Schema mit EAN, Artikel, Kategorie, Gewicht ──
    id        : eindeutige interne ID
@@ -222,111 +641,119 @@ const ADMIN_CONFIG_VERSION = 2;
    active    : kann aus dem Match-Pool ausgenommen werden (für Doubletten)
    ──────────────────────────────────────────────────────────────────── */
 const DEFAULT_BOX_CATALOG = [
+  /* Daten-Quelle: "Dimensional list (3).xlsx" — Sheet "Main".
+     dims = [Länge × Breite × Höhe] in cm (alle Maße auf 0.1 cm präzise).
+     maxPerPallet = "Pallet load" aus Excel (wenn dort definiert).            */
+
   /* ▸ Blank 14M (57×35) ─────────────────────────────────────────── */
   { id: 'b001', sig: '50r-57x35-blank', category: 'Blank 14M', artikel: '57mm*35mm (50) blank 14M', ean: '9120107187396',
-    match: { rollen: 50, w: 57, h: 35 }, dims: [18.0, 18.0, 13.0], weightKg: 2.00, hinweis: '', active: true },
+    match: { rollen: 50, w: 57, h: 35 }, dims: [18.5, 18.5, 12.6], weightKg: 1.84, maxPerPallet: 350, hinweis: '', active: true },
   { id: 'b002', sig: '20r-57x35-blank', category: 'Blank 14M', artikel: '57mm*35mm (20) blank 14M', ean: '9120107187389',
-    match: { rollen: 20, w: 57, h: 35 }, dims: [19.0, 7.5, 12.0], weightKg: 0.72, hinweis: '', active: true },
+    match: { rollen: 20, w: 57, h: 35 }, dims: [18.5, 7.9, 12.5], weightKg: 0.72, maxPerPallet: 560, hinweis: '', active: true },
   { id: 'b003', sig: '5r-57x35-blank', category: 'Blank 14M', artikel: '57mm*35mm (5) blank 14M', ean: '',
     match: { rollen: 5, w: 57, h: 35 }, dims: [17.0, 3.0, 6.0], weightKg: 0.18, hinweis: 'wird produziert (von 9120107187396)', active: false },
 
   /* ▸ Blank 18M (57×40) ─────────────────────────────────────────── */
   { id: 'b004', sig: '50r-57x40-blank', category: 'Blank 18M', artikel: '57mm*40mm (50) blank 18M', ean: '9120107187433',
-    match: { rollen: 50, w: 57, h: 40 }, dims: [21.0, 21.0, 12.5], weightKg: 2.50, hinweis: '', active: true },
+    match: { rollen: 50, w: 57, h: 40 }, dims: [20.6, 20.5, 12.5], weightKg: 2.26, maxPerPallet: 250, hinweis: '', active: true },
   { id: 'b005', sig: '20r-57x40-blank', category: 'Blank 18M', artikel: '57mm*40mm (20) blank 18M', ean: '9120107187426',
-    match: { rollen: 20, w: 57, h: 40 }, dims: [20.0, 8.0, 12.0], weightKg: 1.08, hinweis: '', active: true },
+    match: { rollen: 20, w: 57, h: 40 }, dims: [20.5, 8.8, 12.5], weightKg: 0.90, maxPerPallet: 560, hinweis: '', active: true },
   { id: 'b006', sig: '5r-57x40-blank', category: 'Blank 18M', artikel: '57mm*40mm (5) blank 18M', ean: '',
-    match: { rollen: 5, w: 57, h: 40 }, dims: [20.0, 4.0, 6.0], weightKg: 0.24, hinweis: 'wird produziert (von 9120107187433)', active: false },
+    match: { rollen: 5, w: 57, h: 40 }, dims: [19.6, 3.8, 5.6], weightKg: 0.22, hinweis: 'wird produziert (von 9120107187433)', active: false },
 
   /* ▸ Blank 9M (57×30) ──────────────────────────────────────────── */
   { id: 'b007', sig: '50r-57x30-blank', category: 'Blank 9M', artikel: '57mm*30mm (50) blank 9M', ean: '9120107187471',
-    match: { rollen: 50, w: 57, h: 30 }, dims: [16.0, 16.0, 13.0], weightKg: 1.42, hinweis: '', active: true },
+    match: { rollen: 50, w: 57, h: 30 }, dims: [16.3, 15.9, 12.4], weightKg: 1.36, maxPerPallet: 350, hinweis: '', active: true },
   { id: 'b008', sig: '20r-57x30-blank', category: 'Blank 9M', artikel: '57mm*30mm (20) blank 9M', ean: '9120107187488',
-    match: { rollen: 20, w: 57, h: 30 }, dims: [16.0, 7.0, 12.0], weightKg: 0.58, hinweis: '', active: true },
+    match: { rollen: 20, w: 57, h: 30 }, dims: [16.1, 6.9, 12.4], weightKg: 0.56, hinweis: '', active: true },
   { id: 'b009', sig: '5r-57x30-blank', category: 'Blank 9M', artikel: '57mm*30mm (5) blank 9M', ean: '',
-    match: { rollen: 5, w: 57, h: 30 }, dims: [15.0, 3.0, 5.5], weightKg: 0.14, hinweis: 'wird produziert (von 9120107187471)', active: false },
+    match: { rollen: 5, w: 57, h: 30 }, dims: [14.8, 2.9, 5.5], weightKg: 0.12, hinweis: 'wird produziert (von 9120107187471)', active: false },
 
   /* ▸ Blank 30M / 50M (57×50, 57×63) ────────────────────────────── */
   { id: 'b010', sig: '50r-57x50-blank', category: 'Blank 30M/50M', artikel: '57mm*50mm (50) blank 30M', ean: '9120107187860',
-    match: { rollen: 50, w: 57, h: 50 }, dims: [26.0, 26.0, 12.0], weightKg: 4.82, hinweis: '', active: true },
+    match: { rollen: 50, w: 57, h: 50 }, dims: [26.0, 26.0, 12.0], weightKg: 4.82, hinweis: 'Maße geschätzt — fehlen in Quelle', active: true },
   { id: 'b011', sig: '50r-57x63-blank', category: 'Blank 30M/50M', artikel: '57mm*63mm (50) blank 50M', ean: '9120107187495',
-    match: { rollen: 50, w: 57, h: 63 }, dims: [32.0, 32.0, 13.0], weightKg: 6.62, hinweis: '', active: true },
+    match: { rollen: 50, w: 57, h: 63 }, dims: [31.8, 32.0, 12.6], weightKg: 5.80, hinweis: '', active: true },
   { id: 'b012', sig: '5r-57x63-blank', category: 'Blank 30M/50M', artikel: '57mm*63mm (5) blank 50M', ean: '',
-    match: { rollen: 5, w: 57, h: 63 }, dims: [31.0, 6.0, 5.5], weightKg: 0.63, hinweis: 'wird produziert (von 9120107187495)', active: false },
+    match: { rollen: 5, w: 57, h: 63 }, dims: [31.1, 6.2, 5.6], weightKg: 0.56, hinweis: 'wird produziert (von 9120107187495)', active: false },
 
   /* ▸ + Debit-Text 14M (57×35) ──────────────────────────────────── */
   { id: 'b013', sig: '50r-57x35-debit', category: 'Debit-Text 14M', artikel: '57mm*35mm (50) + debit text 14M', ean: '9120107187419',
-    match: { rollen: 50, w: 57, h: 35 }, dims: [19.0, 18.0, 13.0], weightKg: 1.76, hinweis: '', active: false },
+    match: { rollen: 50, w: 57, h: 35 }, dims: [18.8, 18.6, 12.4], weightKg: 1.78, maxPerPallet: 350, hinweis: '', active: false },
   { id: 'b014', sig: '20r-57x35-debit', category: 'Debit-Text 14M', artikel: '57mm*35mm (20) + debit text 14M', ean: '9120107187402',
-    match: { rollen: 20, w: 57, h: 35 }, dims: [18.5, 8.0, 12.5], weightKg: 0.88, hinweis: '', active: false },
+    match: { rollen: 20, w: 57, h: 35 }, dims: [18.8, 7.6, 12.3], weightKg: 0.70, maxPerPallet: 560, hinweis: '', active: false },
   { id: 'b015', sig: '5r-57x35-debit', category: 'Debit-Text 14M', artikel: '57mm*35mm (5) + debit text 14M', ean: '',
-    match: { rollen: 5, w: 57, h: 35 }, dims: [17.0, 3.0, 6.0], weightKg: 0.16, hinweis: 'wird produziert (von 9120107187419)', active: false },
+    match: { rollen: 5, w: 57, h: 35 }, dims: [17.4, 3.5, 5.6], weightKg: 0.16, hinweis: 'wird produziert (von 9120107187419)', active: false },
 
   /* ▸ + Debit-Text 18M (57×40) ──────────────────────────────────── */
   { id: 'b016', sig: '50r-57x40-debit', category: 'Debit-Text 18M', artikel: '57mm*40mm (50) + debit text 18M', ean: '9120107187457',
-    match: { rollen: 50, w: 57, h: 40 }, dims: [20.0, 20.0, 13.0], weightKg: 2.50, hinweis: '', active: false },
+    match: { rollen: 50, w: 57, h: 40 }, dims: [20.7, 20.5, 12.4], weightKg: 2.20, maxPerPallet: 250, hinweis: '', active: false },
   { id: 'b017', sig: '20r-57x40-debit', category: 'Debit-Text 18M', artikel: '57mm*40mm (20) + debit text 18M', ean: '9120107187440',
-    match: { rollen: 20, w: 57, h: 40 }, dims: [20.5, 8.5, 12.5], weightKg: 0.92, hinweis: '', active: false },
+    match: { rollen: 20, w: 57, h: 40 }, dims: [20.8, 8.6, 12.4], weightKg: 0.90, maxPerPallet: 560, hinweis: '', active: false },
   { id: 'b018', sig: '5r-57x40-debit', category: 'Debit-Text 18M', artikel: '57mm*40mm (5) + debit text 18M', ean: '',
-    match: { rollen: 5, w: 57, h: 40 }, dims: [19.0, 4.0, 6.0], weightKg: 0.24, hinweis: 'wird produziert (von 9120107187457)', active: false },
+    match: { rollen: 5, w: 57, h: 40 }, dims: [19.2, 3.7, 5.5], weightKg: 0.20, hinweis: 'wird produziert (von 9120107187457)', active: false },
 
   /* ▸ + Debit-Text 9M (57×30) ───────────────────────────────────── */
   { id: 'b019', sig: '50r-57x30-debit', category: 'Debit-Text 9M', artikel: '57mm*30mm (50) + debit text 9M', ean: '9120107187464',
-    match: { rollen: 50, w: 57, h: 30 }, dims: [15.0, 15.0, 12.0], weightKg: 1.42, hinweis: '', active: false },
+    match: { rollen: 50, w: 57, h: 30 }, dims: [16.3, 15.9, 12.4], weightKg: 1.40, maxPerPallet: 350, hinweis: '', active: false },
   { id: 'b020', sig: '5r-57x30-debit', category: 'Debit-Text 9M', artikel: '57mm*30mm (5) + debit text 9M', ean: '',
-    match: { rollen: 5, w: 57, h: 30 }, dims: [14.0, 3.0, 6.0], weightKg: 0.14, hinweis: 'wird produziert (von 9120107187464)', active: false },
+    match: { rollen: 5, w: 57, h: 30 }, dims: [14.8, 2.9, 5.6], weightKg: 0.14, hinweis: 'wird produziert (von 9120107187464)', active: false },
 
   /* ▸ ÖKO Thermorollen ───────────────────────────────────────────── */
   { id: 'b021', sig: 'oeko-50r-57x35', category: 'ÖKO', artikel: 'ÖKO 57mm*35mm (50) + debit text 14M', ean: '9120107187532',
-    match: { rollen: 50, w: 57, h: 35 }, dims: [20.0, 20.0, 12.0], weightKg: 2.14, hinweis: 'ÖKO-Variante', active: false },
+    match: { rollen: 50, w: 57, h: 35 }, dims: [18.8, 19.0, 12.8], weightKg: 2.20, hinweis: 'ÖKO-Variante', active: false },
   { id: 'b022', sig: 'oeko-20r-57x35', category: 'ÖKO', artikel: 'ÖKO 57mm*35mm (20) + debit text 14M', ean: '9120107187525',
-    match: { rollen: 20, w: 57, h: 35 }, dims: [20.0, 8.0, 12.0], weightKg: 0.86, hinweis: 'ÖKO-Variante', active: false },
+    match: { rollen: 20, w: 57, h: 35 }, dims: [20.0, 8.0, 12.0], weightKg: 0.86, hinweis: 'ÖKO — Maße geschätzt', active: false },
   { id: 'b023', sig: 'oeko-5r-57x35', category: 'ÖKO', artikel: 'ÖKO 57mm*35mm (5) + debit text 14M', ean: '',
-    match: { rollen: 5, w: 57, h: 35 }, dims: [17.0, 3.0, 5.5], weightKg: 0.20, hinweis: 'ÖKO, wird produziert', active: false },
+    match: { rollen: 5, w: 57, h: 35 }, dims: [16.7, 3.3, 5.6], weightKg: 0.20, hinweis: 'ÖKO, wird produziert', active: false },
   { id: 'b024', sig: 'oeko-40r-80x80', category: 'ÖKO', artikel: 'ÖKO 80mm*80mm (40) 80M', ean: '9120107187518',
-    match: { rollen: 40, w: 80, h: 80 }, dims: [39.0, 32.0, 17.0], weightKg: 12.36, hinweis: 'ÖKO-Variante', active: true },
+    match: { rollen: 40, w: 80, h: 80 }, dims: [39.3, 32.5, 16.8], weightKg: 12.40, hinweis: 'ÖKO-Variante', active: true },
 
   /* ▸ 80×80 80M ─────────────────────────────────────────────────── */
   { id: 'b025', sig: '50r-80x80', category: '80×80 80M', artikel: '80mm*80mm (50) 80M', ean: '9120107187327',
-    match: { rollen: 50, w: 80, h: 80 }, dims: [40.0, 40.0, 18.0], weightKg: 13.18, hinweis: '', active: true },
+    match: { rollen: 50, w: 80, h: 80 }, dims: [40.5, 40.6, 17.1], weightKg: 13.64, maxPerPallet: 48, hinweis: '', active: true },
   { id: 'b026', sig: '40r-80x80', category: '80×80 80M', artikel: '80mm*80mm (40) 80M', ean: '9120107187358',
-    match: { rollen: 40, w: 80, h: 80 }, dims: [40.0, 33.0, 17.0], weightKg: 10.80, hinweis: '', active: true },
+    match: { rollen: 40, w: 80, h: 80 }, dims: [40.3, 32.6, 17.0], weightKg: 11.24, maxPerPallet: 48, hinweis: '', active: true },
   { id: 'b027', sig: '20r-80x80', category: '80×80 80M', artikel: '80mm*80mm (20) 80M', ean: '9120107187365',
-    match: { rollen: 20, w: 80, h: 80 }, dims: [40.0, 17.0, 16.5], weightKg: 6.22, hinweis: '', active: true },
+    match: { rollen: 20, w: 80, h: 80 }, dims: [40.3, 16.7, 17.0], weightKg: 5.58, maxPerPallet: 126, hinweis: '', active: true },
   { id: 'b028', sig: '15r-80x80', category: '80×80 80M', artikel: '80mm*80mm (15) 80M', ean: '9120107187549',
-    match: { rollen: 15, w: 80, h: 80 }, dims: [40.0, 25.0, 9.0], weightKg: 4.82, hinweis: '', active: true },
+    match: { rollen: 15, w: 80, h: 80 }, dims: [40.6, 24.7, 9.2], weightKg: 4.16, hinweis: '', active: true },
   { id: 'b029', sig: '10r-80x80', category: '80×80 80M', artikel: '80mm*80mm (10) 80M', ean: '9120107187372',
-    match: { rollen: 10, w: 80, h: 80 }, dims: [40.5, 17.0, 9.0], weightKg: 3.06, hinweis: '', active: true },
-  { id: 'b030', sig: '5r-80x80', category: '80×80 80M', artikel: '80mm*80mm (5) 80M', ean: '',
-    match: { rollen: 5, w: 80, h: 80 }, dims: [40.5, 9.0, 9.0], weightKg: 1.28, hinweis: '', active: true },
+    match: { rollen: 10, w: 80, h: 80 }, dims: [40.5, 16.7, 9.0], weightKg: 2.78, hinweis: '', active: true },
+  { id: 'b030', sig: '5r-80x80', category: '80×80 80M', artikel: '80mm*80mm (5) 80M', ean: '9120107188195',
+    match: { rollen: 5, w: 80, h: 80 }, dims: [40.2, 8.7, 8.9], weightKg: 1.38, hinweis: '', active: true },
+
+  /* ▸ ECO ROOLLS® (eigene EAN-Reihe, sonst Maße = 80×80 50r) ────── */
+  { id: 'b042', sig: 'eco-50r-80x80', category: 'ECO ROOLLS', artikel: 'ECO ROOLLS 80mm*80mm (50) 80M', ean: '9120107188218',
+    match: { rollen: 50, w: 80, h: 80 }, dims: [40.3, 40.5, 17.0], weightKg: 13.50, hinweis: 'ECO ROOLLS-Variante', active: false },
 
   /* ▸ 80×andere Formate ─────────────────────────────────────────── */
   { id: 'b031', sig: '50r-80x60', category: '80×andere', artikel: '80mm*60mm (50) 50M', ean: '9120107187877',
-    match: { rollen: 50, w: 80, h: 60 }, dims: [31.0, 31.0, 17.0], weightKg: 7.32, hinweis: '', active: true },
+    match: { rollen: 50, w: 80, h: 60 }, dims: [30.5, 30.5, 17.0], weightKg: 7.42, maxPerPallet: 79, hinweis: '', active: true },
   { id: 'b032', sig: '50r-80x63', category: '80×andere', artikel: '80mm*63mm (50) 50M', ean: '9120107187341',
-    match: { rollen: 50, w: 80, h: 63 }, dims: [32.0, 32.0, 17.0], weightKg: 9.22, hinweis: '', active: true },
+    match: { rollen: 50, w: 80, h: 63 }, dims: [31.8, 32.0, 16.9], weightKg: 8.42, maxPerPallet: 79, hinweis: '', active: true },
   { id: 'b033', sig: '5r-80x63', category: '80×andere', artikel: '80mm*63mm (5) 50M', ean: '',
     match: { rollen: 5, w: 80, h: 63 }, dims: [30.0, 6.0, 8.0], weightKg: 0.88, hinweis: 'wird produziert (von 9120107187341)', active: false },
   { id: 'b034', sig: '50r-80x40', category: '80×andere', artikel: '80mm*40mm (50) 18M', ean: '9120107187709',
-    match: { rollen: 50, w: 80, h: 40 }, dims: [20.0, 20.0, 17.0], weightKg: 2.92, hinweis: '', active: true },
+    match: { rollen: 50, w: 80, h: 40 }, dims: [20.7, 20.5, 17.0], weightKg: 3.02, hinweis: '', active: true },
   { id: 'b035', sig: '50r-80x74', category: '80×andere', artikel: '80mm*74mm 80M - 48 g/m² (50)', ean: '9120107187884',
-    match: { rollen: 50, w: 80, h: 74 }, dims: [37.0, 37.0, 17.0], weightKg: 13.14, hinweis: '48 g/m²', active: true },
+    match: { rollen: 50, w: 80, h: 74 }, dims: [37.0, 37.0, 17.0], weightKg: 13.14, hinweis: '48 g/m² — Maße geschätzt', active: true },
 
   /* ▸ SWIPARO Spezial-Rollen ────────────────────────────────────── */
   { id: 'b036', sig: 'swip-apo-50r', category: 'SWIPARO', artikel: 'SWIPARO Apotheken Thermorollen 80×80 (50)', ean: '9120107187747',
-    match: { rollen: 50, w: 80, h: 80 }, dims: [39.0, 39.0, 17.0], weightKg: 10.00, hinweis: 'Apotheken-Spezial', active: false },
+    match: { rollen: 50, w: 80, h: 80 }, dims: [39.1, 39.1, 18.0], weightKg: 10.00, hinweis: 'Apotheken-Spezial', active: false },
 
-  /* ▸ Tachorollen ───────────────────────────────────────────────── */
+  /* ▸ Tachorollen (alle EAN 9120107187501) ──────────────────────── */
   { id: 'b037', sig: '60-tacho', category: 'Tacho', artikel: '60 Stk. Tachorollen', ean: '9120107187501',
-    match: { rollen: 60, w: 57, h: 14 }, dims: [18.0, 18.0, 13.0], weightKg: 1.80, hinweis: 'Tacho-Sonderformat', active: true },
+    match: { rollen: 60, w: 57, h: 14 }, dims: [18.7, 16.4, 13.9], weightKg: 1.88, hinweis: 'Tacho-Sonderformat', active: true },
   { id: 'b038', sig: '3-tacho-swip', category: 'Tacho', artikel: 'Swip 3 Stk. Tachorollen', ean: '9120107187501',
-    match: { rollen: 3, w: 57, h: 14 }, dims: [9.0, 3.0, 6.0], weightKg: 0.08, hinweis: 'Tacho-Sonderformat', active: true },
+    match: { rollen: 3, w: 57, h: 14 }, dims: [9.0, 3.0, 6.1], weightKg: 0.08, hinweis: 'Tacho-Sonderformat', active: true },
   { id: 'b039', sig: '6-tacho-swip', category: 'Tacho', artikel: 'Swip 6 Stk. Tachorollen', ean: '9120107187501',
-    match: { rollen: 6, w: 57, h: 14 }, dims: [9.0, 6.0, 6.0], weightKg: 0.18, hinweis: 'Tacho-Sonderformat', active: true },
+    match: { rollen: 6, w: 57, h: 14 }, dims: [9.0, 6.0, 6.1], weightKg: 0.18, hinweis: 'Tacho-Sonderformat', active: true },
   { id: 'b040', sig: '12-tacho-swip', category: 'Tacho', artikel: 'Swip 12 Stk. Tachorollen', ean: '9120107187501',
-    match: { rollen: 12, w: 57, h: 14 }, dims: [12.0, 9.0, 6.0], weightKg: 0.26, hinweis: 'Tacho-Sonderformat', active: true },
+    match: { rollen: 12, w: 57, h: 14 }, dims: [12.0, 9.0, 6.1], weightKg: 0.26, hinweis: 'Tacho-Sonderformat', active: true },
   { id: 'b041', sig: '15-tacho-swip', category: 'Tacho', artikel: 'Swip 15 Stk. Tachorollen', ean: '9120107187501',
-    match: { rollen: 15, w: 57, h: 14 }, dims: [15.0, 9.0, 6.0], weightKg: 0.44, hinweis: 'Tacho-Sonderformat', active: true },
+    match: { rollen: 15, w: 57, h: 14 }, dims: [15.0, 9.0, 6.1], weightKg: 0.44, hinweis: 'Tacho-Sonderformat', active: true },
 ];
 
 /* ── Amazon FBA Produkte (Sheet 2 aus Dimensional list) ────────────────
@@ -334,34 +761,38 @@ const DEFAULT_BOX_CATALOG = [
    gehören, sondern für FBA-Versand dokumentiert werden.
    ──────────────────────────────────────────────────────────────────── */
 const DEFAULT_AMAZON_PRODUCTS = [
+  /* Quelle: "Dimensional list (3).xlsx" — Sheet "Second".
+     Wo Excel keine Maße enthält, behalten wir Heuristik-Werte (verifiziert).
+     weightKg=null → in Excel nicht gepflegt; UI darf "?" anzeigen.            */
+
   /* ▸ Silosäcke */
-  { id: 'a001', asin: 'B09DFZ41CS', category: 'Silosäcke',  name: 'Silosäcke ungefüllt (100×25 cm) 5 Stk.',  l: 25.0, w: 20.0, h: 15.0, weightKg: 0.58 },
-  { id: 'a002', asin: 'B09DG3JH8V', category: 'Silosäcke',  name: 'Silosäcke ungefüllt (100×25 cm) 10 Stk.', l: 34.0, w: 25.0, h: 12.0, weightKg: 1.12 },
-  { id: 'a003', asin: 'B09DG21CPY', category: 'Silosäcke',  name: 'Silosäcke ungefüllt (100×25 cm) 20 Stk.', l: 32.0, w: 24.0, h: 17.0, weightKg: 2.06 },
+  { id: 'a001', asin: 'B09DFZ41CS', category: 'Silosäcke',  name: 'Silosäcke ungefüllt (100×25 cm) 5 Stk.',  l: 25.0, w: 20.0, h: 15.0, weightKg: null },
+  { id: 'a002', asin: 'B09DG3JH8V', category: 'Silosäcke',  name: 'Silosäcke ungefüllt (100×25 cm) 10 Stk.', l: 34.0, w: 25.0, h: 12.0, weightKg: null },
+  { id: 'a003', asin: 'B09DG21CPY', category: 'Silosäcke',  name: 'Silosäcke ungefüllt (100×25 cm) 20 Stk.', l: 30.5, w: 30.5, h: 21.1, weightKg: 5.04 },
   /* ▸ Sandsäcke */
-  { id: 'a004', asin: 'B09C5QCLSR', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 5 Stk.',  l: 24.0, w: 20.0, h: 15.0, weightKg: 0.34 },
-  { id: 'a005', asin: 'B09C5QPY2Q', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 10 Stk.', l: 24.0, w: 20.0, h: 15.0, weightKg: 0.50 },
-  { id: 'a006', asin: 'B09GPC4CPM', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 20 Stk.', l: 24.0, w: 20.0, h: 15.0, weightKg: 0.90 },
-  { id: 'a007', asin: 'B09C5RCT19', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 50 Stk.', l: 33.0, w: 25.0, h: 17.0, weightKg: 1.98 },
+  { id: 'a004', asin: 'B09C5QCLSR', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 5 Stk.',  l: 24.3, w: 19.8, h: 14.3, weightKg: null },
+  { id: 'a005', asin: 'B09C5QPY2Q', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 10 Stk.', l: 24.3, w: 19.8, h: 14.3, weightKg: null },
+  { id: 'a006', asin: 'B09GPC4CPM', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 20 Stk.', l: 24.3, w: 19.8, h: 14.3, weightKg: null },
+  { id: 'a007', asin: 'B09C5RCT19', category: 'Sandsäcke',  name: 'Sandsack 40×60 cm — 50 Stk.', l: 33.0, w: 25.0, h: 17.0, weightKg: null },
   /* ▸ Big Bags */
-  { id: 'a008', asin: 'B08H8X5SZ3', category: 'Big Bags',   name: 'Big Bags 1 Stk.',  l: 24.0, w: 20.0, h: 15.0, weightKg: 0.90 },
-  { id: 'a009', asin: 'B08H9TJHHX', category: 'Big Bags',   name: 'Big Bags 2 Stk.',  l: 30.0, w: 30.0, h: 21.0, weightKg: 1.92 },
-  { id: 'a010', asin: 'B092VRX6R7', category: 'Big Bags',   name: 'Big Bags 4 Stk.',  l: 35.0, w: 24.0, h: 37.0, weightKg: 3.50 },
-  /* ▸ Absperrband */
-  { id: 'a011', asin: 'B08THJ3D76', category: 'Absperrband', name: 'Absperrband 100m', l:  8.0, w:  8.0, h:  8.0, weightKg: 0.20 },
-  { id: 'a012', asin: 'B08THKHY26', category: 'Absperrband', name: 'Absperrband 200m', l: 16.0, w:  8.0, h:  8.0, weightKg: 0.44 },
-  { id: 'a013', asin: 'B08THLLX1N', category: 'Absperrband', name: 'Absperrband 500m', l: 25.0, w: 20.0, h: 10.0, weightKg: 1.30 },
+  { id: 'a008', asin: 'B08H8X5SZ3', category: 'Big Bags',   name: 'Big Bags 1 Stk.',  l: 24.3, w: 19.8, h: 14.3, weightKg: 0.92 },
+  { id: 'a009', asin: 'B08H9TJHHX', category: 'Big Bags',   name: 'Big Bags 2 Stk.',  l: 30.5, w: 30.5, h: 21.1, weightKg: 1.88 },
+  { id: 'a010', asin: 'B092VRX6R7', category: 'Big Bags',   name: 'Big Bags 4 Stk.',  l: 35.2, w: 24.0, h: 36.0, weightKg: 3.60 },
+  /* ▸ Absperrband — Maße fehlen in Excel; Heuristik bleibt */
+  { id: 'a011', asin: 'B08THJ3D76', category: 'Absperrband', name: 'Absperrband 100m', l:  8.0, w:  8.0, h:  8.0, weightKg: null },
+  { id: 'a012', asin: 'B08THKHY26', category: 'Absperrband', name: 'Absperrband 200m', l: 16.0, w:  8.0, h:  8.0, weightKg: null },
+  { id: 'a013', asin: 'B08THLLX1N', category: 'Absperrband', name: 'Absperrband 500m', l: 25.0, w: 20.0, h: 10.0, weightKg: null },
   /* ▸ Klebeband Fragile */
-  { id: 'a014', asin: 'B081TKLKF2', category: 'Klebeband Fragile', name: 'Klebeband Fragile x1 (D-10 H-5)', l: 10.0, w: 10.0, h:  5.0, weightKg: 0.14 },
-  { id: 'a015', asin: 'B081TGR7LZ', category: 'Klebeband Fragile', name: 'Klebeband Fragile x6',           l: 30.0, w: 20.0, h:  5.0, weightKg: 0.86 },
-  { id: 'a016', asin: 'B081THC94P', category: 'Klebeband Fragile', name: 'Klebeband Fragile x12',          l: 30.0, w: 20.0, h: 10.0, weightKg: 1.70 },
-  { id: 'a017', asin: 'B081TJ9YQ1', category: 'Klebeband Fragile', name: 'Klebeband Fragile x36',          l: 31.0, w: 22.0, h: 30.0, weightKg: 5.44 },
+  { id: 'a014', asin: 'B081TKLKF2', category: 'Klebeband Fragile', name: 'Klebeband Fragile x1 (D-10 H-5)', l: 10.0, w: 10.0, h:  4.8, weightKg: 0.14 },
+  { id: 'a015', asin: 'B081TGR7LZ', category: 'Klebeband Fragile', name: 'Klebeband Fragile x6',           l: 30.0, w: 20.0, h:  4.8, weightKg: 0.82 },
+  { id: 'a016', asin: 'B081THC94P', category: 'Klebeband Fragile', name: 'Klebeband Fragile x12',          l: 30.0, w: 20.0, h:  9.6, weightKg: 1.66 },
+  { id: 'a017', asin: 'B081TJ9YQ1', category: 'Klebeband Fragile', name: 'Klebeband Fragile x36',          l: 31.0, w: 21.0, h: 29.9, weightKg: 5.34 },
   /* ▸ Holzwolle */
-  { id: 'a018', asin: 'B08Y5KB7QD', category: 'Holzwolle',   name: 'Holzwolle Füllmaterial 500g', l: 24.0, w: 20.0, h: 15.0, weightKg: 0.62 },
-  { id: 'a019', asin: 'B08Y5CB4XT', category: 'Holzwolle',   name: 'Holzwolle Füllmaterial 1 kg', l: 30.0, w: 30.0, h: 21.0, weightKg: 1.44 },
-  { id: 'a020', asin: 'B08Y5STTVQ', category: 'Holzwolle',   name: 'Holzwolle Füllmaterial 2.5 kg', l: 59.0, w: 40.0, h: 27.0, weightKg: 3.12 },
+  { id: 'a018', asin: 'B08Y5KB7QD', category: 'Holzwolle',   name: 'Holzwolle Füllmaterial 500g', l: 24.0, w: 20.0, h: 15.0, weightKg: null },
+  { id: 'a019', asin: 'B08Y5CB4XT', category: 'Holzwolle',   name: 'Holzwolle Füllmaterial 1 kg', l: 30.0, w: 25.5, h: 14.0, weightKg: 1.10 },
+  { id: 'a020', asin: 'B08Y5STTVQ', category: 'Holzwolle',   name: 'Holzwolle Füllmaterial 2.5 kg', l: 59.0, w: 40.0, h: 27.0, weightKg: null },
   /* ▸ Sonstiges */
-  { id: 'a021', asin: 'B08DKNY1X7', category: 'Sonstiges',   name: 'Kürbiskernöl 1 l (D-8 H-25)', l:  8.0, w:  8.0, h: 25.0, weightKg: 1.20 },
+  { id: 'a021', asin: 'B08DKNY1X7', category: 'Sonstiges',   name: 'Kürbiskernöl 1 l (6 Dosen)', l: 27.3, w: 18.5, h: 32.5, weightKg: 6.52 },
 ];
 
 const DEFAULT_HEIGHTS = [
@@ -509,540 +940,8 @@ async function importAdminConfigFromFile(file) {
   return validated;
 }
 
-/**
- * Höhen-Normalisierung: einige Etiketten benutzen Innen-Durchmesser (Hülse),
- * andere Aussen-Durchmesser für die gleiche physische Rolle.
- * Mapping ist konfigurierbar via Admin-Panel (sessionStorage).
- */
-function normalizeHeight(h) {
-  if (h == null) return h;
-  const heights = getAdminConfig().heights || [];
-  for (const e of heights) {
-    if (e.from === h || e.to === h) return e.to;
-  }
-  return h;
-}
 
-function parseTitleMeta(title) {
-  if (!title) return { dimStr: null, rollen: null, dim: null };
-  const cleanTitle = title.replace(/\s+/g, ' ').trim();
-  // 57mm x 35mm or 57x35x12 etc.
-  const dimMatch = cleanTitle.match(/(\d+)\s*(?:mm)?\s*[xх×]\s*(\d+)/i);
-  const rawW = dimMatch ? parseInt(dimMatch[1], 10) : null;
-  const rawH = dimMatch ? parseInt(dimMatch[2], 10) : null;
-  const dimStr = dimMatch ? `${rawW} × ${rawH}` : null;
-  // Equivalence-Klasse für Gruppierung: Höhe wird auf Standard-Aussen-Höhe gemappt
-  const normH = normalizeHeight(rawH);
-  const dim = dimMatch
-    ? { w: rawW, h: rawH, normH, normW: rawW }
-    : null;
-  const rollenMatch = cleanTitle.match(/(\d+)\s*(Stk|Rollen|Rolls|Stück|Pcs|Pieces)\b/i);
-  const rollen = rollenMatch ? parseInt(rollenMatch[1], 10) : null;
-  return { dimStr, rollen, dim };
-}
-
-/**
- * Klassifiziert einen Artikel in eine der 5 Kategorien (in dieser Reihenfolge):
- *   Thermorollen → Heipa → Veit → Tachographenrollen → Produktion
- */
-function classifyItem(title) {
-  const t = (title || '').toLowerCase();
-  // Tachographenrollen — explicit check first (could overlap with thermal terms)
-  const isTacho = /tachograph|tacho\b|fahrtenschreiber|dtco/i.test(t);
-  // Produktion — physical bulk products + verpackungs-zubehör (Klebeband, Holzwolle, etc.)
-  const isProduktion =
-    /big\s*bag|silosack|sandsack|säcke|bauschutt|holzsack|klebeband|paketband|packband|absperrband|holzwolle|füllmaterial|kürbiskern/i.test(t);
-  // Veit — Marke
-  const isVeit = /\bveit\b/i.test(t);
-  // Heipa — Marke
-  const isHeipa = /\bheipa\b/i.test(t);
-  // Thermorollen — alles andere mit Thermo-Indikator
-  const isThermo =
-    !isTacho &&
-    !isProduktion &&
-    !isVeit &&
-    !isHeipa &&
-    /thermorollen|thermopapier|thermal|kassenrollen|bonrollen|cash\s*roll|ec[-\s]*cash|swiparo|eco\s*roolls/i.test(
-      t
-    );
-
-  // Hauptkategorie (eine pro Artikel)
-  let category = 'sonstige';
-  if (isThermo) category = 'thermorollen';
-  else if (isHeipa) category = 'heipa';
-  else if (isVeit) category = 'veit';
-  else if (isTacho) category = 'tachographenrollen';
-  else if (isProduktion) category = 'produktion';
-
-  return { isThermo, isVeit, isHeipa, isTacho, isProduktion, category };
-}
-
-const CATEGORY_ORDER = [
-  'thermorollen',
-  'heipa',
-  'veit',
-  'tachographenrollen',
-  'produktion',
-  'sonstige',
-];
-const CATEGORY_LABELS = {
-  thermorollen: 'Thermorollen',
-  heipa: 'Heipa',
-  veit: 'Veit',
-  tachographenrollen: 'Tachographenrollen',
-  produktion: 'Produktion',
-  sonstige: 'Sonstige',
-};
-const CATEGORY_COLORS = {
-  thermorollen: '#2563EB',
-  heipa: '#0891B2',
-  veit: '#7C3AED',
-  tachographenrollen: '#D97706',
-  produktion: '#65A30D',
-  sonstige: '#6B6560',
-};
-function categoryRank(cat) {
-  const i = CATEGORY_ORDER.indexOf(cat);
-  return i < 0 ? 99 : i;
-}
-
-/**
- * Parse the raw text extracted from the .docx into structured pallets.
- * Resilient to quirks: line-broken titles, missing prep type, varied spacing.
- */
-function parseLagerauftragText(rawText) {
-  // Normalize: collapse multi-blank lines, trim each line
-  const text = rawText
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((l) => l.trim())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n');
-
-  const meta = {};
-  // Toleranter Parser: erlaubt Tab oder Newline zwischen Label und Wert.
-  // mammoth.js exportiert Tabellen-Zellen unterschiedlich je nach Vorlage.
-  const grab = (label, captureRe = '([^\\n\\t]+)') => {
-    const re = new RegExp(`${label}[\\s\\t]+${captureRe}`, 'i');
-    const m = text.match(re);
-    return m ? m[1].trim() : null;
-  };
-  const sn = grab('Sendungsnummer');
-  if (sn) meta.sendungsnummer = sn;
-  const nn = grab('Name');
-  if (nn) meta.name = nn;
-  const ln = grab('Lieferanschrift');
-  if (ln) meta.destination = ln;
-  const sku = grab('SKUs insgesamt', '(\\d+)');
-  if (sku) meta.totalSkus = parseInt(sku, 10);
-  const eh = grab('Einheiten insgesamt', '(\\d+)');
-  if (eh) meta.totalUnits = parseInt(eh, 10);
-
-  // Erstelldatum/Uhrzeit aus Name extrahieren:
-  // "FBA STA (21/04/2026 07:43)-DTM2"
-  if (meta.name) {
-    const dm = meta.name.match(
-      /\((\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s+(\d{1,2}):(\d{2})\)/
-    );
-    if (dm) {
-      const [, dd, mm, yy, h, m] = dm;
-      const yyyy = yy.length === 2 ? `20${yy}` : yy;
-      meta.createdAtIso = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(
-        2,
-        '0'
-      )}T${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
-      meta.createdDate = `${dd.padStart(2, '0')}.${mm.padStart(2, '0')}.${yyyy}`;
-      meta.createdTime = `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
-    }
-    const destMatch = meta.name.match(/-([A-Z]{2,5}\d?)\s*$/);
-    if (destMatch && !meta.destination) meta.destination = destMatch[1];
-  }
-
-  // Find all PALETTE markers
-  const palletRe = /PALETTE\s+(\d+)\s*-\s*(P\d+-B\d+)/gi;
-  const matches = [...text.matchAll(palletRe)];
-  const pallets = [];
-
-  matches.forEach((m, idx) => {
-    const number = parseInt(m[1], 10);
-    const id = m[2];
-    const start = m.index + m[0].length;
-    const end = idx + 1 < matches.length ? matches[idx + 1].index : text.length;
-    const block = text.slice(start, end);
-
-    const hasFourSideWarning = /SKU\s+Aufkleber\s+auf\s+allen\s+4\s+Seiten/i.test(
-      block
-    );
-
-    const items = parseItemsFromBlock(block, id);
-    pallets.push({ number, id, hasFourSideWarning, items });
-  });
-
-  // Einzelne SKU section — после последней палеты, может отсутствовать
-  // Определяем границу: либо конец текста, либо первая ACHTUNG-метка
-  const lastPalletEnd = matches.length > 0
-    ? matches[matches.length - 1].index + matches[matches.length - 1][0].length
-    : 0;
-  const tail = text.slice(lastPalletEnd);
-  const einzelneSkuItems = parseEinzelneSkuSection(tail);
-
-  return { meta, pallets, einzelneSkuItems };
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   EINZELNE SKU PARSER
-   После последней палеты идёт серия блоков:
-     ACHTUNG! Jeder Karton mit (X × Y Rollen)... Einzelne SKU
-     <article-line — может быть с префиксом "Einzelne SKU à" или без>
-     Zu verwendender Artikel: ...
-   X = Anzahl Packs pro Karton
-   Y = Items pro Pack
-   effectiveRollen = X × Y
-   ───────────────────────────────────────────────────────────────────────── */
-function parseEinzelneSkuSection(tail) {
-  const items = [];
-  if (!tail) return items;
-  const lines = tail.split('\n').map((l) => l.replace(/ /g, ' ').trim());
-
-  // Locate every ACHTUNG marker
-  const achtungRe = /ACHTUNG[!]?\s+Jeder\s+Karton\s+mit\s+\(\s*(\d+)\s*[×x*]\s*(\d+)\s*([^)]*)\)/i;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const m = line.match(achtungRe);
-    if (!m) continue;
-
-    const X = parseInt(m[1], 10);
-    const Y = parseInt(m[2], 10);
-    const contentRaw = (m[3] || '').trim();
-    const contentLabel = contentRaw.replace(/^x\s*/i, '').trim() || 'Rollen';
-
-    // Looking for the next item line: contains TABs and is not another ACHTUNG
-    for (let j = i + 1; j < lines.length; j++) {
-      const next = lines[j];
-      if (!next) continue;
-      if (achtungRe.test(next)) break;             // next ACHTUNG without article
-      if (!next.includes('\t')) continue;          // skip narrative lines
-      // Strip "Einzelne SKU à/→/>" prefix if present
-      // Strip "Einzelne SKU" prefix mit beliebigem Pfeil (à/→/—>/->)
-      const cleaned = next.replace(/^Einzelne\s+SKU\s*[^\w\s]+\s*/i, '');
-      const parsed = parseEinzelneSkuItemLine(
-        cleaned, lines, j, { X, Y, contentLabel }
-      );
-      if (parsed) {
-        items.push(parsed);
-      }
-      break; // одна ACHTUNG = один item
-    }
-  }
-
-  return items;
-}
-
-function parseEinzelneSkuItemLine(line, allLines, lineIdx, achtung) {
-  const parts = line.split('\t').map((s) => s.trim());
-  if (parts.length < 5) return null;
-
-  const sku = parts[0] || '';
-  const title = (parts[1] || '').replace(/\s+/g, ' ').trim();
-  const asin = parts[2] || '';
-  const fnsku = parts[3] || '';
-  const codeCol = parts[4] || '';
-  const condition = parts[5] || '';
-  const prep = parts[6] || '';
-  const prepTypeRaw = parts[7] || '';
-  const labeler = parts[8] || '';
-  const unitsStr = parts[9] || '';
-
-  let ean = null, upc = null;
-  const eanM = codeCol.match(/^EAN:\s*(.+)/i);
-  const upcM = codeCol.match(/^UPC:\s*(.+)/i);
-  if (eanM) ean = eanM[1].trim();
-  else if (upcM) upc = upcM[1].trim();
-
-  // Look forward for "Zu verwendender Artikel" until next ACHTUNG or empty stretch
-  let useItem = null;
-  for (let k = lineIdx + 1; k < Math.min(allLines.length, lineIdx + 5); k++) {
-    if (/^ACHTUNG/i.test(allLines[k])) break;
-    const um = allLines[k].match(/^Zu\s+verwendender\s+Artikel:\s*(.+)/i);
-    if (um) { useItem = um[1].trim(); break; }
-  }
-
-  const units = parseInt(unitsStr, 10) || 0;
-  const prepType =
-    prepTypeRaw === 'null' || prepTypeRaw === '"--"' || !prepTypeRaw
-      ? null
-      : prepTypeRaw;
-
-  const { dimStr, rollen, dim } = parseTitleMeta(title);
-  const cls = classifyItem(title);
-  const codeType = detectCodeType(fnsku);
-
-  return {
-    sku, title, asin, fnsku, ean, upc,
-    condition, prep, prepType, labeler,
-    units, useItem,
-    dimStr, rollen, dim,
-    isThermo: cls.isThermo,
-    isVeit: cls.isVeit,
-    isHeipa: cls.isHeipa,
-    isTacho: cls.isTacho,
-    isProduktion: cls.isProduktion,
-    category: cls.category,
-    codeType,
-    // ─── Einzelne SKU spezifisch ───
-    isEinzelneSku: true,
-    einzelneSku: {
-      packsPerCarton: achtung.X,        // X aus (X × Y)
-      itemsPerPack: achtung.Y,          // Y aus (X × Y)
-      effectiveRollen: achtung.X * achtung.Y, // physikalische Rollen pro Karton
-      contentLabel: achtung.contentLabel,
-      // cartonsCount = ceil(units / X); X = Packs pro Karton, units zählt Packs
-      cartonsCount: Math.max(1, Math.ceil(units / achtung.X)),
-    },
-  };
-}
-
-/* makePalletItemRegex — toleranter Artikel-Zeilen-Matcher.
-   Berücksichtigt:
-   • Verschiedene Pfeil-Formen: à, À, →, >, —> (em-dash + >), ->, =>
-     (em-dash U+2014 + > kommt im realen DTM-Export öfter vor → 8 von 9 Items
-      auf P1-B5 wurden bisher übersehen!)
-   • Tippfehler im Pallet-Präfix: P1-B5 UND B1-B5 (Beispiel-Auftrag enthält beides)
-   Pattern: ^[A-Z]+<tail>\s*[^\w\s]+\s*    (tail = "1-B5" für ID "P1-B5") */
-function makePalletItemRegex(palletId, opts = {}) {
-  const { anchorStart = true, global = false } = opts;
-  const m = palletId.match(/^([A-Z]+)(.+)$/i);
-  if (!m) return null;
-  const tail = m[2].replace(/-/g, '\\-');
-  const pattern = `${anchorStart ? '^' : ''}[A-Z]+${tail}\\s*[^\\w\\s]+\\s*`;
-  return new RegExp(pattern, global ? 'gi' : 'i');
-}
-
-function parseItemsFromBlock(block, palletId) {
-  // Each item lives on a SINGLE line, columns separated by TABS:
-  // "P1-B2 à 1S-NQDZ-4DXS\tTitle\tASIN\tFNSKU\tEAN: 1234\tNeu\tprep\tprepType\tlabeler\tunits"
-  // The "Zu verwendender Artikel:" note appears on a following line.
-  const items = [];
-  const lines = block.split('\n').map((l) => l.replace(/ /g, ' ').trim());
-  const startRe = makePalletItemRegex(palletId);
-  if (!startRe) return items;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!startRe.test(line)) continue;
-
-    const rest = line.replace(startRe, '');
-    const parts = rest.split('\t').map((s) => s.trim());
-    if (parts.length < 5) continue;
-
-    const sku = parts[0] || '';
-    const title = (parts[1] || '').replace(/\s+/g, ' ').trim();
-    const asin = parts[2] || '';
-    const fnsku = parts[3] || '';
-    const codeCol = parts[4] || '';
-    const condition = parts[5] || '';
-    const prep = parts[6] || '';
-    const prepTypeRaw = parts[7] || '';
-    const labeler = parts[8] || '';
-    const unitsStr = parts[9] || '';
-
-    let ean = null;
-    let upc = null;
-    const eanM = codeCol.match(/^EAN:\s*(.+)/i);
-    const upcM = codeCol.match(/^UPC:\s*(.+)/i);
-    if (eanM) ean = eanM[1].trim();
-    else if (upcM) upc = upcM[1].trim();
-
-    // Look forward for "Zu verwendender Artikel" until the next item starts
-    let useItem = null;
-    for (let j = i + 1; j < lines.length; j++) {
-      if (startRe.test(lines[j])) break;
-      const um = lines[j].match(/^Zu\s+verwendender\s+Artikel:\s*(.+)/i);
-      if (um) {
-        useItem = um[1].trim();
-        break;
-      }
-    }
-
-    const units = parseInt(unitsStr, 10) || 0;
-    const prepType =
-      prepTypeRaw === 'null' || prepTypeRaw === '"--"' || !prepTypeRaw
-        ? null
-        : prepTypeRaw;
-
-    const { dimStr, rollen, dim } = parseTitleMeta(title);
-    const cls = classifyItem(title);
-    const codeType = detectCodeType(fnsku);
-
-    items.push({
-      sku,
-      title,
-      asin,
-      fnsku,
-      ean,
-      upc,
-      condition,
-      prep,
-      prepType,
-      labeler,
-      units,
-      useItem,
-      dimStr,
-      rollen,
-      dim,
-      isThermo: cls.isThermo,
-      isVeit: cls.isVeit,
-      isHeipa: cls.isHeipa,
-      isTacho: cls.isTacho,
-      isProduktion: cls.isProduktion,
-      category: cls.category,
-      codeType,
-    });
-  }
-
-  return items;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────
-   STRICT VALIDATION
-   Ни один артикул не должен «ускользнуть»: повторно сканируем сырой текст
-   независимыми регулярками и сравниваем с распарсенным результатом.
-   ───────────────────────────────────────────────────────────────────────── */
-function validateParsing(rawText, parsed) {
-  const text = rawText.replace(/\r/g, '');
-  const issues = [];
-
-  // 1. PALETTE blocks — count must match
-  const palletMatches = [...text.matchAll(/PALETTE\s+(\d+)\s*-\s*(P\d+-B\d+)/gi)];
-  if (palletMatches.length !== parsed.pallets.length) {
-    issues.push({
-      severity: 'error',
-      kind: 'pallet-count',
-      msg: `Палет в тексте: ${palletMatches.length}, распарсено: ${parsed.pallets.length}`,
-    });
-  }
-
-  // 2. Item lines — count `PX-BX à` markers in raw text per pallet block
-  const palletExpectedItems = {};
-  palletMatches.forEach((m, idx) => {
-    const palletId = m[2];
-    const start = m.index + m[0].length;
-    const end =
-      idx + 1 < palletMatches.length
-        ? palletMatches[idx + 1].index
-        : text.length;
-    const block = text.slice(start, end);
-    const itemRe = makePalletItemRegex(palletId, { anchorStart: false, global: true });
-    palletExpectedItems[palletId] = itemRe ? (block.match(itemRe) || []).length : 0;
-  });
-
-  parsed.pallets.forEach((p) => {
-    const expected = palletExpectedItems[p.id];
-    if (expected != null && expected !== p.items.length) {
-      issues.push({
-        severity: 'error',
-        kind: 'item-count',
-        palletId: p.id,
-        msg: `${p.id}: ожидалось ${expected} артиклей, распарсено ${p.items.length}`,
-      });
-    }
-  });
-
-  // 3. FNSKU presence — нур warnen, wenn FNSKU komplett fehlt.
-  //    Cross-Pallet-Duplikate sind LEGITIM (z.B. zwei Single-SKU-Paletten
-  //    mit demselben Artikel — siehe FBA15LPH6M0K Beispiel) und werden NICHT
-  //    als Fehler/Warnung gemeldet.
-  parsed.pallets.forEach((p) =>
-    p.items.forEach((it) => {
-      if (!it.fnsku) {
-        issues.push({
-          severity: 'error',
-          kind: 'missing-fnsku',
-          palletId: p.id,
-          msg: `${p.id}: артикул без FNSKU — "${it.title?.slice(0, 40) || '—'}"`,
-        });
-      }
-    })
-  );
-
-  // 4. Header SKU/Unit totals cross-check
-  // WICHTIG: Header zählt UNIQUE FNSKUs (z.B. 8 SKU bedeutet 8 verschiedene Produkte),
-  // unser Parser zählt physische Entries (z.B. derselbe Artikel auf 2 Paletten = 2 Entries).
-  // Daher: für SKU-Vergleich → nur eindeutige FNSKUs zählen. Für Einheiten → alle aufsummieren.
-  const eskuItems = parsed.einzelneSkuItems || [];
-  const allEntries = [
-    ...parsed.pallets.flatMap((p) => p.items),
-    ...eskuItems,
-  ];
-  const uniqueFnskus = new Set();
-  allEntries.forEach((it) => { if (it.fnsku) uniqueFnskus.add(it.fnsku); });
-  const totalSkus = uniqueFnskus.size;
-  const totalEntries = allEntries.length;
-  const totalUnits = allEntries.reduce((s, it) => s + (it.units || 0), 0);
-  if (parsed.meta?.totalSkus != null && parsed.meta.totalSkus !== totalSkus) {
-    issues.push({
-      severity: 'error',
-      kind: 'sku-mismatch',
-      msg: `Header: ${parsed.meta.totalSkus} SKU (eindeutige FNSKUs), gezählt: ${totalSkus}`,
-    });
-  }
-  if (parsed.meta?.totalUnits != null && parsed.meta.totalUnits !== totalUnits) {
-    issues.push({
-      severity: 'error',
-      kind: 'unit-mismatch',
-      msg: `Заголовок: ${parsed.meta.totalUnits} Einheiten, посчитано: ${totalUnits}`,
-    });
-  }
-
-  // 5. Required fields per item
-  parsed.pallets.forEach((p) =>
-    p.items.forEach((it) => {
-      if (!it.units || it.units <= 0) {
-        issues.push({
-          severity: 'warn',
-          kind: 'zero-units',
-          palletId: p.id,
-          msg: `${p.id} / ${it.fnsku}: количество = 0`,
-        });
-      }
-      if (!it.asin) {
-        issues.push({
-          severity: 'warn',
-          kind: 'missing-asin',
-          palletId: p.id,
-          msg: `${p.id} / ${it.fnsku}: пустой ASIN`,
-        });
-      }
-      if (!it.ean && !it.upc) {
-        issues.push({
-          severity: 'warn',
-          kind: 'missing-code',
-          palletId: p.id,
-          msg: `${p.id} / ${it.fnsku}: нет EAN/UPC`,
-        });
-      }
-    })
-  );
-
-  const errors = issues.filter((i) => i.severity === 'error');
-  const warnings = issues.filter((i) => i.severity === 'warn');
-  return {
-    ok: errors.length === 0,
-    issues,
-    errorCount: errors.length,
-    warningCount: warnings.length,
-    counts: {
-      palletsInText: palletMatches.length,
-      palletsParsed: parsed.pallets.length,
-      itemsParsed: totalSkus,                  // unique FNSKUs (matches header)
-      entriesParsed: totalEntries,             // physical entries across pallets
-      itemsExpectedFromHeader: parsed.meta?.totalSkus,
-      unitsParsed: totalUnits,
-      unitsExpectedFromHeader: parsed.meta?.totalUnits,
-    },
-  };
-}
+/* normalizeHeight, parseTitleMeta, classifyItem, categoryRank, CATEGORY_*, parseLagerauftragText, validateParsing — moved to ../utils/parseLagerauftrag.js */
 
 /* ─────────────────────────────────────────────────────────────────────────
    VOLUME CALCULATION
@@ -1257,17 +1156,18 @@ function itemVolumeCm3(item) {
   }
   const boxVolume = dims[0] * dims[1] * dims[2];
   // Cartons-Berechnung:
-  //   Einzelne SKU: cartonsCount = ceil(units / packsPerCarton)
-  //                 (units zählt Mini-Packs, X Packs füllen einen Karton)
-  //   Normal:       cartonsCount = ceil(units / rollen)
+  //   Standard FBA: 1 unit = 1 verkäufliche Verpackung = 1 Karton.
+  //                 "(10 Rollen)" im Titel beschreibt nur, wieviele Rollen
+  //                 IN einem Karton sind — kein Divisor. units = cartons.
+  //   Einzelne SKU: ein Sammel-Karton enthält X Mini-Packs (units zählt
+  //                 Mini-Packs); cartonsCount = ceil(units / X).
   let cartonsCount;
   if (item.isEinzelneSku && item.einzelneSku) {
     cartonsCount = item.einzelneSku.cartonsCount ?? Math.max(
       1, Math.ceil((item.units || 0) / item.einzelneSku.packsPerCarton)
     );
   } else {
-    const rollen = item.rollen || 1;
-    cartonsCount = Math.max(1, Math.ceil((item.units || 0) / rollen));
+    cartonsCount = Math.max(1, item.units || 0);
   }
   const totalCm3 = boxVolume * cartonsCount;
   const floorAreaPerCarton = dims[0] * dims[1];
@@ -1400,28 +1300,98 @@ function palletVolumeStats(pallet, extraItems = []) {
      -10000  Kategorie-Konflikt (z.B. Thermo auf reiner Produktions-Palette)
      +100×   Tightness (näher an 85%-Sweet-Spot)
    ───────────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────
+   EINZELNE-SKU-VERTEILUNG — "intelligente" Variante mit Prioritäts-Kette.
+
+   Hard constraints (Eligibility):
+     • Palette darf KEINE Single-SKU-Palette sein (≥2 Artikel-Slots vorhanden,
+       und die "4 Seiten Aufkleber"-Markierung hatte bereits den hint, dass
+       hier nichts dazu kommen darf — wir behalten die ≥2-Regel).
+     • newVolume ≤ PALLET_VOLUME_CM3 (1.728 m³)
+     • newWeight ≤ kgPerPallet (admin-config, default 700)
+
+   Scoring-Hierarchie (höher = besser):
+     +50000  useItem-Match  — ESKU "wird von 9120107187501 produziert" und
+                              eine Palette enthält bereits Artikel mit dieser
+                              Katalog-ID (EAN/FNSKU/useItem). Stärkstes Signal:
+                              die Items gehören operativ zusammen.
+     +10000  Format-Match   — gleiche rollen + (norm.)Dimensionen
+     + 3000  Brand-Match    — gleiche Marke (Heipa, Veit, SWIPARO, …)
+     + 1000  Category-Match — gleiche Kategorie (thermorollen, produktion, …)
+     -10000  Cat-Conflict   — Mono-Kategorie-Palette und ESKU passt NICHT
+     +  100×(1-distance)    — Paletten näher am 85%-Sweet-Spot
+     +   50×(1-weightFrac)  — leichter beladene Palette bevorzugen (Balance)
+
+   Group-Phase:
+     Vor der Einzel-Verteilung gruppieren wir ESKUs nach useItem-Katalog-ID.
+     Jede Gruppe versucht zuerst, KOMPLETT auf eine einzige Palette zu kommen
+     (nach Gruppen-Score). Klappt das nicht, fallen wir auf Item-für-Item-
+     Verteilung zurück (mit Best-Fit-Decreasing).
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Extrahiert die Katalog-ID aus einem useItem-Freitext.
+   Beispiele:
+     "9120107187501"                       → "9120107187501"
+     "wird von 9120107187501 produziert"   → "9120107187501"
+     "wird von Artikel X001BVO9LV produziert" → "X001BVO9LV"
+     "X0017LU653"                          → "X0017LU653"
+     "wird von 41 produziert"              → null  (zu kurze Zahl, mehrdeutig)
+*/
+function extractUseItemId(s) {
+  if (!s) return null;
+  const ean = String(s).match(/\b\d{12,14}\b/);
+  if (ean) return ean[0];
+  const xcode = String(s).match(/\bX[0-9A-Z]{8,10}\b/i);
+  if (xcode) return xcode[0].toUpperCase();
+  return null;
+}
+
+/* Sammelt alle Identitäts-Tokens eines Paletten-Artikels für useItem-Match.
+   ESKU.useItem === "9120107187501"  →  matched, wenn diese ID irgendwo
+   im palletItem (eigene useItem ID, EAN, FNSKU) auftaucht. */
+function palletItemIdTokens(it) {
+  const out = new Set();
+  const useId = extractUseItemId(it.useItem);
+  if (useId) out.add(useId);
+  if (it.ean) out.add(String(it.ean));
+  if (it.fnsku) out.add(String(it.fnsku).toUpperCase());
+  return out;
+}
+
 function distributeEinzelneSku(pallets, einzelneSkuItems) {
   const PALLET_VOL = PALLET_VOLUME_CM3;
   const SWEET_SPOT = 0.85;
-  const assignments = {}; // item.fnsku -> palletId
-  const unassigned = [];  // items, die nirgends passen
-  const reasons = {};     // item.fnsku -> Grund
+  const cfg = getAdminConfig();
+  const WEIGHT_CAP = cfg.tarif?.kgPerPallet || 700;
 
-  if (!einzelneSkuItems || einzelneSkuItems.length === 0) {
-    return { assignments, unassigned, reasons };
+  const assignments = {};        // itemKey → palletId
+  const unassigned = [];
+  const reasons = {};            // itemKey → human-readable reason
+  const reasonsBreakdown = {};   // itemKey → { useItemMatch, formatMatch, ... }
+
+  if (!einzelneSkuItems?.length) {
+    return { assignments, unassigned, reasons, reasonsBreakdown };
   }
 
-  // 1. Berechne pro Palette: Volumen, Formate, Kategorien, Eligibility
+  // 1. Per-Palette state: volume, weight, formats, brands, categories,
+  //    useItem-IDs (für matching). Aktualisierbar während Distribution.
   const palletState = pallets.map((p) => {
     let currentVolCm3 = 0;
     let currentWeightKg = 0;
+    const formats = new Set();
+    const categories = new Set();
+    const brands = new Set();
+    const useItemIds = new Set();
     for (const it of p.items) {
       const v = itemVolumeCm3(it);
       currentVolCm3 += v.totalCm3;
       currentWeightKg += v.totalKg;
+      formats.add(formatSignature(it));
+      if (it.category) categories.add(it.category);
+      const b = detectBrand(it.title);
+      if (b && b !== 'GENERIC') brands.add(b);
+      palletItemIdTokens(it).forEach((id) => useItemIds.add(id));
     }
-    const formats = new Set(p.items.map(formatSignature));
-    const categories = new Set(p.items.map((it) => it.category).filter(Boolean));
     const uniqueArtikel = new Set(
       p.items.map((it) => it.fnsku || it.sku || it.title).filter(Boolean)
     );
@@ -1430,89 +1400,205 @@ function distributeEinzelneSku(pallets, einzelneSkuItems) {
       currentVolCm3,
       currentWeightKg,
       formats,
+      brands,
       categories,
+      useItemIds,
       uniqueArtikelCount: uniqueArtikel.size,
       eligible: uniqueArtikel.size >= 2,
     };
   });
 
-  // 2. Sortiere Einzelne-SKU-Artikel nach Volumen DESC (Best-Fit Decreasing)
-  const ranked = einzelneSkuItems.map((item) => {
+  // 2. ESKU enrichment: Volumen, Brand, Format, useItemId.
+  const enriched = einzelneSkuItems.map((item) => {
     const v = itemVolumeCm3(item);
-    return { item, v, volNeeded: v.totalCm3 };
-  }).sort((a, b) => b.volNeeded - a.volNeeded);
+    return {
+      item,
+      key: item.fnsku || item.sku || item.title,
+      v,
+      volNeeded: v.totalCm3,
+      weightNeeded: v.totalKg,
+      formatSig: formatSignature(item),
+      category: item.category,
+      brand: detectBrand(item.title),
+      useItemId: extractUseItemId(item.useItem),
+    };
+  });
 
-  // 3. Pro Artikel: finde best-scoring Palette
-  for (const r of ranked) {
-    const itemFmt = formatSignature(r.item);
-    const itemCat = r.item.category;
+  // 3. Gruppiere ESKUs mit gleichem useItemId — diese gehören zusammen.
+  //    Items ohne useItemId bilden je eine 1-Element-Gruppe.
+  const groupMap = new Map();
+  let soloIdx = 0;
+  for (const e of enriched) {
+    const gKey = e.useItemId ? `uid:${e.useItemId}` : `solo:${soloIdx++}`;
+    if (!groupMap.has(gKey)) groupMap.set(gKey, []);
+    groupMap.get(gKey).push(e);
+  }
+  // Gruppen nach Gesamt-Volumen sortieren (groß zuerst — Best-Fit-Decreasing).
+  const groups = [...groupMap.values()]
+    .map((items) => ({
+      items,
+      totalVol: items.reduce((s, e) => s + e.volNeeded, 0),
+      totalWeight: items.reduce((s, e) => s + e.weightNeeded, 0),
+      useItemId: items[0].useItemId,
+      sharedFormat: items.every((e) => e.formatSig === items[0].formatSig)
+        ? items[0].formatSig
+        : null,
+    }))
+    .sort((a, b) => b.totalVol - a.totalVol);
 
+  // 4. Score eine Palette für ein einzelnes Item — gibt Score + Aufschlüsselung.
+  const scoreOne = (entry, ps) => {
+    const breakdown = {
+      useItemMatch: false, formatMatch: false, brandMatch: false,
+      categoryMatch: false, categoryConflict: false,
+      fillScore: 0, weightScore: 0,
+    };
+    let score = 0;
+
+    if (entry.useItemId && ps.useItemIds.has(entry.useItemId)) {
+      score += 50000;
+      breakdown.useItemMatch = true;
+    }
+    if (ps.formats.has(entry.formatSig)) {
+      score += 10000;
+      breakdown.formatMatch = true;
+    }
+    if (entry.brand && entry.brand !== 'GENERIC' && ps.brands.has(entry.brand)) {
+      score += 3000;
+      breakdown.brandMatch = true;
+    }
+    if (entry.category && ps.categories.has(entry.category)) {
+      score += 1000;
+      breakdown.categoryMatch = true;
+    } else if (entry.category && ps.categories.size === 1) {
+      score -= 10000;
+      breakdown.categoryConflict = true;
+    } else if (entry.category && ps.categories.size > 1
+                && !ps.categories.has(entry.category)) {
+      score -= 200;
+    }
+
+    const fillPctAfter = (ps.currentVolCm3 + entry.volNeeded) / PALLET_VOL;
+    const distance = Math.abs(SWEET_SPOT - fillPctAfter);
+    breakdown.fillScore = Math.round((1 - Math.min(1, distance)) * 100);
+    score += breakdown.fillScore;
+
+    const weightFracAfter = (ps.currentWeightKg + entry.weightNeeded) / WEIGHT_CAP;
+    breakdown.weightScore = Math.round((1 - Math.min(1, weightFracAfter)) * 50);
+    score += breakdown.weightScore;
+
+    return { score, breakdown };
+  };
+
+  // 5. Hard fit-check: Volumen UND Gewicht müssen reinpassen.
+  const canFit = (ps, volNeeded, weightNeeded) => {
+    if (!ps.eligible) return false;
+    if (ps.currentVolCm3 + volNeeded > PALLET_VOL) return false;
+    if (ps.currentWeightKg + weightNeeded > WEIGHT_CAP) return false;
+    return true;
+  };
+
+  // 6. Commit: schreibe assignment + update palletState.
+  const commit = (entry, ps, breakdown, source) => {
+    assignments[entry.key] = ps.pallet.id;
+    reasonsBreakdown[entry.key] = { ...breakdown, source };
+    ps.currentVolCm3 += entry.volNeeded;
+    ps.currentWeightKg += entry.weightNeeded;
+    ps.formats.add(entry.formatSig);
+    if (entry.category) ps.categories.add(entry.category);
+    if (entry.brand && entry.brand !== 'GENERIC') ps.brands.add(entry.brand);
+    if (entry.useItemId) ps.useItemIds.add(entry.useItemId);
+  };
+
+  // 7. Group-pass: jede Gruppe versucht, KOMPLETT auf eine Palette zu kommen.
+  //    Score = Summe der Item-Scores (so dass useItem-Matches dominieren).
+  for (const g of groups) {
     let best = null;
     let bestScore = -Infinity;
-    let bestRejectReason = null;
+    let bestBreakdowns = null;
+    let bestRejectReason = 'Keine eligible Palette';
 
     for (const ps of palletState) {
-      if (!ps.eligible) {
-        bestRejectReason = bestRejectReason || 'Keine Palette mit ≥2 Artikeln';
+      if (!canFit(ps, g.totalVol, g.totalWeight)) {
+        if (!ps.eligible) bestRejectReason = 'Keine Palette mit ≥2 Artikeln';
+        else bestRejectReason = 'Volumen oder Gewicht überschritten';
         continue;
       }
-      const newVolCm3 = ps.currentVolCm3 + r.volNeeded;
-      if (newVolCm3 > PALLET_VOL) {
-        bestRejectReason = 'Volumen überschritten auf allen Kandidaten';
-        continue;
+      // Simuliere: scoring jedes Items einzeln, summieren.
+      let totalScore = 0;
+      const breakdowns = [];
+      // Wichtig: simuliere SEQUENTIELL — nach erstem Item ist seine Format-/
+      // Kategorie-Eigenschaft auf der Palette präsent → folgende Gruppen-Items
+      // matchen automatisch. Wir nutzen eine Schatten-Kopie des States.
+      const shadow = {
+        ...ps,
+        formats: new Set(ps.formats),
+        categories: new Set(ps.categories),
+        brands: new Set(ps.brands),
+        useItemIds: new Set(ps.useItemIds),
+        currentVolCm3: ps.currentVolCm3,
+        currentWeightKg: ps.currentWeightKg,
+      };
+      for (const e of g.items) {
+        const { score, breakdown } = scoreOne(e, shadow);
+        totalScore += score;
+        breakdowns.push({ entry: e, breakdown });
+        // Schatten-Update
+        shadow.currentVolCm3 += e.volNeeded;
+        shadow.currentWeightKg += e.weightNeeded;
+        shadow.formats.add(e.formatSig);
+        if (e.category) shadow.categories.add(e.category);
+        if (e.brand && e.brand !== 'GENERIC') shadow.brands.add(e.brand);
+        if (e.useItemId) shadow.useItemIds.add(e.useItemId);
       }
-
-      // ─── Scoring ───
-      let score = 0;
-
-      // 1. Format-Match (sehr stark) — gleiches rollen + dim
-      if (ps.formats.has(itemFmt)) {
-        score += 10000;
-      }
-
-      // 2. Kategorie-Logik
-      if (itemCat && ps.categories.has(itemCat)) {
-        // Gleiche Kategorie auf Palette → gut
-        score += 1000;
-      } else if (itemCat && ps.categories.size > 0 && !ps.categories.has(itemCat)) {
-        // Kategorie-Konflikt: Thermo soll nicht auf reine Produktions-Palette etc.
-        // ABER: wenn die Palette gemischt ist (≥2 Kategorien), ist es OK
-        if (ps.categories.size === 1) {
-          score -= 10000; // hart bestrafen — Thermo gehört nicht auf reine Sandsack-Palette
-        } else {
-          score -= 200; // weniger stark — gemischte Palette akzeptiert mehr
-        }
-      }
-
-      // 3. Tightness — bevorzuge Paletten, die nach Platzierung nahe Sweet-Spot 85% liegen
-      const fillPctAfter = newVolCm3 / PALLET_VOL;
-      // Distanz zu Sweet-Spot (0 = perfekt, 1 = weit weg)
-      const distance = Math.abs(SWEET_SPOT - fillPctAfter);
-      score += Math.round((1 - distance) * 100);
-
-      // 4. Mini-Tiebreaker: bei Gleichstand nimm die wenig-vollere Palette
-      score += Math.round((1 - fillPctAfter) * 5);
-
-      if (score > bestScore) {
-        bestScore = score;
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
         best = ps;
+        bestBreakdowns = breakdowns;
       }
     }
 
-    const key = r.item.fnsku || r.item.sku || r.item.title;
-    if (best) {
-      assignments[key] = best.pallet.id;
-      // Aktualisiere State für nachfolgende Distributionen
-      best.currentVolCm3 += r.volNeeded;
-      best.formats.add(itemFmt);
-      if (itemCat) best.categories.add(itemCat);
+    if (best && bestBreakdowns) {
+      // Group passt — alle Items committen.
+      for (const b of bestBreakdowns) {
+        commit(b.entry, best, b.breakdown, g.useItemId ? 'group-useItem' : 'group-solo');
+      }
+    } else if (g.items.length === 1) {
+      // 1-Element-Gruppe konnte nicht platziert werden → unassigned.
+      const e = g.items[0];
+      unassigned.push(e.item);
+      reasons[e.key] = bestRejectReason;
     } else {
-      unassigned.push(r.item);
-      reasons[key] = bestRejectReason || 'Keine passende Palette';
+      // Mehrteilige Gruppe lässt sich nicht komplett platzieren → split.
+      // Item-für-Item-Verteilung mit Best-Fit-Decreasing.
+      const sortedItems = [...g.items].sort((a, b) => b.volNeeded - a.volNeeded);
+      for (const e of sortedItems) {
+        let bestPS = null;
+        let bestS = -Infinity;
+        let bestBD = null;
+        let lastReject = bestRejectReason;
+        for (const ps of palletState) {
+          if (!canFit(ps, e.volNeeded, e.weightNeeded)) {
+            if (!ps.eligible) lastReject = 'Keine Palette mit ≥2 Artikeln';
+            else lastReject = 'Volumen oder Gewicht überschritten';
+            continue;
+          }
+          const { score, breakdown } = scoreOne(e, ps);
+          if (score > bestS) {
+            bestS = score; bestPS = ps; bestBD = breakdown;
+          }
+        }
+        if (bestPS) {
+          commit(e, bestPS, bestBD, 'split-fallback');
+        } else {
+          unassigned.push(e.item);
+          reasons[e.key] = lastReject;
+        }
+      }
     }
   }
 
-  return { assignments, unassigned, reasons };
+  return { assignments, unassigned, reasons, reasonsBreakdown };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -1962,23 +2048,76 @@ function DropZone({ onFile, hasFile }) {
     if (f) onFile(f);
   };
 
+  /* Compact mode — once a file is loaded, this collapses to a thin strip
+     so it doesn't dominate the workspace. Hero mode is the first-visit
+     experience: large, animated, self-explanatory.                      */
+  if (hasFile) {
+    return (
+      <div
+        className={`lp-btn2-hover ${over ? 'is-over' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+        style={{
+          border: `1px dashed ${over ? T.accent : T.borderStrong}`,
+          borderRadius: 10,
+          padding: '14px 18px',
+          background: over ? T.accentBg : T.surface,
+          cursor: 'pointer',
+          transition: 'all 0.15s ease',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+        }}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".docx"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFile(f);
+            e.target.value = '';
+          }}
+        />
+        <span style={{ fontSize: 18, color: over ? T.accent : T.textMuted }}>↑</span>
+        <div style={{ fontSize: 13, fontWeight: 500, color: over ? T.accent : T.text }}>
+          Anderen Lagerauftrag laden
+        </div>
+        <span style={{ flex: 1 }} />
+        <span
+          style={{
+            fontSize: 10,
+            color: T.textMuted,
+            letterSpacing: 1.2,
+            textTransform: 'uppercase',
+            fontWeight: 600,
+          }}
+        >
+          .docx ablegen
+        </span>
+      </div>
+    );
+  }
+
+  /* Hero mode — first visit. Big, animated, self-explanatory. */
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        setOver(true);
-      }}
+      className={`lp-dropzone-hero ${over ? 'is-over' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
       onDragLeave={() => setOver(false)}
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
       style={{
-        border: `2px dashed ${over ? T.blue : T.border}`,
-        borderRadius: 10,
-        padding: hasFile ? '20px 24px' : '40px 24px',
-        background: over ? T.blueBg : T.surface,
+        border: `2px dashed ${over ? T.accent : T.borderStrong}`,
+        borderRadius: 16,
+        padding: '64px 32px',
         textAlign: 'center',
         cursor: 'pointer',
-        transition: 'all 0.15s ease',
+        transition: 'all 0.2s ease',
+        marginTop: 32,
       }}
     >
       <input
@@ -1992,31 +2131,148 @@ function DropZone({ onFile, hasFile }) {
           e.target.value = '';
         }}
       />
+
+      {/* Animated icon — floats subtly, glow ring on hover */}
       <div
-        className={over ? 'lp-drop-bounce' : ''}
         style={{
-          fontSize: hasFile ? 22 : 32,
-          color: over ? T.blue : T.textMuted,
-          marginBottom: 8,
-          letterSpacing: 2,
+          position: 'relative',
+          width: 84,
+          height: 84,
+          margin: '0 auto 22px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
         }}
       >
-        ↓
+        <div
+          className="lp-hero-glow-ring"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            borderRadius: '50%',
+            background: `radial-gradient(circle, ${T.accentBg}, transparent 70%)`,
+          }}
+        />
+        <div
+          className="lp-hero-icon"
+          style={{
+            position: 'relative',
+            width: 64,
+            height: 64,
+            borderRadius: '50%',
+            background: over ? T.accent : T.surfaceRaised,
+            border: `1px solid ${over ? T.accent : T.borderStrong}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 28,
+            color: over ? '#fff' : T.accent,
+            transition: 'all 0.2s ease',
+            boxShadow: over
+              ? '0 0 30px rgba(123,131,235,0.5)'
+              : '0 4px 20px rgba(0,0,0,0.4)',
+          }}
+        >
+          ↓
+        </div>
       </div>
+
+      {/* Title */}
+      <div
+        style={{
+          fontSize: 22,
+          fontWeight: 600,
+          color: over ? T.accent : T.text,
+          marginBottom: 8,
+          letterSpacing: -0.4,
+          transition: 'color 0.15s ease',
+        }}
+      >
+        {over ? 'Datei loslassen' : 'Lagerauftrag analysieren'}
+      </div>
+
+      {/* Subtitle */}
       <div
         style={{
           fontSize: 14,
-          fontWeight: 500,
-          color: over ? T.blue : T.text,
-          marginBottom: 4,
+          color: T.textSub,
+          marginBottom: 20,
+          fontWeight: 400,
         }}
       >
-        {hasFile
-          ? 'Datei ersetzen'
-          : 'Lagerauftrag .docx — hier ablegen'}
+        Datei hier ablegen oder klicken zum Auswählen
       </div>
-      <div style={{ fontSize: 11, color: T.textMuted, letterSpacing: 0.3 }}>
-        oder klicken zum Auswählen
+
+      {/* Format chips — explain what's accepted */}
+      <div
+        style={{
+          display: 'inline-flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '5px 11px',
+            background: T.surfaceRaised,
+            border: `1px solid ${T.border}`,
+            borderRadius: 999,
+            fontSize: 11,
+            color: T.textSub,
+            fontFamily: 'DM Mono, monospace',
+            letterSpacing: 0.4,
+          }}
+        >
+          <span style={{ color: T.accent, fontSize: 9 }}>●</span>
+          .docx
+        </span>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '5px 11px',
+            background: T.surfaceRaised,
+            border: `1px solid ${T.border}`,
+            borderRadius: 999,
+            fontSize: 11,
+            color: T.textSub,
+            letterSpacing: 0.3,
+          }}
+        >
+          Standard
+        </span>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '5px 11px',
+            background: T.surfaceRaised,
+            border: `1px solid ${T.border}`,
+            borderRadius: 999,
+            fontSize: 11,
+            color: T.textSub,
+            letterSpacing: 0.3,
+          }}
+        >
+          Schilder
+        </span>
+        <span
+          style={{
+            fontSize: 10.5,
+            color: T.textMuted,
+            marginLeft: 4,
+            letterSpacing: 0.3,
+          }}
+        >
+          automatisch erkannt
+        </span>
       </div>
     </div>
   );
@@ -4149,6 +4405,24 @@ function EinzelneSkuSection({ items, distribution, onPalletClick }) {
           const key = it.fnsku || it.sku || it.title;
           const target = distribution.assignments[key];
           const reason = distribution.reasons[key];
+          const breakdown = distribution.reasonsBreakdown?.[key];
+          const matchTags = breakdown ? [
+            breakdown.useItemMatch && '🔗 useItem',
+            breakdown.formatMatch && '⊞ Format',
+            breakdown.brandMatch && '★ Marke',
+            breakdown.categoryMatch && '◐ Kategorie',
+            breakdown.categoryConflict && '⚠ Kategorie-Konflikt',
+          ].filter(Boolean) : [];
+          const matchTooltip = breakdown ? [
+            `Zugeordnet zu ${target}`,
+            breakdown.useItemMatch && '✓ useItem-Match (gleicher Katalog-Artikel auf Palette)',
+            breakdown.formatMatch && '✓ Format-Match (gleiche Rollen + Maße)',
+            breakdown.brandMatch && '✓ Marken-Match',
+            breakdown.categoryMatch && '✓ Kategorie-Match',
+            breakdown.categoryConflict && '⚠ Kategorie-Konflikt (kein passender Slot)',
+            `Sweet-Spot-Score: ${breakdown.fillScore}, Gewichts-Score: ${breakdown.weightScore}`,
+            breakdown.source === 'group-useItem' && 'Gruppe gemeinsam mit anderen useItem-Geschwistern platziert',
+          ].filter(Boolean).join('\n') : `Klicken: zur ${target} springen`;
           const v = itemVolumeCm3(it);
           const eskMeta = it.einzelneSku || {};
           return (
@@ -4238,31 +4512,53 @@ function EinzelneSkuSection({ items, distribution, onPalletClick }) {
 
               {/* Destination Badge */}
               {target ? (
-                <button
-                  onClick={() => onPalletClick(target)}
-                  style={{
-                    padding: '6px 12px',
-                    background: T.text,
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: 6,
-                    fontSize: 11.5,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    fontFamily: 'DM Mono, monospace',
-                    fontVariantNumeric: 'tabular-nums',
-                    letterSpacing: 0.3,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    transition: 'all 0.15s ease',
-                    whiteSpace: 'nowrap',
-                  }}
-                  className="lp-btn-hover"
-                  title={`Klicken: zur ${target} springen`}
-                >
-                  → {target}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  <button
+                    onClick={() => onPalletClick(target)}
+                    style={{
+                      padding: '6px 12px',
+                      background: T.accent,
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 6,
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      fontFamily: 'DM Mono, monospace',
+                      fontVariantNumeric: 'tabular-nums',
+                      letterSpacing: 0.3,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      transition: 'all 0.15s ease',
+                      whiteSpace: 'nowrap',
+                    }}
+                    className="lp-btn-hover"
+                    title={matchTooltip}
+                  >
+                    → {target}
+                  </button>
+                  {matchTags.length > 0 && (
+                    <div
+                      title={matchTooltip}
+                      style={{
+                        display: 'flex', gap: 4, fontSize: 9,
+                        color: T.textMuted, fontWeight: 600,
+                        letterSpacing: 0.2, whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {matchTags.map((t, i) => (
+                        <span key={i} style={{
+                          padding: '1px 5px',
+                          background: t.startsWith('⚠') ? T.amberBg : T.bg,
+                          color: t.startsWith('⚠') ? T.amber : T.textSub,
+                          border: `1px solid ${t.startsWith('⚠') ? T.amber + '44' : T.border}`,
+                          borderRadius: 3,
+                        }}>{t}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <span
                   title={reason || 'Konnte auf keine Palette platziert werden'}
@@ -4533,43 +4829,35 @@ function SequenceSidebar({
   return (
     <aside
       style={{
-        width: 260,
+        width: 280,
         flexShrink: 0,
-        borderLeft: `1px solid ${T.border}`,
         background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: 14,
+        boxShadow: T.shadowSm,
         position: 'sticky',
-        top: 56, // ниже шапки
+        top: 80,
         alignSelf: 'flex-start',
-        maxHeight: 'calc(100vh - 56px)',
+        maxHeight: 'calc(100vh - 100px)',
         overflowY: 'auto',
-        padding: '24px 20px',
+        padding: '18px 16px',
       }}
     >
-      {/* Pallet-Batterien Reihe */}
+      {/* Pallet-Füllung — kompakter Mini-Charts */}
       {sortedPallets && sortedPallets.length > 0 && (
         <>
-          <div
-            style={{
-              fontSize: 10.5,
-              color: T.textMuted,
-              letterSpacing: 1.6,
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              marginBottom: 10,
-            }}
-          >
+          <div style={{
+            fontSize: 9.5, color: T.textMuted, letterSpacing: 1.4,
+            fontWeight: 700, textTransform: 'uppercase',
+            marginBottom: 12,
+          }}>
             Paletten-Füllung
           </div>
-          <div
-            style={{
-              display: 'flex',
-              gap: 4,
-              flexWrap: 'wrap',
-              marginBottom: 14,
-              paddingBottom: 14,
-              borderBottom: `1px solid ${T.border}`,
-            }}
-          >
+          <div style={{
+            display: 'flex', gap: 6, flexWrap: 'wrap',
+            marginBottom: 14, paddingBottom: 14,
+            borderBottom: `1px solid ${T.border}`,
+          }}>
             {sortedPallets.map((p) => {
               const stats = palletVolumes?.[p.id];
               if (!stats) return null;
@@ -4584,7 +4872,7 @@ function SequenceSidebar({
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    padding: '6px 8px',
+                    padding: '4px 6px',
                     borderRadius: 6,
                     cursor: onPalletClick ? 'pointer' : 'default',
                     fontFamily: 'inherit',
@@ -4601,40 +4889,26 @@ function SequenceSidebar({
             })}
           </div>
           {orderEstimateSec ? (
-            <div
-              style={{
-                marginBottom: 14,
-                padding: '8px 10px',
-                background: T.bg,
-                border: `1px solid ${T.border}`,
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <span style={{ fontSize: 14 }}>⏱</span>
-              <span
-                style={{
-                  fontSize: 9.5,
-                  color: T.textMuted,
-                  letterSpacing: 1.2,
-                  textTransform: 'uppercase',
-                  fontWeight: 700,
-                }}
-              >
-                Auftrag
-              </span>
-              <span
-                className="lp-mono"
-                style={{
-                  marginLeft: 'auto',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: T.text,
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
+            <div style={{
+              marginBottom: 14,
+              padding: '9px 12px',
+              background: T.accentBg,
+              border: `1px solid rgba(91,98,216,0.18)`,
+              borderRadius: 8,
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: 13, color: T.accent }}>⏱</span>
+              <span style={{
+                fontSize: 9.5, color: T.accent,
+                letterSpacing: 1.2, textTransform: 'uppercase',
+                fontWeight: 700,
+              }}>Auftrag</span>
+              <span className="lp-mono" style={{
+                marginLeft: 'auto',
+                fontSize: 13, fontWeight: 700,
+                color: T.accent,
+                fontVariantNumeric: 'tabular-nums',
+              }}>
                 ~{formatDurationShort(orderEstimateSec)}
               </span>
             </div>
@@ -4642,57 +4916,43 @@ function SequenceSidebar({
         </>
       )}
 
-      <div
-        style={{
-          fontSize: 10.5,
-          color: T.textMuted,
-          letterSpacing: 1.6,
-          fontWeight: 600,
-          textTransform: 'uppercase',
-          marginBottom: 6,
-        }}
-      >
+      <div style={{
+        fontSize: 9.5, color: T.textMuted, letterSpacing: 1.4,
+        fontWeight: 700, textTransform: 'uppercase',
+        marginBottom: 4,
+      }}>
         Reihenfolge
       </div>
-      <div
-        style={{
-          fontSize: 13,
-          color: T.text,
-          fontWeight: 500,
-          marginBottom: 16,
-        }}
-      >
+      <div style={{
+        fontSize: 12.5, color: T.textSub, fontWeight: 500,
+        marginBottom: 12,
+      }}>
         {sequenceMode ? 'Globale Nummerierung' : 'Nach Paletten'}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {flatItems.map((row, idx) => (
           <button
             key={`${row.item.fnsku}-${idx}`}
             onClick={() => onItemClick(row.item)}
+            className={activeItemId === row.item.fnsku ? '' : 'lp-row-hover'}
             style={{
               display: 'grid',
-              gridTemplateColumns: '24px 1fr auto',
+              gridTemplateColumns: '22px 1fr auto',
               gap: 10,
               alignItems: 'center',
-              padding: '8px 10px',
+              padding: '7px 8px',
               border: 'none',
               background:
-                activeItemId === row.item.fnsku ? T.bg : 'transparent',
+                activeItemId === row.item.fnsku ? T.accentBg : 'transparent',
+              boxShadow: activeItemId === row.item.fnsku
+                ? `inset 2px 0 0 ${T.accent}` : 'none',
               borderRadius: 6,
               cursor: 'pointer',
               textAlign: 'left',
               fontFamily: 'inherit',
               transition: 'background 0.12s ease',
             }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.background =
-                activeItemId === row.item.fnsku ? T.bg : T.bg)
-            }
-            onMouseLeave={(e) =>
-              (e.currentTarget.style.background =
-                activeItemId === row.item.fnsku ? T.bg : 'transparent')
-            }
           >
             <span
               className="lp-mono"
@@ -5211,11 +5471,48 @@ function buildPalletScreens(sortedPallets, einzelneSkuItems = [], distribution =
         item,
       });
     });
+
+    // ─── Einzelne-SKU-Items für DIESE Palette ───
+    // Smart-Grouping: Wenn ein ESKU dasselbe Format hat wie eine bereits
+    // existierende Format-Gruppe auf der Palette, mischen wir das ESKU-Item
+    // IN diese Gruppe → der Picker sieht 50r-57×35-Karton + ESKU 50r-57×35
+    // direkt nebeneinander. Nur ESKUs ohne passende Format-Gruppe landen in
+    // einer separaten "Einzelne SKU"-Sektion am Ende.
+    const eskuForThisPallet = (einzelneSkuItems || []).filter((esku) => {
+      if (!distribution) return false;
+      const key = esku.fnsku || esku.sku || esku.title;
+      return distribution.assignments[key] === pallet.id;
+    });
+
+    const orphanEskus = [];
+    eskuForThisPallet.forEach((esku) => {
+      const sig = formatSignature(esku);
+      if (fmtMap.has(sig)) {
+        // Format passt → in existierende Gruppe einsortieren
+        fmtMap.get(sig).articles.push({
+          palletId: pallet.id,
+          palletNumber: pallet.number,
+          item: esku,
+          mergedEsku: true,    // Render-Hint: separater visueller Marker
+        });
+      } else {
+        orphanEskus.push(esku);
+      }
+    });
+
     const formatGroups = Array.from(fmtMap.values());
     formatGroups.forEach((g) => {
-      g.articles.sort((a, b) => (b.item.units || 0) - (a.item.units || 0));
+      // Innerhalb einer Gruppe: zuerst nach units DESC, ESKU-Items als
+      // letzte (so dass der Picker erst Standard-Kartons abarbeitet).
+      g.articles.sort((a, b) => {
+        const aEsku = a.item?.isEinzelneSku ? 1 : 0;
+        const bEsku = b.item?.isEinzelneSku ? 1 : 0;
+        if (aEsku !== bEsku) return aEsku - bEsku;
+        return (b.item.units || 0) - (a.item.units || 0);
+      });
       g.totalUnits = g.articles.reduce((s, r) => s + (r.item.units || 0), 0);
       g.articleCount = g.articles.length;
+      g.hasEinzelneSku = g.articles.some((r) => r.item?.isEinzelneSku);
     });
     formatGroups.sort((a, b) => {
       if ((b.rollen || 0) !== (a.rollen || 0))
@@ -5223,26 +5520,19 @@ function buildPalletScreens(sortedPallets, einzelneSkuItems = [], distribution =
       return b.totalUnits - a.totalUnits;
     });
 
-    // ─── Einzelne-SKU-Items für DIESE Palette ───
-    // Erscheinen IMMER als separate Sondergruppe am Ende, mit deutlich
-    // hervorgehobenem Styling, damit sie in FokusModus nicht übersehen werden.
-    const eskuForThisPallet = (einzelneSkuItems || []).filter((esku) => {
-      if (!distribution) return false;
-      const key = esku.fnsku || esku.sku || esku.title;
-      return distribution.assignments[key] === pallet.id;
-    });
+    // Verbleibende ESKUs ohne Format-Match → eigene Gruppe am Ende.
     let einzelneSkuGroup = null;
-    if (eskuForThisPallet.length > 0) {
+    if (orphanEskus.length > 0) {
       einzelneSkuGroup = {
         signature: 'einzelne-sku',
         isEinzelneSku: true,
-        articles: eskuForThisPallet.map((it) => ({
+        articles: orphanEskus.map((it) => ({
           palletId: pallet.id,
           palletNumber: pallet.number,
           item: it,
         })),
-        totalUnits: eskuForThisPallet.reduce((s, it) => s + (it.units || 0), 0),
-        articleCount: eskuForThisPallet.length,
+        totalUnits: orphanEskus.reduce((s, it) => s + (it.units || 0), 0),
+        articleCount: orphanEskus.length,
         dimStr: 'Einzelne SKU',
         rollen: null,
       };
@@ -7062,6 +7352,48 @@ function loadHistory() {
   } catch {
     return [];
   }
+}
+
+/* ─── Session persistence — restore work-in-progress on page reload ───
+   Was wir speichern: alles, was der User in dieser Sitzung erarbeitet hat
+   (Auftrag, geladene/etikettierte Items, Gewicht, Preis, Layout-State).
+   Was wir NICHT speichern: activeItem (UI-Detail), highlightedPalletId.
+   Sets werden zu Arrays serialisiert.                                    */
+const SESSION_KEY = 'lagerauftrag.session.v1';
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    return {
+      ...s,
+      loadedSet: new Set(s.loadedSet || []),
+      labeledSet: new Set(s.labeledSet || []),
+      copiedSet: new Set(s.copiedSet || []),
+    };
+  } catch (e) {
+    console.warn('session load failed', e);
+    return null;
+  }
+}
+
+function saveSession(state) {
+  try {
+    const serializable = {
+      ...state,
+      loadedSet: Array.from(state.loadedSet || []),
+      labeledSet: Array.from(state.labeledSet || []),
+      copiedSet: Array.from(state.copiedSet || []),
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(serializable));
+  } catch (e) {
+    console.warn('session save failed', e);
+  }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
 }
 
 function saveToHistory(entry) {
@@ -8915,7 +9247,7 @@ function AdminCatalogTab({ catalog, onChange, onReset }) {
               outline: 'none',
               transition: 'border-color 0.15s',
             }}
-            onFocus={(e) => (e.target.style.borderColor = T.text)}
+            onFocus={(e) => (e.target.style.borderColor = T.accent)}
             onBlur={(e) => (e.target.style.borderColor = T.border)}
           />
           {search && (
@@ -8975,7 +9307,7 @@ function AdminCatalogTab({ catalog, onChange, onReset }) {
           className="lp-btn-hover"
           style={{
             padding: '9px 14px',
-            background: T.text,
+            background: T.accent,
             border: 'none',
             borderRadius: 8,
             color: '#fff',
@@ -9154,6 +9486,21 @@ function CatalogRow({ row, idx, isLast, expanded, onToggleExpand, onUpdate, onUp
                 <span>{row.weightKg.toFixed(2)} kg</span>
               </>
             )}
+            {row.maxPerPallet != null && (
+              <>
+                <span style={{ color: T.borderStrong }}>·</span>
+                <span
+                  title="Maximal Kartons pro Palette"
+                  style={{
+                    color: T.blue, fontWeight: 600,
+                    background: T.blueBg, padding: '0 5px',
+                    borderRadius: 3,
+                  }}
+                >
+                  ≤ {row.maxPerPallet}/Pal
+                </span>
+              </>
+            )}
             {row.ean && (
               <>
                 <span style={{ color: T.borderStrong }}>·</span>
@@ -9299,6 +9646,18 @@ function CatalogRow({ row, idx, isLast, expanded, onToggleExpand, onUpdate, onUp
               max={500}
               suffix="kg"
               onChange={(v) => onUpdate({ weightKg: v })}
+            />
+          </FieldGroup>
+
+          <FieldGroup label="Max pro Palette">
+            <NumField
+              value={row.maxPerPallet ?? 0}
+              step={1}
+              min={0}
+              max={9999}
+              suffix="Krt."
+              placeholder="—"
+              onChange={(v) => onUpdate({ maxPerPallet: v > 0 ? v : null })}
             />
           </FieldGroup>
 
@@ -9550,7 +9909,7 @@ function AdminAmazonTab({ products, onChange, onReset }) {
           onClick={addRow}
           className="lp-btn-hover"
           style={{
-            padding: '9px 14px', background: T.text, border: 'none',
+            padding: '9px 14px', background: T.accent, border: 'none',
             borderRadius: 8, color: '#fff', fontSize: 12.5, fontWeight: 600,
             cursor: 'pointer', fontFamily: 'inherit',
             display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -9899,13 +10258,14 @@ function AdminTimesTab({ times, onChange, onReset }) {
         style={{
           marginTop: 20,
           padding: '16px 20px',
-          background: T.text,
+          background: T.accent,
           color: '#fff',
           borderRadius: 12,
           display: 'flex',
           alignItems: 'center',
           gap: 16,
           flexWrap: 'wrap',
+          boxShadow: '0 8px 32px rgba(123,131,235,0.25)',
         }}
       >
         <span style={{ fontSize: 9.5, letterSpacing: 1.6, textTransform: 'uppercase', fontWeight: 700, color: 'rgba(255,255,255,0.55)' }}>
@@ -10218,42 +10578,258 @@ function AdminWorkdayTab({ workday, onChange, onReset }) {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
+   Dashboard Overview — Übersichts-Bildschirm: Auslastung + KPIs + Quick-CTAs
+   ───────────────────────────────────────────────────────────────────────── */
+function DashboardOverview({
+  sortedPallets, palletVolumes, loadingProgress, allDone,
+  onGoToPallets, onStartFokus,
+}) {
+  const all = Object.values(palletVolumes);
+  const totalVol = all.reduce((s, v) => s + v.totalCm3, 0);
+  const totalCap = sortedPallets.length * PALLET_VOLUME_CM3;
+  const totalWeightKg = all.reduce((s, v) => s + v.totalWeightKg, 0);
+  const totalWeightCap = all.reduce((s, v) => s + v.weightCapKg, 0);
+  const totalCartons = all.reduce((s, v) => s + v.totalCartons, 0);
+  const totalUnknown = all.reduce((s, v) => s + v.unmatchedCount, 0);
+  const avgFill = all.length > 0
+    ? all.reduce((s, v) => s + v.fillPct, 0) / all.length : 0;
+  const volPct = totalCap > 0 ? (totalVol / totalCap) * 100 : 0;
+  const wPct = totalWeightCap > 0 ? (totalWeightKg / totalWeightCap) * 100 : 0;
+  const avgPct = avgFill * 100;
+  const c = statusColors(
+    avgFill >= 1 ? 'overflow'
+      : avgFill >= 0.92 ? 'tight'
+        : avgFill >= 0.75 ? 'optimal'
+          : avgFill >= 0.5 ? 'good'
+            : avgFill > 0 ? 'low' : 'empty'
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{
+        background: T.surface, border: `1px solid ${T.border}`,
+        borderRadius: 14, padding: '20px 22px',
+        display: 'flex', flexDirection: 'column', gap: 14,
+        boxShadow: T.shadowSm,
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
+        }}>
+          <span style={{
+            fontSize: 9.5, color: T.textMuted, letterSpacing: 1.5,
+            textTransform: 'uppercase', fontWeight: 700,
+          }}>Gesamt-Auslastung</span>
+          <span className="lp-mono" style={{
+            fontSize: 36, fontWeight: 700, color: c.fg,
+            letterSpacing: -1.2, lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {avgPct.toFixed(0)}<span style={{ fontSize: 18, opacity: 0.5 }}>%</span>
+          </span>
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: 1.4,
+            textTransform: 'uppercase', color: c.fg,
+            padding: '4px 9px', borderRadius: 5,
+            background: c.bg, border: `1px solid ${c.fg}33`,
+          }}>{c.label}</span>
+          <div style={{ flex: 1 }} />
+          {totalUnknown > 0 && (
+            <span style={{
+              fontSize: 10.5, color: T.amber, fontWeight: 600,
+              background: T.amberBg, padding: '4px 9px',
+              borderRadius: 5, border: `1px solid ${T.amber}33`,
+            }}>≈ {totalUnknown}× geschätzt</span>
+          )}
+        </div>
+        <div>
+          <div style={{
+            display: 'flex', alignItems: 'baseline',
+            justifyContent: 'space-between', marginBottom: 6,
+          }}>
+            <span style={{
+              fontSize: 11, color: T.textSub, letterSpacing: 0.5, fontWeight: 500,
+            }}>Ladefortschritt</span>
+            <span className="lp-mono" style={{
+              fontSize: 12, color: allDone ? T.green : T.text, fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums', letterSpacing: -0.2,
+            }}>
+              {loadingProgress.done}/{loadingProgress.total} · {loadingProgress.pct.toFixed(0)}%
+              {allDone && <span style={{ marginLeft: 8 }}>✓ alles geladen</span>}
+            </span>
+          </div>
+          <div style={{
+            height: 8, background: T.bg, borderRadius: 4, overflow: 'hidden',
+          }}>
+            <div style={{
+              width: `${loadingProgress.pct}%`, height: '100%',
+              background: allDone
+                ? `linear-gradient(90deg, ${T.green}, #22c55e)`
+                : `linear-gradient(90deg, ${T.accent}, ${T.accentHover})`,
+              borderRadius: 4,
+              transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
+            }} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: 12,
+      }}>
+        {[
+          { label: 'Volumen', value: `${(totalVol / 1_000_000).toFixed(2)} m³`,
+            detail: `von ${(totalCap / 1_000_000).toFixed(2)} m³ · ${volPct.toFixed(0)}%` },
+          { label: 'Gewicht', value: `${totalWeightKg.toFixed(0)} kg`,
+            detail: `von ${totalWeightCap} kg · ${wPct.toFixed(0)}%` },
+          { label: 'Kartons', value: `${totalCartons}`,
+            detail: `${sortedPallets.length} Paletten · ⌀ ${(totalCartons / Math.max(1, sortedPallets.length)).toFixed(0)}` },
+          { label: 'Paletten', value: `${sortedPallets.length}`,
+            detail: `${all.length} mit Daten` },
+        ].map((k) => (
+          <div key={k.label} style={{
+            padding: '14px 16px',
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 12,
+            boxShadow: T.shadowSm,
+          }}>
+            <div style={{
+              fontSize: 9.5, color: T.textMuted, letterSpacing: 1.4,
+              textTransform: 'uppercase', fontWeight: 700, marginBottom: 6,
+            }}>{k.label}</div>
+            <div className="lp-mono" style={{
+              fontSize: 20, color: T.text, fontWeight: 700,
+              letterSpacing: -0.5, lineHeight: 1.1,
+              fontVariantNumeric: 'tabular-nums',
+            }}>{k.value}</div>
+            <div style={{
+              fontSize: 10.5, color: T.textMuted, marginTop: 4,
+              fontFamily: 'DM Mono, monospace',
+            }}>{k.detail}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4 }}>
+        <button onClick={onStartFokus} className="lp-btn-hover" style={{
+          padding: '11px 20px', background: T.accent, color: '#fff',
+          border: `1px solid ${T.accent}`, borderRadius: 10,
+          fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
+          fontFamily: 'inherit', letterSpacing: 0.2,
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          boxShadow: '0 4px 18px rgba(91,98,216,0.25)',
+        }}>
+          <span style={{ fontSize: 15 }}>◎</span>Fokus-Modus starten
+        </button>
+        <button onClick={onGoToPallets} className="lp-btn2-hover" style={{
+          padding: '11px 20px', background: T.surface, color: T.text,
+          border: `1px solid ${T.border}`, borderRadius: 10,
+          fontSize: 13.5, fontWeight: 500, cursor: 'pointer',
+          fontFamily: 'inherit',
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ fontSize: 15 }}>▤</span>Paletten ansehen →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Workflow Steps Definition (für Stepper-Mode)
+   ───────────────────────────────────────────────────────────────────────── */
+const WORKFLOW_STEPS = [
+  { id: 'upload',    num: 1, label: 'Upload',    requiresData: false },
+  { id: 'pruefen',   num: 2, label: 'Prüfen',    requiresData: true },
+  { id: 'verteilen', num: 3, label: 'Verteilen', requiresData: true },
+  { id: 'packen',    num: 4, label: 'Packen',    requiresData: true },
+  { id: 'abschluss', num: 5, label: 'Abschluss', requiresData: true },
+];
+
+/* ─────────────────────────────────────────────────────────────────────────
    Main component
    ───────────────────────────────────────────────────────────────────────── */
 export default function LagerauftragParser({ onBack }) {
-  const [data, setData] = useState(null); // { meta, pallets }
-  const [rawText, setRawText] = useState('');
+  /* ── Restore session from localStorage on first mount ─────────────────
+     Falls der User die Seite reloaded, holen wir Auftrag, Fortschritt und
+     Layout-Einstellungen zurück. So geht keine Arbeit verloren.            */
+  const restored = useMemo(() => loadSession(), []);
+
+  const [data, setData] = useState(() => restored?.data || null);
+  const [rawText, setRawText] = useState(() => restored?.rawText || '');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [fileName, setFileName] = useState(null);
-  const [sequenceMode, setSequenceMode] = useState(false);
+  const [fileName, setFileName] = useState(() => restored?.fileName || null);
+  const [sequenceMode, setSequenceMode] = useState(() => !!restored?.sequenceMode);
   const [printMode, setPrintMode] = useState(false);
   const [activeItem, setActiveItem] = useState(null);
   // ── New revolutionary features ───────────────────────────────────────
-  const [loadStartTs, setLoadStartTs] = useState(null);
-  const [loadDoneTs, setLoadDoneTs] = useState(null);
+  const [loadStartTs, setLoadStartTs] = useState(() => restored?.loadStartTs || null);
+  const [loadDoneTs, setLoadDoneTs] = useState(() => restored?.loadDoneTs || null);
   const [showValidation, setShowValidation] = useState(false);
-  const [loadedSet, setLoadedSet] = useState(() => new Set());
-  const [labeledSet, setLabeledSet] = useState(() => new Set());
-  const [focusGroup, setFocusGroup] = useState(null); // null|'thermo'|'veit'|'other'
+  const [loadedSet, setLoadedSet] = useState(() => restored?.loadedSet || new Set());
+  const [labeledSet, setLabeledSet] = useState(() => restored?.labeledSet || new Set());
+  const [focusGroup, setFocusGroup] = useState(() => restored?.focusGroup || null);
   const [highlightedPalletId, setHighlightedPalletId] = useState(null);
   const [spotlightOpen, setSpotlightOpen] = useState(false);
   const [fokusOpen, setFokusOpen] = useState(false);
   const [abschlussOpen, setAbschlussOpen] = useState(false);
-  const [weightKg, setWeightKg] = useState('');
-  const [priceEur, setPriceEur] = useState('');
+  const [weightKg, setWeightKg] = useState(() => restored?.weightKg || '');
+  const [priceEur, setPriceEur] = useState(() => restored?.priceEur || '');
   const [history, setHistory] = useState(() => loadHistory());
   // Lifted: copy-Marker (FokusModus & AbschlussScreen teilen sich den Set)
-  const [copiedSet, setCopiedSet] = useState(() => new Set());
+  const [copiedSet, setCopiedSet] = useState(() => restored?.copiedSet || new Set());
   // Admin-Panel Zustand + Live-Config
   const [adminOpen, setAdminOpen] = useState(false);
-  const [adminConfig, setAdminConfig] = useState(() => getAdminConfig());
+  const [adminConfig, setAdminConfig] = useState(() => {
+    const cfg = getAdminConfig();
+    setHeightsConfig(cfg.heights);
+    return cfg;
+  });
   const palletRefs = useRef({});
 
-  // Subscribe auf externe Config-Änderungen (z.B. wenn AdminPanel speichert)
+  /* ── App-Shell Navigation (Workspace + Workflow) ─────────────────── */
+  const [layoutMode, setLayoutMode] = useState(() => restored?.layoutMode || 'workspace');
+  const [view, setView] = useState(() => restored?.view || 'pallets');
+  const [paletteTab, setPaletteTab] = useState(() => restored?.paletteTab || 'liste');
+  const [workflowStep, setWorkflowStep] = useState(() => restored?.workflowStep || 'upload');
+  const [activePalletId, setActivePalletId] = useState(null);
+
+  // Subscribe auf externe Config-Änderungen (z.B. wenn AdminPanel speichert).
+  // Push der heights-Config in das parser-Modul, damit normalizeHeight die
+  // aktuellen Mappings sieht.
   useEffect(() => {
-    return subscribeAdminConfig((next) => setAdminConfig({ ...next }));
+    return subscribeAdminConfig((next) => {
+      setHeightsConfig(next.heights);
+      setAdminConfig({ ...next });
+    });
   }, []);
+
+  /* ── Auto-save session on every relevant state change ─────────────────
+     Wir speichern nur, wenn ein Auftrag geladen ist. Wenn data === null
+     (z.B. nach Reset), löschen wir die Session.                            */
+  useEffect(() => {
+    if (!data) {
+      clearSession();
+      return;
+    }
+    saveSession({
+      data, rawText, fileName,
+      loadStartTs, loadDoneTs,
+      loadedSet, labeledSet, copiedSet,
+      weightKg, priceEur,
+      sequenceMode, focusGroup,
+      layoutMode, view, paletteTab, workflowStep,
+    });
+  }, [
+    data, rawText, fileName,
+    loadStartTs, loadDoneTs,
+    loadedSet, labeledSet, copiedSet,
+    weightKg, priceEur,
+    sequenceMode, focusGroup,
+    layoutMode, view, paletteTab, workflowStep,
+  ]);
 
   // Sorted pallets — derived from data
   const sortedPallets = useMemo(
@@ -10501,642 +11077,719 @@ export default function LagerauftragParser({ onBack }) {
     );
   }
 
-  return (
-    <div
-      className="lp-root"
-      style={{
-        background: T.bg,
-        minHeight: '100vh',
-        color: T.text,
-      }}
+  /* ── Helper components for sidebar ─────────────────────────────────── */
+  const NavItem = ({ icon, label, active, onClick, badge, danger }) => (
+    <button
+      type="button"
+      className={`lp-sidebar-item ${active ? 'is-active' : ''}`}
+      onClick={onClick}
+      title={label}
+      style={danger ? { color: T.green } : undefined}
     >
-      {/* ── Header ── */}
-      <header
-        style={{
-          background: T.surface,
-          borderBottom: `1px solid ${T.border}`,
-          padding: '14px 28px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 18,
-          position: 'sticky',
-          top: 0,
-          zIndex: 30,
-        }}
-      >
-        {onBack && (
-          <button
-            onClick={onBack}
-            className="lp-btn2-hover"
-            style={{
-              background: 'transparent',
-              border: `1px solid ${T.border}`,
-              color: T.textSub,
-              padding: '6px 12px',
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: 500,
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-            }}
-          >
-            ← Palette 3D
-          </button>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div
-            style={{
-              fontSize: 9.5,
-              color: T.textMuted,
-              letterSpacing: 1.8,
-              textTransform: 'uppercase',
-              fontWeight: 600,
-            }}
-          >
-            Pallet Optimizer / SwiparoApp
+      <span className="lp-sidebar-icon">{icon}</span>
+      <span>{label}</span>
+      {badge != null && <span className="lp-sidebar-badge">{badge}</span>}
+    </button>
+  );
+
+  const MobileTab = ({ icon, label, active, onClick }) => (
+    <button
+      type="button"
+      className={`lp-mobile-tab ${active ? 'is-active' : ''}`}
+      onClick={onClick}
+    >
+      <span className="lp-mobile-tab-icon">{icon}</span>
+      {label}
+    </button>
+  );
+
+  /* ── Workflow step navigation helpers ──────────────────────────────── */
+  const stepIdx = WORKFLOW_STEPS.findIndex((s) => s.id === workflowStep);
+  const goToStep = (id) => setWorkflowStep(id);
+  const nextStep = () => {
+    const next = WORKFLOW_STEPS[stepIdx + 1];
+    if (next && (!next.requiresData || data)) {
+      if (next.id === 'abschluss') setAbschlussOpen(true);
+      else setWorkflowStep(next.id);
+    }
+  };
+  const prevStep = () => {
+    const prev = WORKFLOW_STEPS[stepIdx - 1];
+    if (prev) setWorkflowStep(prev.id);
+  };
+
+  /* ── Auto-advance step when file uploaded ──────────────────────────── */
+  useEffect(() => {
+    if (data && workflowStep === 'upload') {
+      setWorkflowStep('pruefen');
+    }
+  }, [data, workflowStep]);
+
+  /* ── Title for TopBar ──────────────────────────────────────────────── */
+  const viewTitle = layoutMode === 'workflow'
+    ? `Schritt ${stepIdx + 1}: ${WORKFLOW_STEPS[stepIdx]?.label || ''}`
+    : !data ? 'Willkommen'
+      : view === 'dashboard' ? 'Übersicht'
+        : view === 'pallets' ? 'Paletten'
+          : 'Lagerauftrag';
+
+  return (
+    <div className="lp-root lp-shell">
+      {/* ╔════════════════════ SIDEBAR ════════════════════╗ */}
+      <aside className="lp-sidebar">
+        <div className="lp-sidebar-brand">
+          <div className="lp-sidebar-brand-logo">
+            <img src="/brand/logo-icon.svg" alt="Logo" />
           </div>
-          <div
-            style={{
-              fontSize: 18,
-              fontWeight: 500,
-              color: T.text,
-              letterSpacing: -0.3,
-              marginTop: 1,
-            }}
-          >
-            Lagerauftrag
+          <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <div style={{
+              fontSize: 9, color: T.textMuted, letterSpacing: 1.4,
+              textTransform: 'uppercase', fontWeight: 700, lineHeight: 1.2,
+            }}>SwiparoApp</div>
+            <div style={{
+              fontSize: 13.5, color: T.text, fontWeight: 700,
+              letterSpacing: -0.2, lineHeight: 1.3, marginTop: 2,
+            }}>Lagerauftrag</div>
           </div>
         </div>
 
-        <div style={{ flex: 1 }} />
+        {/* Layout-Mode Toggle */}
+        <div className="lp-mode-toggle">
+          <button
+            className={`lp-mode-toggle-btn ${layoutMode === 'workspace' ? 'is-active' : ''}`}
+            onClick={() => setLayoutMode('workspace')}
+            title="Workspace — freies Arbeiten"
+          >
+            <span style={{ fontSize: 12 }}>▤</span>
+            Workspace
+          </button>
+          <button
+            className={`lp-mode-toggle-btn ${layoutMode === 'workflow' ? 'is-active' : ''}`}
+            onClick={() => setLayoutMode('workflow')}
+            title="Workflow — Schritt für Schritt"
+          >
+            <span style={{ fontSize: 12 }}>→</span>
+            Workflow
+          </button>
+        </div>
 
-        {data && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <StatChip label="Palette" value={sortedPallets.length} />
-            <StatChip label="SKU" value={data.meta?.totalSkus ?? flatItems.length} />
-            <StatChip
-              label="Einheiten"
-              value={
-                data.meta?.totalUnits ??
-                flatItems.reduce((s, r) => s + (r.item.units || 0), 0)
-              }
-              accent
-            />
-          </div>
-        )}
+        {/* Workspace navigation */}
+        {layoutMode === 'workspace' && (
+          <>
+            {data ? (
+              <>
+                <div className="lp-sidebar-section-label">Auftrag</div>
+                <NavItem icon="▦" label="Übersicht"
+                  active={view === 'dashboard'}
+                  onClick={() => setView('dashboard')} />
+                <NavItem icon="▤" label="Paletten"
+                  active={view === 'pallets'}
+                  onClick={() => setView('pallets')}
+                  badge={sortedPallets.length} />
 
-        {/* Admin-Gear (immer sichtbar, auch ohne Daten) */}
-        <button
-          onClick={() => setAdminOpen(true)}
-          className="lp-btn2-hover"
-          title="Admin-Panel — Tabellen verwalten"
-          style={{
-            background: T.surface,
-            border: `1px solid ${T.border}`,
-            color: T.textSub,
-            width: 34,
-            height: 34,
-            borderRadius: 8,
-            fontSize: 16,
-            fontWeight: 500,
-            cursor: 'pointer',
-            fontFamily: 'inherit',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          ⚙
-        </button>
-
-        {data && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <WorkdayTimer orderEstimateSec={orderEstimateSec} compact />
-            <ElapsedTimer startTs={loadStartTs} paused={!!loadDoneTs} />
-            <ValidationBadge
-              report={validationReport}
-              onClick={() => setShowValidation(true)}
-            />
-            <button
-              onClick={() => setSpotlightOpen(true)}
-              className="lp-btn2-hover"
-              title="Suche (⌘K / Ctrl+K)"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '7px 12px',
-                background: T.surface,
-                border: `1px solid ${T.border}`,
-                borderRadius: 8,
-                fontSize: 12,
-                color: T.textSub,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              <span style={{ fontSize: 14, color: T.textMuted }}>⌕</span>
-              Suche
-              <kbd
-                style={{
-                  fontSize: 9.5,
-                  color: T.textMuted,
-                  background: T.bg,
-                  padding: '2px 5px',
-                  borderRadius: 3,
-                  border: `1px solid ${T.border}`,
-                  fontFamily: 'DM Mono, monospace',
-                  letterSpacing: 0.4,
-                  marginLeft: 2,
-                }}
-              >
-                ⌘K
-              </kbd>
-            </button>
-            <ToggleBtn
-              active={sequenceMode}
-              onClick={() => setSequenceMode((v) => !v)}
-              title="Globale fortlaufende Nummerierung"
-            >
-              <span style={{ fontSize: 14 }}>≡</span>
-              Reihenfolge
-            </ToggleBtn>
-            <button
-              onClick={() => setFokusOpen(true)}
-              className="lp-btn-hover"
-              title="Fokus-Modus — ein Format pro Bildschirm, Enter zum Weiterspringen"
-              style={{
-                padding: '9px 18px',
-                background: T.text,
-                color: '#fff',
-                border: `1px solid ${T.text}`,
-                borderRadius: 8,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                letterSpacing: 0.2,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-                boxShadow: T.shadowSm,
-              }}
-            >
-              <span style={{ fontSize: 14 }}>◎</span>
-              Fokus-Modus
-            </button>
-            <Btn variant="secondary" onClick={() => setPrintMode(true)}>
-              ⎙ Drucken
-            </Btn>
-            <button
-              onClick={() => setAbschlussOpen(true)}
-              className="lp-btn2-hover"
-              title="Auftragsabschluss — Daten, Schlüsselartikel, Gewicht, Preis"
-              style={{
-                padding: '9px 16px',
-                background: allDone ? T.green : T.surface,
-                color: allDone ? '#fff' : T.text,
-                border: `1px solid ${allDone ? T.green : T.border}`,
-                borderRadius: 8,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-                letterSpacing: 0.2,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-              }}
-            >
-              {allDone ? '✓ Abschluss' : 'Abschluss'}
-            </button>
-          </div>
-        )}
-      </header>
-
-      {/* ── Body ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-        {/* Main column */}
-        <main
-          style={{
-            flex: 1,
-            padding: '28px 28px 120px',
-            maxWidth: 1100,
-            margin: data ? '0' : '0 auto',
-          }}
-        >
-          {/* Drop zone */}
-          <div style={{ marginBottom: data ? 20 : 0 }}>
-            <DropZone onFile={handleFile} hasFile={!!data} />
-            {fileName && (
-              <div
-                style={{
-                  marginTop: 8,
-                  fontSize: 11,
-                  color: T.textMuted,
-                  letterSpacing: 0.3,
-                }}
-              >
-                <span className="lp-mono">{fileName}</span>
-                {loading && <span style={{ marginLeft: 8 }}>· wird verarbeitet…</span>}
-              </div>
-            )}
-            {error && (
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: '10px 14px',
-                  background: T.amberBg,
-                  border: `1px solid rgba(217,119,6,0.28)`,
-                  borderRadius: 8,
-                  color: T.amber,
-                  fontSize: 12.5,
-                  fontWeight: 500,
-                }}
-              >
-                {error}
-              </div>
-            )}
-          </div>
-
-          {/* FBA-Cockpit: prominent shipment header + Fokus-Start */}
-          {data && (
-            <FbaCockpit
-              meta={data.meta}
-              palletCount={sortedPallets.length}
-              flatItems={flatItems}
-              einzelneSkuCount={einzelneSkuItems.length}
-              onStartFokus={() => setFokusOpen(true)}
-              loadingPct={loadingProgress.pct}
-            />
-          )}
-
-          {/* Workday timer + estimate (ultra-modern) */}
-          {data && (
-            <div style={{ marginBottom: 18 }}>
-              <WorkdayTimer orderEstimateSec={orderEstimateSec} />
-            </div>
-          )}
-
-          {/* Dashboard: focus chips + global progress + volume summary */}
-          {data && (
-            <div
-              style={{
-                background: T.surface,
-                border: `1px solid ${T.border}`,
-                borderRadius: 12,
-                padding: '14px 16px',
-                marginBottom: 18,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 12,
-              }}
-            >
-              {/* Focus row */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 14,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    color: T.textMuted,
-                    letterSpacing: 1.5,
-                    textTransform: 'uppercase',
-                    fontWeight: 600,
-                  }}
-                >
-                  Fokus
-                </span>
-                <FocusChips
-                  focusGroup={focusGroup}
-                  onChange={setFocusGroup}
-                  counts={groupCounts}
-                />
-                <div style={{ flex: 1 }} />
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    color: T.textMuted,
-                    letterSpacing: 1.5,
-                    textTransform: 'uppercase',
-                    fontWeight: 600,
-                  }}
-                >
-                  Sortierung: Palette · SKU · Volumen
-                </span>
-              </div>
-
-              {/* Loading progress bar */}
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'baseline',
-                    justifyContent: 'space-between',
-                    marginBottom: 6,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 10.5,
-                      color: T.textSub,
-                      letterSpacing: 0.6,
-                      fontWeight: 500,
-                    }}
-                  >
-                    Ladefortschritt auf Paletten
-                  </span>
-                  <span
-                    className="lp-mono"
-                    style={{
-                      fontSize: 12,
-                      color: allDone ? T.green : T.text,
-                      fontWeight: 600,
-                      fontVariantNumeric: 'tabular-nums',
-                      letterSpacing: -0.2,
-                    }}
-                  >
-                    {loadingProgress.done}/{loadingProgress.total}
-                    <span style={{ color: T.textMuted, marginLeft: 6, fontSize: 11 }}>
-                      · {loadingProgress.pct.toFixed(0)}%
-                    </span>
-                    {allDone && (
-                      <span style={{ marginLeft: 8, color: T.green }}>✓ alles geladen</span>
-                    )}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: 8,
-                    background: T.bg,
-                    borderRadius: 4,
-                    overflow: 'hidden',
-                    position: 'relative',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${loadingProgress.pct}%`,
-                      height: '100%',
-                      background: allDone
-                        ? `linear-gradient(90deg, ${T.green}, #22c55e)`
-                        : `linear-gradient(90deg, ${T.blue}, #3b82f6)`,
-                      borderRadius: 4,
-                      transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Total volume + weight + effective fill */}
-              {(() => {
-                const all = Object.values(palletVolumes);
-                const totalVol = all.reduce((s, v) => s + v.totalCm3, 0);
-                const totalCap = sortedPallets.length * PALLET_VOLUME_CM3;
-                const totalWeightKg = all.reduce((s, v) => s + v.totalWeightKg, 0);
-                const totalWeightCap = all.reduce((s, v) => s + v.weightCapKg, 0);
-                const totalCartons = all.reduce((s, v) => s + v.totalCartons, 0);
-                const totalUnknown = all.reduce((s, v) => s + v.unmatchedCount, 0);
-                // Durchschnittliche effektive Auslastung
-                const avgFill = all.length > 0
-                  ? all.reduce((s, v) => s + v.fillPct, 0) / all.length
-                  : 0;
-                const volPct = totalCap > 0 ? (totalVol / totalCap) * 100 : 0;
-                const wPct = totalWeightCap > 0 ? (totalWeightKg / totalWeightCap) * 100 : 0;
-                const avgPct = avgFill * 100;
-                const c = statusColors(
-                  avgFill >= 1 ? 'overflow'
-                    : avgFill >= 0.92 ? 'tight'
-                      : avgFill >= 0.75 ? 'optimal'
-                        : avgFill >= 0.5 ? 'good'
-                          : avgFill > 0 ? 'low' : 'empty'
-                );
-                return (
-                  <div
-                    style={{
-                      paddingTop: 10,
-                      borderTop: `1px solid ${T.border}`,
-                      display: 'flex', flexDirection: 'column', gap: 8,
-                    }}
-                  >
-                    {/* Top-Row: Headline */}
-                    <div
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 12,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 9.5, color: T.textMuted, letterSpacing: 1.5,
-                          textTransform: 'uppercase', fontWeight: 700,
-                        }}
-                      >
-                        Gesamt-Auslastung
-                      </span>
-                      <span
-                        className="lp-mono"
-                        style={{
-                          fontSize: 22, fontWeight: 700,
-                          color: c.fg, letterSpacing: -0.6,
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      >
-                        {avgPct.toFixed(0)}<span style={{ fontSize: 13, opacity: 0.5 }}>%</span>
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 9, fontWeight: 700, letterSpacing: 1.4,
-                          textTransform: 'uppercase', color: c.fg,
-                          padding: '3px 8px', borderRadius: 4,
-                          background: c.bg, border: `1px solid ${c.fg}33`,
-                        }}
-                      >
-                        {c.label}
-                      </span>
-                      <div style={{ flex: 1 }} />
-                      {totalUnknown > 0 && (
-                        <span
-                          style={{
-                            fontSize: 10, color: T.amber, fontWeight: 600,
-                            background: T.amberBg, padding: '3px 8px',
-                            borderRadius: 4, border: `1px solid ${T.amber}33`,
+                {/* Palette mini-list with fill bars */}
+                {view === 'pallets' && sortedPallets.length > 0 && (
+                  <div className="lp-pal-list">
+                    {sortedPallets.map((p) => {
+                      const v = palletVolumes[p.id];
+                      const fill = v ? v.fillPct : 0;
+                      const c = statusColors(
+                        fill >= 1 ? 'overflow' :
+                        fill >= 0.92 ? 'tight' :
+                        fill >= 0.75 ? 'optimal' :
+                        fill >= 0.5 ? 'good' :
+                        fill > 0 ? 'low' : 'empty'
+                      );
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`lp-pal-item ${activePalletId === p.id ? 'is-active' : ''}`}
+                          onClick={() => {
+                            setActivePalletId(p.id);
+                            const el = palletRefs.current[p.id];
+                            if (el) {
+                              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              setHighlightedPalletId(p.id);
+                              setTimeout(() => setHighlightedPalletId(null), 1500);
+                            }
                           }}
                         >
-                          ≈ {totalUnknown}× geschätzt
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Multi-Metrik-Grid */}
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-                        gap: 8,
-                      }}
-                    >
-                      {/* Volumen */}
-                      <div
-                        style={{
-                          padding: '8px 10px', background: T.surface,
-                          border: `1px solid ${T.border}`, borderRadius: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 8.5, color: T.textMuted, letterSpacing: 1.2,
-                            textTransform: 'uppercase', fontWeight: 700,
-                            marginBottom: 3,
-                          }}
-                        >Volumen</div>
-                        <div
-                          className="lp-mono"
-                          style={{
-                            fontSize: 14, color: T.text, fontWeight: 700,
-                            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-                          }}
-                        >
-                          {(totalVol / 1_000_000).toFixed(2)} <span style={{ fontSize: 9, opacity: 0.6 }}>m³</span>
-                        </div>
-                        <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                          von {(totalCap / 1_000_000).toFixed(2)} m³ · <span className="lp-mono">{volPct.toFixed(0)}%</span>
-                        </div>
-                      </div>
-                      {/* Gewicht */}
-                      <div
-                        style={{
-                          padding: '8px 10px', background: T.surface,
-                          border: `1px solid ${T.border}`, borderRadius: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 8.5, color: T.textMuted, letterSpacing: 1.2,
-                            textTransform: 'uppercase', fontWeight: 700,
-                            marginBottom: 3,
-                          }}
-                        >Gewicht</div>
-                        <div
-                          className="lp-mono"
-                          style={{
-                            fontSize: 14, color: T.text, fontWeight: 700,
-                            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-                          }}
-                        >
-                          {totalWeightKg.toFixed(0)} <span style={{ fontSize: 9, opacity: 0.6 }}>kg</span>
-                        </div>
-                        <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                          von {totalWeightCap} kg · <span className="lp-mono">{wPct.toFixed(0)}%</span>
-                        </div>
-                      </div>
-                      {/* Kartons */}
-                      <div
-                        style={{
-                          padding: '8px 10px', background: T.surface,
-                          border: `1px solid ${T.border}`, borderRadius: 8,
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 8.5, color: T.textMuted, letterSpacing: 1.2,
-                            textTransform: 'uppercase', fontWeight: 700,
-                            marginBottom: 3,
-                          }}
-                        >Kartons</div>
-                        <div
-                          className="lp-mono"
-                          style={{
-                            fontSize: 14, color: T.text, fontWeight: 700,
-                            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-                          }}
-                        >
-                          {totalCartons}
-                        </div>
-                        <div style={{ fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                          {sortedPallets.length} Paletten · <span className="lp-mono">⌀ {(totalCartons / Math.max(1, sortedPallets.length)).toFixed(0)}</span>
-                        </div>
-                      </div>
-                    </div>
+                          <span className="lp-pal-id">{p.id}</span>
+                          <span className="lp-pal-mini-bar">
+                            <span style={{
+                              width: `${Math.min(100, fill * 100)}%`,
+                              background: c.fg,
+                            }} />
+                          </span>
+                          <span className="lp-pal-pct">{(fill * 100).toFixed(0)}%</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                );
-              })()}
-            </div>
-          )}
+                )}
 
-          {/* Pallets */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {sortedPallets.map((pallet, idx) => (
-              <div
-                key={pallet.id}
-                ref={(el) => {
-                  if (el) palletRefs.current[pallet.id] = el;
-                }}
-              >
-                <PalletCard
-                  pallet={pallet}
-                  palletIdx={idx}
-                  startSeqIndex={palletStartIndex[pallet.id]}
-                  sequenceMode={sequenceMode}
-                  activeItemId={activeItem?.fnsku}
-                  onItemClick={(item) => setActiveItem(item)}
-                  volumeStats={palletVolumes[pallet.id]}
-                  focusGroup={focusGroup}
-                  loadedSet={loadedSet}
-                  onToggleLoaded={toggleLoaded}
-                  highlight={highlightedPalletId === pallet.id}
-                  reserveFnskus={reserveFnskus}
-                  repeatedUseItems={repeatedUseItems}
-                  eskuExtras={eskuByPalletId[pallet.id] || []}
-                />
+                <NavItem icon="◎" label="Fokus-Modus"
+                  onClick={() => setFokusOpen(true)} />
+                <NavItem icon="⌕" label="Suche"
+                  onClick={() => setSpotlightOpen(true)}
+                  badge="⌘K" />
+
+                <div className="lp-sidebar-section-label">Aktionen</div>
+                <NavItem icon="⎙" label="Drucken"
+                  onClick={() => setPrintMode(true)} />
+                <NavItem icon={allDone ? '✓' : '◷'} label="Abschluss"
+                  onClick={() => setAbschlussOpen(true)}
+                  danger={allDone} />
+              </>
+            ) : (
+              <div style={{
+                padding: '14px 12px', fontSize: 11.5,
+                color: T.textMuted, lineHeight: 1.5,
+              }}>
+                Lade einen Lagerauftrag, um zu starten.
               </div>
-            ))}
+            )}
+          </>
+        )}
 
-            {/* Einzelne-SKU-Section — fix unter den Paletten, immer sichtbar */}
-            {einzelneSkuItems.length > 0 && (
-              <EinzelneSkuSection
-                items={einzelneSkuItems}
-                distribution={distribution}
-                onPalletClick={(palletId) => {
-                  const el = palletRefs.current[palletId];
-                  if (el) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    setHighlightedPalletId(palletId);
-                    setTimeout(() => setHighlightedPalletId(null), 1500);
+        {/* Workflow mode shows step list in sidebar */}
+        {layoutMode === 'workflow' && (
+          <>
+            <div className="lp-sidebar-section-label">Workflow</div>
+            {WORKFLOW_STEPS.map((s, i) => (
+              <NavItem
+                key={s.id}
+                icon={i < stepIdx ? '✓' : i === stepIdx ? '●' : '○'}
+                label={`${s.num}. ${s.label}`}
+                active={s.id === workflowStep}
+                onClick={() => {
+                  if (s.requiresData && !data) return;
+                  if (s.id === 'abschluss' && data) {
+                    setAbschlussOpen(true);
+                  } else {
+                    setWorkflowStep(s.id);
                   }
                 }}
               />
+            ))}
+            {data && (
+              <>
+                <div className="lp-sidebar-section-label">Aktionen</div>
+                <NavItem icon="⌕" label="Suche"
+                  onClick={() => setSpotlightOpen(true)} badge="⌘K" />
+                <NavItem icon="⎙" label="Drucken"
+                  onClick={() => setPrintMode(true)} />
+              </>
             )}
-          </div>
-        </main>
-
-        {/* Sidebar */}
-        {data && (
-          <SequenceSidebar
-            flatItems={flatItems}
-            sequenceMode={sequenceMode}
-            activeItemId={activeItem?.fnsku}
-            onItemClick={(item) => setActiveItem(item)}
-            sortedPallets={sortedPallets}
-            palletVolumes={palletVolumes}
-            loadedSet={loadedSet}
-            orderEstimateSec={orderEstimateSec}
-            onPalletClick={(palletId) => {
-              const el = palletRefs.current[palletId];
-              if (el) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                setHighlightedPalletId(palletId);
-                setTimeout(() => setHighlightedPalletId(null), 1500);
-              }
-            }}
-          />
+          </>
         )}
+
+        <div className="lp-sidebar-spacer" />
+
+        <div className="lp-sidebar-section-label">System</div>
+        <NavItem icon="⚙" label="Admin" onClick={() => setAdminOpen(true)} />
+
+        <div className="lp-sidebar-meta">
+          {layoutMode === 'workspace' ? 'Workspace' : 'Workflow'} · {sortedPallets.length || 0} Pal
+        </div>
+      </aside>
+
+      {/* ╔════════════════════ MAIN AREA ════════════════════╗ */}
+      <div className="lp-main">
+        {/* TopBar */}
+        <header className="lp-topbar">
+          <button className="lp-mobile-menu-btn" aria-label="Menü">☰</button>
+          <div className="lp-topbar-title">{viewTitle}</div>
+          {data && fileName && (
+            <div className="lp-topbar-context">
+              <span>{fileName}</span>
+              {data.meta?.shipDate && (
+                <><span className="sep">·</span><span>{data.meta.shipDate}</span></>
+              )}
+              {data.meta?.dossier && (
+                <><span className="sep">·</span><span>{data.meta.dossier}</span></>
+              )}
+            </div>
+          )}
+          <div style={{ flex: 1 }} />
+          {data && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <ValidationBadge
+                report={validationReport}
+                onClick={() => setShowValidation(true)}
+              />
+              {layoutMode === 'workspace' && (
+                <ToggleBtn
+                  active={sequenceMode}
+                  onClick={() => setSequenceMode((v) => !v)}
+                  title="Globale fortlaufende Nummerierung"
+                >
+                  <span style={{ fontSize: 14 }}>≡</span>
+                  Reihenfolge
+                </ToggleBtn>
+              )}
+              <button
+                onClick={() => setSpotlightOpen(true)}
+                className="lp-btn2-hover"
+                title="Suche (⌘K / Ctrl+K)"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 8,
+                  padding: '7px 12px',
+                  background: T.surface,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 8,
+                  fontSize: 12, color: T.textSub,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                <span style={{ fontSize: 14, color: T.textMuted }}>⌕</span>
+                Suche
+                <kbd style={{
+                  fontSize: 9.5, color: T.textMuted,
+                  background: T.bg, padding: '2px 5px', borderRadius: 3,
+                  border: `1px solid ${T.border}`,
+                  fontFamily: 'DM Mono, monospace', letterSpacing: 0.4,
+                  marginLeft: 2,
+                }}>⌘K</kbd>
+              </button>
+            </div>
+          )}
+        </header>
+
+        {/* Workflow Stepper (only in workflow mode) */}
+        {layoutMode === 'workflow' && (
+          <div className="lp-stepper">
+            {WORKFLOW_STEPS.map((s, i) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`lp-step ${
+                  i < stepIdx ? 'is-done' :
+                  i === stepIdx ? 'is-current' : ''
+                }`}
+                onClick={() => {
+                  if (s.requiresData && !data) return;
+                  if (s.id === 'abschluss' && data) setAbschlussOpen(true);
+                  else setWorkflowStep(s.id);
+                }}
+                disabled={s.requiresData && !data}
+              >
+                <span className="lp-step-circle">
+                  {i < stepIdx ? '✓' : s.num}
+                </span>
+                <span className="lp-step-label">{s.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ╔════════════════════ CONTENT ════════════════════╗ */}
+        <main className={`lp-content ${!data ? 'is-empty' : ''}`}>
+          {/* ─── Empty state ─── */}
+          {!data && (
+            <div style={{ width: '100%', maxWidth: 720 }}>
+              <DropZone onFile={handleFile} hasFile={false} />
+              {fileName && (
+                <div style={{
+                  marginTop: 12, fontSize: 11.5, color: T.textMuted,
+                  letterSpacing: 0.3, textAlign: 'center',
+                }}>
+                  <span className="lp-mono">{fileName}</span>
+                  {loading && <span style={{ marginLeft: 8 }}>· wird verarbeitet…</span>}
+                </div>
+              )}
+              {error && (
+                <div style={{
+                  marginTop: 16, padding: '12px 16px',
+                  background: T.amberBg,
+                  border: `1px solid rgba(217,119,6,0.30)`,
+                  borderRadius: 8, color: T.amber,
+                  fontSize: 12.5, fontWeight: 500,
+                }}>{error}</div>
+              )}
+            </div>
+          )}
+
+          {/* ─── Loaded data — view-routing ─── */}
+          {data && (
+            <>
+              {/* Compact upload strip */}
+              <div style={{ marginBottom: 20 }}>
+                <DropZone onFile={handleFile} hasFile={true} />
+                {error && (
+                  <div style={{
+                    marginTop: 12, padding: '10px 14px',
+                    background: T.amberBg,
+                    border: `1px solid rgba(217,119,6,0.30)`,
+                    borderRadius: 8, color: T.amber,
+                    fontSize: 12.5, fontWeight: 500,
+                  }}>{error}</div>
+                )}
+              </div>
+
+              {/* === WORKSPACE: Übersicht === */}
+              {layoutMode === 'workspace' && view === 'dashboard' && (
+                <>
+                  <FbaCockpit
+                    meta={data.meta}
+                    palletCount={sortedPallets.length}
+                    flatItems={flatItems}
+                    einzelneSkuCount={einzelneSkuItems.length}
+                    onStartFokus={() => setFokusOpen(true)}
+                    loadingPct={loadingProgress.pct}
+                  />
+                  <div style={{ marginBottom: 18 }}>
+                    <WorkdayTimer orderEstimateSec={orderEstimateSec} />
+                  </div>
+                  <DashboardOverview
+                    sortedPallets={sortedPallets}
+                    palletVolumes={palletVolumes}
+                    loadingProgress={loadingProgress}
+                    allDone={allDone}
+                    onGoToPallets={() => setView('pallets')}
+                    onStartFokus={() => setFokusOpen(true)}
+                  />
+                </>
+              )}
+
+              {/* === WORKSPACE: Paletten — with internal tabs Liste/Schritt === */}
+              {layoutMode === 'workspace' && view === 'pallets' && (
+                <>
+                  {/* Inner tabs */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    marginBottom: 18, flexWrap: 'wrap',
+                  }}>
+                    <div className="lp-tabs">
+                      <button
+                        type="button"
+                        className={`lp-tab ${paletteTab === 'liste' ? 'is-active' : ''}`}
+                        onClick={() => setPaletteTab('liste')}
+                      >
+                        <span style={{ fontSize: 13 }}>▤</span>
+                        Liste
+                      </button>
+                      <button
+                        type="button"
+                        className={`lp-tab ${paletteTab === 'schritt' ? 'is-active' : ''}`}
+                        onClick={() => {
+                          setPaletteTab('schritt');
+                          setFokusOpen(true);
+                        }}
+                      >
+                        <span style={{ fontSize: 13 }}>◎</span>
+                        Schritt-für-Schritt
+                      </button>
+                    </div>
+                    <div style={{ flex: 1 }} />
+                    <span style={{
+                      fontSize: 9.5, color: T.textMuted,
+                      letterSpacing: 1.5, textTransform: 'uppercase',
+                      fontWeight: 600,
+                    }}>
+                      {loadingProgress.done}/{loadingProgress.total} ·{' '}
+                      <span className="lp-mono" style={{
+                        color: allDone ? T.green : T.text,
+                      }}>{loadingProgress.pct.toFixed(0)}%</span>
+                    </span>
+                  </div>
+
+                  {/* Filter bar */}
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 14,
+                    flexWrap: 'wrap', marginBottom: 18,
+                    padding: '12px 14px',
+                    background: T.surface,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    boxShadow: T.shadowSm,
+                  }}>
+                    <span style={{
+                      fontSize: 9.5, color: T.textMuted,
+                      letterSpacing: 1.5, textTransform: 'uppercase',
+                      fontWeight: 700,
+                    }}>Fokus</span>
+                    <FocusChips
+                      focusGroup={focusGroup}
+                      onChange={setFocusGroup}
+                      counts={groupCounts}
+                    />
+                  </div>
+
+                  {/* Two-column: Pallet cards + Sequence sidebar */}
+                  <div style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 24,
+                  }}>
+                    <div style={{
+                      flex: 1, minWidth: 0,
+                      display: 'flex', flexDirection: 'column', gap: 16,
+                    }}>
+                      {sortedPallets.map((pallet, idx) => (
+                        <div
+                          key={pallet.id}
+                          ref={(el) => {
+                            if (el) palletRefs.current[pallet.id] = el;
+                          }}
+                        >
+                          <PalletCard
+                            pallet={pallet}
+                            palletIdx={idx}
+                            startSeqIndex={palletStartIndex[pallet.id]}
+                            sequenceMode={sequenceMode}
+                            activeItemId={activeItem?.fnsku}
+                            onItemClick={(item) => setActiveItem(item)}
+                            volumeStats={palletVolumes[pallet.id]}
+                            focusGroup={focusGroup}
+                            loadedSet={loadedSet}
+                            onToggleLoaded={toggleLoaded}
+                            highlight={highlightedPalletId === pallet.id}
+                            reserveFnskus={reserveFnskus}
+                            repeatedUseItems={repeatedUseItems}
+                            eskuExtras={eskuByPalletId[pallet.id] || []}
+                          />
+                        </div>
+                      ))}
+                      {einzelneSkuItems.length > 0 && (
+                        <EinzelneSkuSection
+                          items={einzelneSkuItems}
+                          distribution={distribution}
+                          onPalletClick={(palletId) => {
+                            const el = palletRefs.current[palletId];
+                            if (el) {
+                              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              setHighlightedPalletId(palletId);
+                              setTimeout(() => setHighlightedPalletId(null), 1500);
+                            }
+                          }}
+                        />
+                      )}
+                    </div>
+                    <SequenceSidebar
+                      flatItems={flatItems}
+                      sequenceMode={sequenceMode}
+                      activeItemId={activeItem?.fnsku}
+                      onItemClick={(item) => setActiveItem(item)}
+                      sortedPallets={sortedPallets}
+                      palletVolumes={palletVolumes}
+                      loadedSet={loadedSet}
+                      orderEstimateSec={orderEstimateSec}
+                      onPalletClick={(palletId) => {
+                        const el = palletRefs.current[palletId];
+                        if (el) {
+                          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          setHighlightedPalletId(palletId);
+                          setTimeout(() => setHighlightedPalletId(null), 1500);
+                        }
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* === WORKFLOW STEPS === */}
+              {layoutMode === 'workflow' && (
+                <>
+                  {/* Step: Prüfen */}
+                  {workflowStep === 'pruefen' && (
+                    <>
+                      <FbaCockpit
+                        meta={data.meta}
+                        palletCount={sortedPallets.length}
+                        flatItems={flatItems}
+                        einzelneSkuCount={einzelneSkuItems.length}
+                        onStartFokus={() => setFokusOpen(true)}
+                        loadingPct={loadingProgress.pct}
+                      />
+                      <div style={{
+                        background: T.surface,
+                        border: `1px solid ${T.border}`,
+                        borderRadius: 14,
+                        padding: '20px 22px',
+                        marginTop: 16, marginBottom: 16,
+                        boxShadow: T.shadowSm,
+                      }}>
+                        <div style={{
+                          fontSize: 10, color: T.textMuted, letterSpacing: 1.5,
+                          textTransform: 'uppercase', fontWeight: 700, marginBottom: 8,
+                        }}>Validierung</div>
+                        <div style={{ fontSize: 14, color: T.text, marginBottom: 10 }}>
+                          {validationReport?.problems?.length === 0
+                            ? '✓ Keine Probleme — alle Daten korrekt geparst.'
+                            : `${validationReport?.problems?.length || 0} Hinweise gefunden — bitte prüfen.`}
+                        </div>
+                        <button onClick={() => setShowValidation(true)} className="lp-btn2-hover" style={{
+                          padding: '8px 14px', background: T.surface,
+                          border: `1px solid ${T.border}`, borderRadius: 8,
+                          fontSize: 12.5, fontWeight: 500, color: T.text,
+                          cursor: 'pointer', fontFamily: 'inherit',
+                        }}>
+                          Validierungsbericht öffnen →
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Step: Verteilen */}
+                  {workflowStep === 'verteilen' && (
+                    <DashboardOverview
+                      sortedPallets={sortedPallets}
+                      palletVolumes={palletVolumes}
+                      loadingProgress={loadingProgress}
+                      allDone={allDone}
+                      onGoToPallets={() => setWorkflowStep('packen')}
+                      onStartFokus={() => setFokusOpen(true)}
+                    />
+                  )}
+
+                  {/* Step: Packen */}
+                  {workflowStep === 'packen' && (
+                    <>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        marginBottom: 16, flexWrap: 'wrap',
+                      }}>
+                        <button
+                          onClick={() => setFokusOpen(true)}
+                          className="lp-btn-hover"
+                          style={{
+                            padding: '11px 20px', background: T.accent,
+                            color: '#fff',
+                            border: `1px solid ${T.accent}`, borderRadius: 10,
+                            fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            display: 'inline-flex', alignItems: 'center', gap: 8,
+                            boxShadow: '0 4px 18px rgba(91,98,216,0.25)',
+                          }}
+                        >
+                          <span style={{ fontSize: 15 }}>◎</span>
+                          Schritt-für-Schritt starten
+                        </button>
+                        <span style={{ fontSize: 12, color: T.textSub }}>
+                          oder packe direkt aus der Liste unten:
+                        </span>
+                        <div style={{ flex: 1 }} />
+                        <FocusChips
+                          focusGroup={focusGroup}
+                          onChange={setFocusGroup}
+                          counts={groupCounts}
+                        />
+                      </div>
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', gap: 16,
+                      }}>
+                        {sortedPallets.map((pallet, idx) => (
+                          <div
+                            key={pallet.id}
+                            ref={(el) => {
+                              if (el) palletRefs.current[pallet.id] = el;
+                            }}
+                          >
+                            <PalletCard
+                              pallet={pallet}
+                              palletIdx={idx}
+                              startSeqIndex={palletStartIndex[pallet.id]}
+                              sequenceMode={sequenceMode}
+                              activeItemId={activeItem?.fnsku}
+                              onItemClick={(item) => setActiveItem(item)}
+                              volumeStats={palletVolumes[pallet.id]}
+                              focusGroup={focusGroup}
+                              loadedSet={loadedSet}
+                              onToggleLoaded={toggleLoaded}
+                              highlight={highlightedPalletId === pallet.id}
+                              reserveFnskus={reserveFnskus}
+                              repeatedUseItems={repeatedUseItems}
+                              eskuExtras={eskuByPalletId[pallet.id] || []}
+                            />
+                          </div>
+                        ))}
+                        {einzelneSkuItems.length > 0 && (
+                          <EinzelneSkuSection
+                            items={einzelneSkuItems}
+                            distribution={distribution}
+                            onPalletClick={(palletId) => {
+                              const el = palletRefs.current[palletId];
+                              if (el) {
+                                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                setHighlightedPalletId(palletId);
+                                setTimeout(() => setHighlightedPalletId(null), 1500);
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Workflow navigation footer */}
+                  <div style={{
+                    marginTop: 32, paddingTop: 20,
+                    borderTop: `1px solid ${T.border}`,
+                    display: 'flex', gap: 10, alignItems: 'center',
+                  }}>
+                    <button
+                      onClick={prevStep}
+                      disabled={stepIdx === 0}
+                      className="lp-btn2-hover"
+                      style={{
+                        padding: '10px 18px', background: T.surface,
+                        border: `1px solid ${T.border}`, borderRadius: 8,
+                        fontSize: 13, fontWeight: 500, color: T.text,
+                        cursor: stepIdx === 0 ? 'not-allowed' : 'pointer',
+                        opacity: stepIdx === 0 ? 0.4 : 1,
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      ← Zurück
+                    </button>
+                    <div style={{ flex: 1 }} />
+                    <span style={{ fontSize: 12, color: T.textMuted }}>
+                      Schritt {stepIdx + 1} von {WORKFLOW_STEPS.length}
+                    </span>
+                    <button
+                      onClick={nextStep}
+                      className="lp-btn-hover"
+                      style={{
+                        padding: '10px 18px', background: T.accent,
+                        color: '#fff',
+                        border: `1px solid ${T.accent}`, borderRadius: 8,
+                        fontSize: 13, fontWeight: 600,
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        boxShadow: '0 2px 8px rgba(91,98,216,0.3)',
+                      }}
+                    >
+                      {stepIdx === WORKFLOW_STEPS.length - 2
+                        ? 'Abschluss öffnen →'
+                        : 'Weiter →'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </main>
       </div>
+
+      {/* ╔══ MOBILE BOTTOM TAB BAR ══╗ */}
+      {data && (
+        <nav className="lp-mobile-tabs">
+          <div className="lp-mobile-tabs-inner">
+            <MobileTab icon="▦" label="ÜBERSICHT"
+              active={layoutMode === 'workspace' && view === 'dashboard'}
+              onClick={() => { setLayoutMode('workspace'); setView('dashboard'); }} />
+            <MobileTab icon="▤" label="PALETTEN"
+              active={layoutMode === 'workspace' && view === 'pallets'}
+              onClick={() => { setLayoutMode('workspace'); setView('pallets'); }} />
+            <MobileTab icon="◎" label="FOKUS"
+              onClick={() => setFokusOpen(true)} />
+            <MobileTab icon="⌕" label="SUCHE"
+              onClick={() => setSpotlightOpen(true)} />
+            <MobileTab icon={allDone ? '✓' : '◷'} label="ABSCHL."
+              onClick={() => setAbschlussOpen(true)} />
+          </div>
+        </nav>
+      )}
 
       {/* Detail panel */}
       <DetailPanel item={activeItem} onClose={() => setActiveItem(null)} />

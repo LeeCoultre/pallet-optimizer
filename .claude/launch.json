@@ -5,8 +5,7 @@
       "name": "pallet-optimizer",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5176,
-      "cwd": "/Users/thecoultre/pallet-optimizer"
+      "port": 5176
     }
   ]
 }

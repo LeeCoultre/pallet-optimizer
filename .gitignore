@@ -38,3 +38,6 @@ venv/
 
 # Railway
 .railway/
+
+# Local test fixtures (real customer .docx, kept locally only)
+public/test-orders/
