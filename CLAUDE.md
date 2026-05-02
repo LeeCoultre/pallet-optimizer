@@ -1,0 +1,241 @@
+# Marathon — Session handoff
+
+Auto-loaded by Claude Code at session start. Keeps context tight so a
+fresh session can pick up without re-discovering the codebase.
+
+## What this is
+
+**Marathon** — internal tool for the Lynne warehouse. A warehouse worker
+loads a `.docx` Lagerauftrag, the app guides them through a 4-step
+workflow (Upload → Pruefen → Focus → Abschluss), then archives the
+result with timing data per pallet/article.
+
+5 real users planned (LynneAndy is admin, three others get invited via
+Clerk). Single-tenant, internal-only.
+
+User communicates in Russian. App UI strings stay German. Code/comments
+in English.
+
+## Stack
+
+```
+Frontend: React 19 + Vite + TanStack Query + Clerk + recharts
+Backend:  FastAPI + SQLAlchemy 2 (async) + asyncpg + Alembic + PyJWT
+DB:       PostgreSQL 18 (Railway-hosted, single instance shared dev/prod)
+Auth:     Clerk (magic-link / email code, invite-only, pk_test mode)
+Deploy:   Railway, single-service Docker (Vite-built frontend served
+          as static by FastAPI; same-origin in prod, so no CORS)
+```
+
+## Production
+
+- **App:** https://lagerauftrag-production.up.railway.app/
+- **GitHub:** https://github.com/LeeCoultre/Lagerauftrag
+  - Active branch: `claude/sweet-tharp-495790`
+  - `main` is the old pre-Marathon code (not in use)
+- **Railway:** project has 2 services — `Marathon` (Dockerfile build)
+  and `Postgres` (managed). DATABASE_URL is reference-injected.
+- **Clerk:** instance `trusted-spider-53.clerk.accounts.dev` (test mode)
+
+## Local dev
+
+```bash
+# venv + deps (Python 3.9 system; Dockerfile uses 3.11 for prod)
+.venv/bin/pip install -r backend/requirements.txt
+npm install
+
+# Run backend on :8001
+.venv/bin/uvicorn backend.main:app --port 8001 --host 127.0.0.1
+
+# Run frontend on :5176 (preview tool autostarts via .claude/launch.json)
+npm run dev
+
+# Tests (against Railway Postgres — see "Tests share prod DB" gotcha)
+.venv/bin/pytest                    # full suite, ~5 min on Railway lag
+.venv/bin/pytest backend/tests/test_admin.py -v   # one file
+```
+
+## Environment variables (.env, Railway service variables)
+
+| Var | Where | Notes |
+|---|---|---|
+| `DATABASE_URL` | both | Postgres connection string |
+| `VITE_CLERK_PUBLISHABLE_KEY` | both | Frontend reads at build (Vite); backend derives JWKS URL from it. **Must be in Dockerfile ARG** for Railway to pass at build time. |
+| `CLERK_SECRET_KEY` | backend | Server → Clerk Backend API for user fetch. Rotate if leaked. |
+| `INITIAL_ADMIN_EMAIL` | backend | First Clerk user with this email gets `role=admin` on lazy-create |
+| `VITE_API_URL` | frontend dev only | Empty string in prod (same-origin). Local dev: `http://127.0.0.1:8001`. |
+| `CORS_ALLOWED_ORIGINS` | backend (optional) | Defaults to localhost dev origins. Override comma-separated for split deploys. |
+
+## Database
+
+Schema versioned via Alembic. **Migrations live at `backend/alembic/versions/`.**
+
+```bash
+.venv/bin/alembic current                              # current rev
+.venv/bin/alembic revision --autogenerate -m "..."    # create
+.venv/bin/alembic upgrade head                         # apply
+.venv/bin/python -m backend.seed                       # legacy seed (4 fake users) — rarely needed in Sprint 2+
+```
+
+Tables: `users`, `auftraege`, `audit_log`, `alembic_version`. See
+[backend/orm.py](backend/orm.py) for schema. Hot details:
+- `auftraege` is one row through the whole lifecycle
+  (`queued → in_progress → completed`); we don't have separate queue/
+  current/history tables.
+- `audit_log.auftrag_id` is `ON DELETE SET NULL` so admin DELETE-history
+  preserves the audit trail (file_name lives in `meta.file_name`).
+- `users.clerk_id` (unique, indexed) maps to Clerk; `email` is unique
+  too. INITIAL_ADMIN_EMAIL match drives the first admin promotion.
+
+## Tests
+
+Pytest with httpx ASGI transport. **30 cases, ~5 min on Railway** (network
+latency dominates; same dataset for every test).
+
+Auth in tests: not real JWTs. `as_user(user)` fixture flips
+`app.dependency_overrides[get_current_user]` for the current test.
+
+```bash
+.venv/bin/pytest                                          # all
+.venv/bin/pytest -k "race"                                # by name
+.venv/bin/pytest backend/tests/test_admin.py::test_xxx -v # single
+```
+
+`pytest.ini` has `asyncio_default_fixture_loop_scope = session` —
+without it, pytest-asyncio v1.2 binds the module-level engine to a
+different loop than fixtures, every test errors with "different event
+loop". Don't remove.
+
+## Deployment (Railway, Dockerfile)
+
+Single-service. `Dockerfile` builds Vite frontend in stage 1, copies
+`dist/` into the FastAPI image in stage 2. The FastAPI app serves both
+`/api/*` and the SPA static files at `/`.
+
+**Vite env-var gotcha:** `VITE_*` env vars are baked into the bundle at
+build time. Railway exposes service vars as `--build-arg`, but they
+only become visible to `RUN npm run build` if the Dockerfile re-declares
+them as `ARG ... ENV ...`. We learned this the hard way — see the
+`fix(deploy): bake VITE_CLERK_PUBLISHABLE_KEY` commit.
+
+Push to GitHub → Railway auto-deploys (3-5 min build).
+
+## Auth (Clerk, invite-only)
+
+Frontend: `<ClerkProvider publishableKey>` at the root. UserSwitcher
+renders `<SignInButton mode="modal">` when signed out, `<UserButton/>`
++ name/role when signed in.
+
+Backend: every request to `/api/me`, `/api/auftraege`, `/api/admin/*`
+checks `Authorization: Bearer <jwt>`. JWT is verified against Clerk's
+public JWKS via `PyJWKClient` (cached). On first request from a new
+clerk_id, [`_provision_user()`](backend/deps.py) hits Clerk Backend API
+to fetch profile + lazy-creates a `users` row. INITIAL_ADMIN_EMAIL match
+sets role=admin.
+
+Open endpoint: `GET /api/users` (no auth — used to be the picker; now
+mostly vestigial, could be removed).
+
+## Code map
+
+```
+backend/
+  main.py              app + CORS + router includes + SPA static fallback
+  database.py          async engine, AsyncSessionLocal, Base, get_db
+  orm.py               SQLAlchemy models (users, auftraege, audit_log)
+  schemas.py           Pydantic DTOs incl. Paginated[T] generic
+  deps.py              get_current_user (Clerk JWT), require_admin, _provision_user
+  clerk.py             JWT verify + Clerk Backend API client
+  seed.py              legacy 4 Lynne fake users (rarely used)
+  routers/
+    auftraege.py       CRUD + workflow (start/progress/complete/cancel)
+    history.py         GET/DELETE history (admin-only delete)
+    users.py           GET /api/users (open) + GET /api/me (auth)
+    admin.py           /api/admin/* — list, role toggle, audit, stats
+    packing.py         pre-existing CP-SAT solver (unrelated)
+    xlsx_import.py     pre-existing
+  alembic/             migrations
+  tests/               pytest (30 cases)
+
+src/
+  main.jsx             ClerkProvider + QueryClientProvider mount
+  App.jsx              Router (workspace/historie/einstellungen/admin) + legacy localStorage cleanup
+  state.jsx            useAppState() — TanStack Query backed; same return shape as the old localStorage version
+  marathonApi.js       fetch wrapper, snake↔camel conversion (with OPAQUE keys), Clerk JWT injection
+  hooks/useMe.js       shared /api/me query
+  components/
+    AppShell.jsx       layout shell
+    Sidebar.jsx        nav + queue + UserSwitcher (admin link only when role=admin)
+    UserSwitcher.jsx   Clerk SignedOut/SignedIn + identity row
+    Logo.jsx           Marathon brand SVGs
+    ui.jsx             T tokens, Page/Topbar/Card/Kpi/Badge/Button/etc.
+    LagerauftragParser.jsx   ⚠️ 433KB legacy, only imported from _archive
+  screens/
+    Upload.jsx, Pruefen.jsx, Focus.jsx, Abschluss.jsx
+    Historie.jsx, Einstellungen.jsx, Admin.jsx
+  utils/
+    parseLagerauftrag.js  29KB, parses .docx text → {meta, pallets[]}
+    auftragHelpers.js     sortPallets etc.
+```
+
+## Done so far
+
+| Sprint | What |
+|---|---|
+| **1** | localStorage → PostgreSQL backend; CRUD + workflow endpoints; multi-user atomic Auftrag claim; pytest baseline (19 tests) |
+| **1.5** | Bug: one user could claim multiple Auftraege; backend now 409s if caller has another in_progress |
+| **2** | Clerk auth (magic-link, invite-only); lazy user provisioning; admin-only DELETE history; CORS tightening; full admin panel (4 tabs); pytest grew to 30 |
+| **2.5 polish** | Pagination + sortable columns in admin; recharts KPI bar charts |
+
+## What's NOT done (backlog)
+
+- **Sprint 3 — Quality** (deferred, not strictly necessary):
+  - TypeScript migration (high risk for marginal gain at 5 users)
+  - Sentry error tracking on prod (low risk, high value — easy win)
+  - Real unit tests for `parseLagerauftrag.js` (currently zero coverage on
+    the most complex 29 KB file in the repo)
+  - PWA / offline mode (only if warehouse wifi is unreliable)
+  - Code splitting (no current need — bundle is 942 KB acceptable)
+- Delete dead `LagerauftragParser.jsx` (433 KB, only legacy archive
+  imports it; Vite tree-shakes from build but bloats source)
+- Invite the 3 other Lynne emails into Clerk allowlist
+- Rotate `CLERK_SECRET_KEY` (was shared in chat during Sprint 2 setup)
+- Fix git committer email (currently `thecoultre@Andys-MacBook-Air.local`,
+  GitHub shows commits as unverified)
+- Tests use the prod Postgres → fragile. Sprint 3+ should split to a
+  separate test DB or schema.
+
+## Gotchas (real ones we hit)
+
+1. **Vite cache after `npm install`** — new deps need
+   `rm -rf node_modules/.vite` + restart, otherwise "Invalid hook call /
+   different React copy" errors. Hit this for both `@tanstack/react-query`
+   and `@clerk/clerk-react`.
+2. **VITE_* not in prod bundle** — Dockerfile must `ARG VAR` then
+   `ENV VAR=$VAR` before `RUN npm run build`. Otherwise Railway env vars
+   stay invisible to the build. Symptom: blank prod page, console error
+   "VITE_CLERK_PUBLISHABLE_KEY is not set".
+3. **Tests share prod DB** — `clean_db` autouse TRUNCATEs before each
+   test. After the suite, `wipe_test_users_after_suite` cascades through
+   audit_log + auftraege FK before deleting *@test users. Real Clerk users
+   (any non-`@test` email) survive.
+4. **One user, multiple in_progress** — backend now refuses; frontend
+   pre-checks via `current` to avoid the round-trip.
+5. **zsh `$UID`** — built-in, can't use as a shell variable. Use `$U`
+   or other name.
+6. **Test instance Clerk** — `pk_test_*` works on any origin during
+   development. For real prod with `pk_live_*` you'd need to add the
+   prod URL to Clerk Dashboard → Domains.
+
+## Working with Claude in this repo
+
+- Communicate in Russian; UI strings stay German; code in English
+- The user prefers concise responses — long explanations only when
+  they ask "why" or for trade-offs
+- For destructive ops (push, force-push, delete), ask first
+- For env vars / secrets: never coммит to git, always update both
+  `.env` (local) AND Railway service variables (prod)
+- Before starting code work, propose a short plan (3-5 bullets) and
+  wait for "Идём" / "Делай"
+- Before exploring large files, use `grep`/Agent — direct Read on a
+  29 KB parser is wasteful
