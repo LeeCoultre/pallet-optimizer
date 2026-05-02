@@ -1,294 +1,338 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   Marathon — central app state.
-   Shape:
-     - queue   : Auftrag[]                     (parsed, awaiting workflow)
-     - current : Auftrag + workflow progress   (in active workflow)
-     - history : Completed[]                   (archived)
+   Marathon — central app state (Sprint 1: server-backed via TanStack Query).
+   Same useAppState() shape as the localStorage version it replaced — UI
+   doesn't need to know about the swap.
 
-   Persists to localStorage; survives reloads mid-workflow.
+   Conceptual model:
+     - queue   = backend rows where status='queued' or 'error'
+     - current = backend row where status='in_progress' AND assigned_to == me
+     - history = backend /api/history items
    ───────────────────────────────────────────────────────────────────────── */
 
-import {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
-} from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import mammoth from 'mammoth';
-import { parseLagerauftragText, validateParsing } from './utils/parseLagerauftrag.js';
+import {
+  parseLagerauftragText, validateParsing,
+} from './utils/parseLagerauftrag.js';
 import { sortPallets } from './utils/auftragHelpers.js';
+import { getUserId } from './userId.js';
+import {
+  listAuftraege, createAuftrag, getAuftrag, deleteAuftrag, reorderQueue as apiReorder,
+  startAuftrag, updateProgress, completeAuftrag, cancelAuftrag,
+  getHistory, deleteHistoryEntry, getMe,
+} from './marathonApi.js';
 
-const KEY_QUEUE   = 'marathon.queue.v1';
-const KEY_CURRENT = 'marathon.current.v1';
-const KEY_HISTORY = 'marathon.history.v1';
+/* AppStateProvider remains a marker — TanStack Query is mounted in main.jsx.
+   We keep the wrapper so existing imports don't break. */
+const Ctx = createContext(true);
 
-const Ctx = createContext(null);
+export function AppStateProvider({ children }) {
+  return <Ctx.Provider value={true}>{children}</Ctx.Provider>;
+}
 
-/* ─── localStorage helpers ────────────────────────────────────────────── */
-function load(key, fallback) {
+/* ─── Adapters: backend (camelCase via marathonApi) → legacy localStorage shape ── */
+
+function toLegacy(a) {
+  if (!a) return null;
+  return {
+    id:        a.id,
+    fileName:  a.fileName,
+    fbaCode:   a.fbaCode,
+    addedAt:   a.createdAt ? Date.parse(a.createdAt) : Date.now(),
+    rawText:   a.rawText,
+    parsed:    a.parsed,
+    validation: a.validation,
+    status:    a.status === 'error' ? 'error' : 'ready',
+    error:     a.errorMessage,
+    palletCount:  a.palletCount,
+    articleCount: a.articleCount,
+
+    /* Workflow state — populated when in_progress / completed */
+    startedAt:        a.startedAt  ? Date.parse(a.startedAt)  : undefined,
+    finishedAt:       a.finishedAt ? Date.parse(a.finishedAt) : undefined,
+    durationSec:      a.durationSec,
+    step:             a.step,
+    currentPalletIdx: a.currentPalletIdx ?? 0,
+    currentItemIdx:   a.currentItemIdx ?? 0,
+    completedKeys:    a.completedKeys || {},
+    palletTimings:    a.palletTimings || {},
+
+    assignedToUserId:   a.assignedToUserId,
+    assignedToUserName: a.assignedToUserName,
+  };
+}
+
+function toLegacyHistory(h) {
+  return {
+    id:           h.id,
+    fileName:     h.fileName,
+    fbaCode:      h.fbaCode,
+    startedAt:    h.startedAt  ? Date.parse(h.startedAt)  : null,
+    finishedAt:   h.finishedAt ? Date.parse(h.finishedAt) : null,
+    durationSec:  h.durationSec,
+    palletCount:  h.palletCount,
+    articleCount: h.articleCount,
+    palletTimings: h.palletTimings || {},
+    assignedToUserName: h.assignedToUserName,
+  };
+}
+
+/* Parse one .docx in-browser; sort pallets so the upload result matches
+   the workflow ordering used by Focus mode. */
+async function parseDocxFile(file) {
+  const buf = await file.arrayBuffer();
+  let rawText = '';
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
-function save(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* noop */ }
-}
-function remove(key) {
-  try { localStorage.removeItem(key); } catch { /* noop */ }
-}
-function uid() {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-}
-
-/* ─── Parse a single .docx → queue entry ──────────────────────────────── */
-async function parseDocx(file) {
-  const id = uid();
-  try {
-    const buf = await file.arrayBuffer();
-    const { value: rawText } = await mammoth.extractRawText({ arrayBuffer: buf });
+    const r = await mammoth.extractRawText({ arrayBuffer: buf });
+    rawText = r.value;
     const parsed = parseLagerauftragText(rawText);
+    if (parsed?.pallets) parsed.pallets = sortPallets(parsed.pallets);
     const validation = validateParsing(rawText, parsed);
-    return {
-      id,
-      fileName: file.name,
-      addedAt: Date.now(),
-      rawText,
-      parsed,
-      validation,
-      status: 'ready',
-    };
+    return { fileName: file.name, rawText, parsed, validation, errorMessage: null };
   } catch (e) {
-    return {
-      id,
-      fileName: file.name,
-      addedAt: Date.now(),
-      status: 'error',
-      error: String(e?.message || e),
-    };
+    return { fileName: file.name, rawText, parsed: null, validation: null,
+             errorMessage: String(e?.message || e) };
   }
 }
 
 /* ─────────────────────────────────────────────────────────────────────── */
-export function AppStateProvider({ children }) {
-  const [queue, setQueue]     = useState(() => load(KEY_QUEUE, []));
-  const [current, setCurrent] = useState(() => load(KEY_CURRENT, null));
-  const [history, setHistory] = useState(() => load(KEY_HISTORY, []));
 
-  /* Persist on change */
-  useEffect(() => { save(KEY_QUEUE, queue); }, [queue]);
-  useEffect(() => {
-    if (current) save(KEY_CURRENT, current);
-    else remove(KEY_CURRENT);
-  }, [current]);
-  useEffect(() => { save(KEY_HISTORY, history); }, [history]);
+export function useAppState() {
+  const qc = useQueryClient();
+  const userId = getUserId();
 
-  /* ── Queue actions ──────────────────────────────────────────────── */
+  /* ── Queries ───────────────────────────────────────────────────────── */
+  const meQ = useQuery({
+    queryKey: ['me'],
+    queryFn: getMe,
+    enabled: !!userId,
+    refetchInterval: false,
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const auftraegeQ = useQuery({
+    queryKey: ['auftraege'],
+    queryFn: listAuftraege,
+    enabled: !!userId,
+  });
+
+  const historyQ = useQuery({
+    queryKey: ['history'],
+    queryFn: () => getHistory(50, 0),
+    enabled: !!userId,
+  });
+
+  const all = auftraegeQ.data ?? [];
+  const me  = meQ.data;
+
+  /* Derived: queue (waiting/error rows) and current (my in_progress row) */
+  const queue = useMemo(
+    () => all.filter((a) => a.status === 'queued' || a.status === 'error').map(toLegacy),
+    [all],
+  );
+
+  const currentSrc = useMemo(
+    () => all.find((a) => a.status === 'in_progress' && a.assignedToUserId === me?.id) ?? null,
+    [all, me?.id],
+  );
+  const current = useMemo(() => toLegacy(currentSrc), [currentSrc]);
+
+  const history = useMemo(
+    () => (historyQ.data?.items ?? []).map(toLegacyHistory),
+    [historyQ.data],
+  );
+
+  /* ── Mutations ─────────────────────────────────────────────────────── */
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: ['auftraege'] });
+    qc.invalidateQueries({ queryKey: ['history'] });
+  };
+
+  const createMut  = useMutation({ mutationFn: createAuftrag, onSuccess: invalidateAll });
+  const removeMut  = useMutation({ mutationFn: deleteAuftrag, onSuccess: invalidateAll });
+  const reorderMut = useMutation({ mutationFn: apiReorder,    onSuccess: invalidateAll });
+  const cancelMut  = useMutation({ mutationFn: cancelAuftrag, onSuccess: invalidateAll });
+  const startMut   = useMutation({ mutationFn: startAuftrag,  onSuccess: invalidateAll });
+  const completeMut = useMutation({
+    mutationFn: completeAuftrag,
+    onSuccess: async () => {
+      invalidateAll();
+      /* Auto-start the next queued Auftrag for me. */
+      const fresh = await listAuftraege();
+      const next = fresh.find((a) => a.status === 'queued');
+      if (next) startMut.mutate(next.id);
+    },
+  });
+  const deleteHistMut = useMutation({
+    mutationFn: deleteHistoryEntry,
+    onSuccess: invalidateAll,
+  });
+
+  /* Progress writes are frequent (every "Fertig" click). Optimistic update
+     keeps the UI snappy; we re-fetch the list once the server confirms. */
+  const progressMut = useMutation({
+    mutationFn: ({ id, payload }) => updateProgress(id, payload),
+    onMutate: async ({ id, payload }) => {
+      await qc.cancelQueries({ queryKey: ['auftraege'] });
+      const prev = qc.getQueryData(['auftraege']);
+      qc.setQueryData(['auftraege'], (old) =>
+        (old || []).map((a) => (a.id === id ? { ...a, ...payload } : a)),
+      );
+      return { prev };
+    },
+    onError: (_e, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['auftraege'], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['auftraege'] }),
+  });
+
+  /* ── Actions (legacy useAppState() shape) ──────────────────────────── */
   const addFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList || []).filter((f) => /\.docx$/i.test(f.name));
     if (!files.length) return [];
-    const built = await Promise.all(files.map(parseDocx));
-    setQueue((q) => [...q, ...built]);
-    return built;
-  }, []);
+    const built = await Promise.all(files.map(parseDocxFile));
+    const created = await Promise.all(
+      built.map((p) => createMut.mutateAsync(p).catch(() => null)),
+    );
+    return created.filter(Boolean).map(toLegacy);
+  }, [createMut]);
 
-  const removeFromQueue = useCallback((id) => {
-    setQueue((q) => q.filter((e) => e.id !== id));
-  }, []);
+  const removeFromQueue = useCallback((id) => removeMut.mutate(id), [removeMut]);
 
-  const reorderQueue = useCallback((fromIdx, toIdx) => {
-    setQueue((q) => {
-      const next = [...q];
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, moved);
-      return next;
+  const clearQueue = useCallback(() => {
+    queue.forEach((q) => removeMut.mutate(q.id));
+  }, [queue, removeMut]);
+
+  /* Old signature: (fromIdx, toIdx). We translate to a list of
+     {id, queuePosition} and call PATCH /reorder. */
+  const reorderQueueAction = useCallback((fromIdx, toIdx) => {
+    if (fromIdx === toIdx) return;
+    const next = [...queue];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    const items = next.map((q, i) => ({ id: q.id, queuePosition: i }));
+    /* Optimistic: update list order immediately. */
+    qc.setQueryData(['auftraege'], (old) => {
+      if (!old) return old;
+      const byId = new Map(old.map((a) => [a.id, a]));
+      const reordered = items.map((it, i) => ({
+        ...byId.get(it.id),
+        queuePosition: i,
+      }));
+      const inProgress = old.filter((a) => a.status === 'in_progress');
+      return [...reordered, ...inProgress];
     });
-  }, []);
+    reorderMut.mutate(items);
+  }, [queue, qc, reorderMut]);
 
-  const clearQueue = useCallback(() => setQueue([]), []);
-
-  /* ── Workflow actions ──────────────────────────────────────────── */
-  /* Start workflow with a specific entry (or first). Removes from queue.
-     Pallets are sorted: easiest (fewest articles) first, Tachorollen last. */
   const startEntry = useCallback((entryId) => {
-    setQueue((q) => {
-      const idx = entryId
-        ? q.findIndex((e) => e.id === entryId)
-        : 0;
-      if (idx < 0) return q;
-      const entry = q[idx];
-      const startedAt = Date.now();
-      const sortedParsed = entry.parsed
-        ? { ...entry.parsed, pallets: sortPallets(entry.parsed.pallets) }
-        : entry.parsed;
-      const firstPallet = sortedParsed?.pallets?.[0];
-      setCurrent({
-        ...entry,
-        parsed: sortedParsed,
-        startedAt,
-        step: 'pruefen',
-        completedKeys: {},
-        palletTimings: firstPallet ? { [firstPallet.id]: { startedAt } } : {},
-        currentPalletIdx: 0,
-        currentItemIdx: 0,
-      });
-      return q.filter((_, i) => i !== idx);
-    });
-  }, []);
+    const target = entryId || queue[0]?.id;
+    if (target) startMut.mutate(target);
+  }, [queue, startMut]);
 
   const goToStep = useCallback((step) => {
-    setCurrent((c) => (c ? { ...c, step } : c));
-  }, []);
+    if (current?.id) progressMut.mutate({ id: current.id, payload: { step } });
+  }, [current, progressMut]);
 
   const setCurrentPalletIdx = useCallback((idx) => {
-    setCurrent((c) => {
-      if (!c?.parsed) return c;
-      const pId = c.parsed.pallets?.[idx]?.id;
-      const palletTimings = { ...(c.palletTimings || {}) };
-      if (pId && !palletTimings[pId]) palletTimings[pId] = { startedAt: Date.now() };
-      return { ...c, currentPalletIdx: idx, currentItemIdx: 0, palletTimings };
+    if (!current?.id) return;
+    const pId = current.parsed?.pallets?.[idx]?.id;
+    const palletTimings = { ...(current.palletTimings || {}) };
+    if (pId && !palletTimings[pId]) palletTimings[pId] = { startedAt: Date.now() };
+    progressMut.mutate({
+      id: current.id,
+      payload: { currentPalletIdx: idx, currentItemIdx: 0, palletTimings },
     });
-  }, []);
+  }, [current, progressMut]);
 
   const setCurrentItemIdx = useCallback((idx) => {
-    setCurrent((c) => (c ? { ...c, currentItemIdx: idx } : c));
-  }, []);
+    if (current?.id) {
+      progressMut.mutate({ id: current.id, payload: { currentItemIdx: idx } });
+    }
+  }, [current, progressMut]);
 
-  /* Mark current article as fertig + advance to next.
-     Returns "complete" if last article of last pallet was just marked. */
+  /* Mark current article fertig + advance. Returns true when last article
+     of the last pallet has been completed (UI uses this to auto-navigate). */
   const completeCurrentItem = useCallback(() => {
-    let didFinishAll = false;
-    setCurrent((c) => {
-      if (!c?.parsed) return c;
-      const pallet = c.parsed.pallets[c.currentPalletIdx];
-      if (!pallet) return c;
-      const item = pallet.items[c.currentItemIdx];
-      if (!item) return c;
-      const code = item.fnsku || item.sku;
-      const key = `${pallet.id}|${c.currentItemIdx}|${code}`;
-      const completedKeys = { ...c.completedKeys, [key]: Date.now() };
+    if (!current?.parsed) return false;
+    const pallet = current.parsed.pallets[current.currentPalletIdx];
+    if (!pallet) return false;
+    const item = pallet.items[current.currentItemIdx];
+    if (!item) return false;
 
-      let palletTimings = c.palletTimings || {};
-      let currentPalletIdx = c.currentPalletIdx;
-      let currentItemIdx = c.currentItemIdx + 1;
+    const code = item.fnsku || item.sku;
+    const key = `${pallet.id}|${current.currentItemIdx}|${code}`;
+    const completedKeys = { ...(current.completedKeys || {}), [key]: Date.now() };
 
-      if (currentItemIdx >= pallet.items.length) {
-        // pallet finished — record finishedAt
-        palletTimings = {
-          ...palletTimings,
-          [pallet.id]: {
-            ...(palletTimings[pallet.id] || { startedAt: Date.now() }),
-            finishedAt: Date.now(),
-          },
-        };
-        if (currentPalletIdx + 1 < c.parsed.pallets.length) {
-          currentPalletIdx += 1;
-          currentItemIdx = 0;
-          const nextId = c.parsed.pallets[currentPalletIdx].id;
-          if (!palletTimings[nextId]) {
-            palletTimings = {
-              ...palletTimings,
-              [nextId]: { startedAt: Date.now() },
-            };
-          }
-        } else {
-          // last pallet, last item — done!
-          didFinishAll = true;
-          // keep currentItemIdx at length so UI knows all done
-        }
-      }
+    let palletTimings   = { ...(current.palletTimings || {}) };
+    let nextPalletIdx   = current.currentPalletIdx;
+    let nextItemIdx     = current.currentItemIdx + 1;
+    let didFinishAll    = false;
 
-      return {
-        ...c,
-        completedKeys, palletTimings,
-        currentPalletIdx, currentItemIdx,
+    if (nextItemIdx >= pallet.items.length) {
+      palletTimings = {
+        ...palletTimings,
+        [pallet.id]: {
+          ...(palletTimings[pallet.id] || { startedAt: Date.now() }),
+          finishedAt: Date.now(),
+        },
       };
+      if (nextPalletIdx + 1 < current.parsed.pallets.length) {
+        nextPalletIdx += 1;
+        nextItemIdx = 0;
+        const nextId = current.parsed.pallets[nextPalletIdx].id;
+        if (!palletTimings[nextId]) {
+          palletTimings = { ...palletTimings, [nextId]: { startedAt: Date.now() } };
+        }
+      } else {
+        didFinishAll = true;
+      }
+    }
+
+    progressMut.mutate({
+      id: current.id,
+      payload: {
+        completedKeys, palletTimings,
+        currentPalletIdx: nextPalletIdx,
+        currentItemIdx:   nextItemIdx,
+      },
     });
     return didFinishAll;
-  }, []);
+  }, [current, progressMut]);
 
-  /* Save current as completed → history; clear current; auto-start next
-     in queue if any. */
   const completeAndAdvance = useCallback(() => {
-    setCurrent((c) => {
-      if (!c) return null;
-      const pallets = c.parsed?.pallets || [];
-      const articles = pallets.flatMap((p) =>
-        p.items.map((it, i) => ({
-          palletId: p.id, itemIdx: i,
-          sku: it.sku, fnsku: it.fnsku, title: it.title,
-          units: it.units, useItem: it.useItem,
-          category: it.category,
-        })),
-      );
-      const entry = {
-        id: c.id,
-        fbaCode: c.parsed?.meta?.sendungsnummer || c.parsed?.meta?.fbaCode || '—',
-        fileName: c.fileName,
-        startedAt: c.startedAt,
-        finishedAt: Date.now(),
-        durationSec: Math.round((Date.now() - c.startedAt) / 1000),
-        palletCount: pallets.length,
-        articleCount: articles.length,
-        articles,
-        palletTimings: c.palletTimings || {},
-      };
-      setHistory((h) => [entry, ...h]);
-      return null;
-    });
+    if (current?.id) completeMut.mutate(current.id);
+  }, [current, completeMut]);
 
-    // Auto-advance queue (also sort pallets for the next Auftrag)
-    setTimeout(() => {
-      setQueue((q) => {
-        if (q.length === 0) return q;
-        const next = q[0];
-        const startedAt = Date.now();
-        const sortedParsed = next.parsed
-          ? { ...next.parsed, pallets: sortPallets(next.parsed.pallets) }
-          : next.parsed;
-        const firstPallet = sortedParsed?.pallets?.[0];
-        setCurrent({
-          ...next,
-          parsed: sortedParsed,
-          startedAt,
-          step: 'pruefen',
-          completedKeys: {},
-          palletTimings: firstPallet ? { [firstPallet.id]: { startedAt } } : {},
-          currentPalletIdx: 0,
-          currentItemIdx: 0,
-        });
-        return q.slice(1);
-      });
-    }, 0);
-  }, []);
+  const cancelCurrent = useCallback(() => {
+    if (current?.id) cancelMut.mutate(current.id);
+  }, [current, cancelMut]);
 
-  /* Cancel current workflow without saving */
-  const cancelCurrent = useCallback(() => setCurrent(null), []);
+  const removeHistoryEntry = useCallback(
+    (id) => deleteHistMut.mutate(id),
+    [deleteHistMut],
+  );
 
-  /* History actions */
-  const removeHistoryEntry = useCallback((id) => {
-    setHistory((h) => h.filter((e) => e.id !== id));
-  }, []);
-  const clearHistory = useCallback(() => setHistory([]), []);
+  const clearHistory = useCallback(() => {
+    history.forEach((h) => deleteHistMut.mutate(h.id));
+  }, [history, deleteHistMut]);
 
-  const value = useMemo(() => ({
+  /* ── Public API — same shape as the old localStorage version ──────── */
+  return useMemo(() => ({
     queue, current, history,
-    addFiles, removeFromQueue, reorderQueue, clearQueue,
+    addFiles, removeFromQueue, reorderQueue: reorderQueueAction, clearQueue,
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   }), [
     queue, current, history,
-    addFiles, removeFromQueue, reorderQueue, clearQueue,
+    addFiles, removeFromQueue, reorderQueueAction, clearQueue,
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   ]);
-
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-}
-
-export function useAppState() {
-  const ctx = useContext(Ctx);
-  if (!ctx) throw new Error('useAppState must be used within AppStateProvider');
-  return ctx;
 }

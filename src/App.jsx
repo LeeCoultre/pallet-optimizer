@@ -12,7 +12,18 @@ import AbschlussScreen from './screens/Abschluss.jsx';
 import HistorieScreen from './screens/Historie.jsx';
 import EinstellungenScreen from './screens/Einstellungen.jsx';
 
+/* Legacy localStorage keys from the pre-backend era. Stale data left
+   in old browsers; harmless but pollutes devtools. One-shot cleanup. */
+const LEGACY_KEYS = [
+  'marathon.queue.v1',
+  'marathon.current.v1',
+  'marathon.history.v1',
+];
+
 export default function App() {
+  useEffect(() => {
+    LEGACY_KEYS.forEach((k) => localStorage.removeItem(k));
+  }, []);
   return (
     <AppStateProvider>
       <Router />

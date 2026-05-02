@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { useAppState } from '../state.jsx';
 import { Mark } from './Logo.jsx';
 import { T, Badge } from './ui.jsx';
+import { UserSwitcher } from './UserSwitcher.jsx';
 
 export const SIDEBAR_WIDTH = 224;
 
@@ -95,29 +96,16 @@ export function Sidebar({ route, onRoute }) {
       {/* Queue — always visible */}
       <QueueSection />
 
-      {/* Footer */}
+      {/* User identity / switcher */}
+      <UserSwitcher />
+
+      {/* Build label */}
       <div style={{
-        padding: '14px 18px 18px',
-        borderTop: `1px solid ${T.border.primary}`,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
+        padding: '4px 18px 14px',
+        fontSize: 10.5,
+        color: T.text.faint,
       }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <span className="mr-pulse" style={{
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            background: T.status.success.main,
-            boxShadow: `0 0 0 3px ${T.status.success.main}30`,
-          }} />
-          <span style={{ fontSize: 12, color: T.text.secondary, fontWeight: 500 }}>
-            Bereit
-          </span>
-        </div>
-        <span style={{ fontSize: 11, color: T.text.faint }}>
-          Marathon · v 2.0.0
-        </span>
+        Marathon · v 2.0.0
       </div>
     </aside>
   );

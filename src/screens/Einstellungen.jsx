@@ -33,10 +33,10 @@ export default function EinstellungenScreen() {
           </Lead>
         </section>
 
-        {/* Lokale Daten */}
+        {/* Daten */}
         <SettingsCard
-          title="Lokale Daten"
-          sub="Alle Daten leben im Browser-localStorage. Hier kannst du sie zurücksetzen."
+          title="Daten"
+          sub="Aufträge und Historie liegen in der gemeinsamen PostgreSQL-Datenbank. Änderungen sind sofort für alle Benutzer sichtbar."
         >
           <Row label="Aufträge in Warteschlange" value={queue.length} mono>
             {queue.length > 0 && (
@@ -54,13 +54,13 @@ export default function EinstellungenScreen() {
               <Button
                 variant="danger"
                 size="sm"
-                onClick={() => { if (confirm('Historie wirklich löschen?')) clearHistory(); }}
+                onClick={() => { if (confirm('Historie wirklich löschen? (Nur Admin)')) clearHistory(); }}
               >
                 Löschen
               </Button>
             )}
           </Row>
-          <Row label="Storage-Engine" value="localStorage v1" isLast />
+          <Row label="Storage-Engine" value="PostgreSQL · FastAPI" isLast />
         </SettingsCard>
 
         {/* Zeitschätzungen */}
