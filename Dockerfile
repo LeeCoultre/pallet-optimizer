@@ -12,7 +12,13 @@ COPY index.html vite.config.js eslint.config.js ./
 COPY public ./public
 COPY src ./src
 
-# Empty string means api.js uses relative URLs -> same origin as backend
+# Vite reads VITE_* env vars at build time and bakes them into the bundle.
+# Railway exposes service env vars to the build via --build-arg; we must
+# re-declare each one as ARG, then promote to ENV so `npm run build` sees it.
+ARG VITE_CLERK_PUBLISHABLE_KEY
+ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
+
+# Empty VITE_API_URL → api.js uses relative URLs → same origin as backend.
 ENV VITE_API_URL=""
 RUN npm run build
 
