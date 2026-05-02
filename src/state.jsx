@@ -10,13 +10,13 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 import { createContext, useCallback, useContext, useMemo } from 'react';
+import { useAuth } from '@clerk/clerk-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import mammoth from 'mammoth';
 import {
   parseLagerauftragText, validateParsing,
 } from './utils/parseLagerauftrag.js';
 import { sortPallets } from './utils/auftragHelpers.js';
-import { getUserId } from './userId.js';
 import {
   listAuftraege, createAuftrag, getAuftrag, deleteAuftrag, reorderQueue as apiReorder,
   startAuftrag, updateProgress, completeAuftrag, cancelAuftrag,
@@ -100,13 +100,13 @@ async function parseDocxFile(file) {
 
 export function useAppState() {
   const qc = useQueryClient();
-  const userId = getUserId();
+  const { isSignedIn } = useAuth();
 
   /* ── Queries ───────────────────────────────────────────────────────── */
   const meQ = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
-    enabled: !!userId,
+    enabled: !!isSignedIn,
     refetchInterval: false,
     staleTime: Infinity,
     retry: false,
@@ -115,13 +115,13 @@ export function useAppState() {
   const auftraegeQ = useQuery({
     queryKey: ['auftraege'],
     queryFn: listAuftraege,
-    enabled: !!userId,
+    enabled: !!isSignedIn,
   });
 
   const historyQ = useQuery({
     queryKey: ['history'],
     queryFn: () => getHistory(50, 0),
-    enabled: !!userId,
+    enabled: !!isSignedIn,
   });
 
   const all = auftraegeQ.data ?? [];

@@ -4,13 +4,13 @@
  *   - Empty string  → same-origin (single-service Railway deploy)
  *   - http://...    → split deploy / local dev (e.g. http://127.0.0.1:8001)
  *
- * Auto-injects X-User-Id header from localStorage.
+ * Auth: auto-injects `Authorization: Bearer <jwt>` from the active
+ * Clerk session via `window.Clerk.session.getToken()`. Open endpoints
+ * (e.g. /api/users) work without a session.
  *
  * Auto-converts top-level keys snake_case ↔ camelCase, but stops at
  * OPAQUE keys whose values are application-defined JSONB blobs
  * (parsed, validation, etc.) — their inner keys must be preserved as-is. */
-
-import { getUserId } from './userId.js';
 
 const envUrl =
   typeof import.meta !== 'undefined' ? import.meta.env?.VITE_API_URL : undefined;
@@ -59,11 +59,22 @@ export class ApiError extends Error {
   }
 }
 
+async function getAuthToken() {
+  // window.Clerk is loaded by ClerkProvider; session is null when signed out.
+  const session = typeof window !== 'undefined' ? window.Clerk?.session : null;
+  if (!session) return null;
+  try {
+    return await session.getToken();
+  } catch {
+    return null;
+  }
+}
+
 async function call(method, path, body) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const uid = getUserId();
-  if (uid) headers['X-User-Id'] = uid;
+  const token = await getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(`${BASE}${path}`, {
     method,
