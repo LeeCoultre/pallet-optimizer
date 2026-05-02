@@ -11,6 +11,7 @@ import FocusScreen from './screens/Focus.jsx';
 import AbschlussScreen from './screens/Abschluss.jsx';
 import HistorieScreen from './screens/Historie.jsx';
 import EinstellungenScreen from './screens/Einstellungen.jsx';
+import AdminScreen from './screens/Admin.jsx';
 
 /* Legacy localStorage keys from the pre-backend era. Stale data left
    in old browsers; harmless but pollutes devtools. One-shot cleanup. */
@@ -46,6 +47,7 @@ function Router() {
       {route === 'workspace'     && <Workspace />}
       {route === 'historie'      && <HistorieScreen />}
       {route === 'einstellungen' && <EinstellungenScreen />}
+      {route === 'admin'         && <AdminScreen />}
     </AppShell>
   );
 }

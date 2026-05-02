@@ -111,3 +111,28 @@ export const getHistory = (limit = 50, offset = 0) =>
 
 export const deleteHistoryEntry = (id) =>
   call('DELETE', `/api/history/${id}`);
+
+/* ─── Admin (require role=admin on backend) ───────── */
+function qs(params) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== '') q.set(k, v);
+  }
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
+export const adminListAuftraege = (params = {}) =>
+  call('GET', `/api/admin/auftraege${qs(params)}`);
+
+export const adminListUsers = () =>
+  call('GET', '/api/admin/users');
+
+export const adminChangeUserRole = (userId, role) =>
+  call('PATCH', `/api/admin/users/${userId}/role`, { role });
+
+export const adminListAudit = (params = {}) =>
+  call('GET', `/api/admin/audit${qs(params)}`);
+
+export const adminGetStats = () =>
+  call('GET', '/api/admin/stats');

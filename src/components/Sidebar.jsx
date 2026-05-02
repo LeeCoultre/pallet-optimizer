@@ -2,6 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useAppState } from '../state.jsx';
+import { useMe } from '../hooks/useMe.js';
 import { Mark } from './Logo.jsx';
 import { T, Badge } from './ui.jsx';
 import { UserSwitcher } from './UserSwitcher.jsx';
@@ -10,6 +11,7 @@ export const SIDEBAR_WIDTH = 224;
 
 export function Sidebar({ route, onRoute }) {
   const { queue, history, current } = useAppState();
+  const me = useMe().data;
 
   const items = [
     {
@@ -32,7 +34,14 @@ export function Sidebar({ route, onRoute }) {
       sub: 'System & Defaults',
       icon: <IconSettings />,
     },
-  ];
+    /* Admin nav — only when /api/me reports role=admin. */
+    me?.role === 'admin' && {
+      id: 'admin',
+      label: 'Admin',
+      sub: 'Übersicht & Benutzer',
+      icon: <IconAdmin />,
+    },
+  ].filter(Boolean);
 
   return (
     <aside style={{
@@ -419,6 +428,14 @@ function IconSettings() {
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
       <circle cx="9" cy="9" r="2.2" stroke="currentColor" strokeWidth="1.6" />
       <path d="M9 1.5v2M9 14.5v2M3.5 3.5l1.4 1.4M13.1 13.1l1.4 1.4M1.5 9h2M14.5 9h2M3.5 14.5l1.4-1.4M13.1 4.9l1.4-1.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+function IconAdmin() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 2L3 4.5v3.7c0 3.4 2.5 6.7 6 7.8 3.5-1.1 6-4.4 6-7.8V4.5L9 2z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
+      <path d="M6.5 9l1.7 1.7L12 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
