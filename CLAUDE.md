@@ -158,24 +158,29 @@ backend/
   tests/               pytest (30 cases)
 
 src/
-  main.jsx             ClerkProvider + QueryClientProvider mount
+  main.jsx             ClerkProvider + QueryClientProvider mount; applyAccent() before render
   App.jsx              Router (workspace/historie/einstellungen/admin) + legacy localStorage cleanup
   state.jsx            useAppState() — TanStack Query backed; same return shape as the old localStorage version
   marathonApi.js       fetch wrapper, snake↔camel conversion (with OPAQUE keys), Clerk JWT injection
+  index.css            CSS vars: --bg-*, --ink-*, --accent-*, --sidebar-width
   hooks/useMe.js       shared /api/me query
   components/
     AppShell.jsx       layout shell
-    Sidebar.jsx        nav + queue + UserSwitcher (admin link only when role=admin)
-    UserSwitcher.jsx   Clerk SignedOut/SignedIn + identity row
-    Logo.jsx           Marathon brand SVGs
-    ui.jsx             T tokens, Page/Topbar/Card/Kpi/Badge/Button/etc.
+    Sidebar.jsx        nav + queue (DnD reorder) + CurrentProgress + TodayStats + UserSwitcher;
+                       collapse toggle writes 224↔64px to --sidebar-width
+    UserSwitcher.jsx   Clerk SignedOut/SignedIn + identity row, collapsed-aware
+    Logo.jsx           Mark (3-chevron icon, accent stroke = var(--accent)) + Wordmark
+    ui.jsx             T tokens (T.accent.* → var(--accent-*)), Page/Topbar/Card/Kpi/Badge/Button/etc.
     LagerauftragParser.jsx   ⚠️ 433KB legacy, only imported from _archive
   screens/
     Upload.jsx, Pruefen.jsx, Focus.jsx, Abschluss.jsx
-    Historie.jsx, Einstellungen.jsx, Admin.jsx
+    Historie.jsx (lazy-fetches Detail per row for articles)
+    Einstellungen.jsx (Akzentfarbe picker), Admin.jsx (4 tabs + recharts)
   utils/
     parseLagerauftrag.js  29KB, parses .docx text → {meta, pallets[]}
     auftragHelpers.js     sortPallets etc.
+    accent.js             deriveAccent(hex) → 5 shades, applyAccent() writes to :root,
+                          getStoredAccent/setStoredAccent (localStorage)
 ```
 
 ## Done so far
@@ -186,6 +191,10 @@ src/
 | **1.5** | Bug: one user could claim multiple Auftraege; backend now 409s if caller has another in_progress |
 | **2** | Clerk auth (magic-link, invite-only); lazy user provisioning; admin-only DELETE history; CORS tightening; full admin panel (4 tabs); pytest grew to 30 |
 | **2.5 polish** | Pagination + sortable columns in admin; recharts KPI bar charts |
+| **brand** | New 3-chevron logo on black square; themable accent palette (default `#FF5B1F`) — picker in Einstellungen, 5 shades derived at runtime via CSS vars in `:root`. Removed pallet weight cap (warehouse has no max kg) |
+| **sidebar** | Collapse toggle 224↔64px (persisted, exposes `--sidebar-width`); CurrentProgress mini-stepper for active workflow; Quick-Start ▶ on hover; native HTML5 DnD reorder; "Heute: X fertig · Yh Zm" line. Build bumped to v2.1.0 |
+| **historie fix** | Sprint 2 trimmed `/api/history` to Summary which broke the row-expand article list. Now expanding a row lazy-fetches Detail via `getAuftrag(id)` and flattens `parsed.pallets[].items` |
+| **focus item-flow** | Sticky strip lists every item of the current pallet as numbered chips. Green = Artikel-Code copied; Red = not yet. Click jumps to item. Pallet transition (Artikel abschließen on last item / arrow-right across boundary) is **blocked** until every item on the current pallet is green |
 
 ## What's NOT done (backlog)
 
@@ -204,6 +213,27 @@ src/
   GitHub shows commits as unverified)
 - Tests use the prod Postgres → fragile. Sprint 3+ should split to a
   separate test DB or schema.
+
+## Theming via CSS vars (important for any new component)
+
+`T.accent.*` and `--sidebar-width` are CSS vars, NOT JS string literals.
+Components read them through `T` as before:
+
+```jsx
+<div style={{ background: T.accent.main }}>  // resolves to var(--accent)
+```
+
+Changing the value at runtime (color picker, sidebar collapse) just
+calls `document.documentElement.style.setProperty(...)` — every existing
+inline-style component re-paints automatically without React re-render.
+This is why the chevron logo's accent stroke flips colour the moment
+the user picks a new accent in Einstellungen.
+
+⚠️ **Do not concatenate accent vars with alpha hex** —
+`` `${T.accent.main}30` `` would produce `var(--accent)30` which is invalid
+CSS. If you need an alpha tint, derive it via the helper:
+`backgroundColor: T.accent.bg` (a tinted version of main) or use a
+proper `rgba(...)` literal.
 
 ## Gotchas (real ones we hit)
 
@@ -226,6 +256,19 @@ src/
 6. **Test instance Clerk** — `pk_test_*` works on any origin during
    development. For real prod with `pk_live_*` you'd need to add the
    prod URL to Clerk Dashboard → Domains.
+7. **Two `flex: 1` in sidebar** — QueueSection has its own `flex: 1`
+   internally; if you add another spacer with `flex: 1` they will split
+   the space 50/50 instead of queue claiming all of it. Use the spacer
+   only when QueueSection is hidden (collapsed mode).
+8. **`getAuftrag(id)` for history rows** — `/api/history` returns
+   Summary (no `parsed`), so anything that needs the article list inside
+   the row (Historie expand, future export, etc.) must lazy-fetch via
+   `getAuftrag(id)` with `staleTime: Infinity` (history rows are
+   immutable).
+9. **Focus copiedKeys is local-only** — keyed by `${palletIdx}|${itemIdx}`
+   and lives in component state, NOT in DB. Reload resets it. If we ever
+   want copy state to survive across sessions, sync it to backend (new
+   column on `auftraege` or extend `completed_keys`).
 
 ## Working with Claude in this repo
 
