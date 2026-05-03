@@ -114,6 +114,7 @@ export default function DimensionsTab() {
       widthCm:  (r) => r.widthCm,
       heightCm: (r) => r.heightCm,
       weightKg: (r) => r.weightKg,
+      palletLoadMax: (r) => r.palletLoadMax ?? -1,
       updated:  (r) => r.updatedAt,
     }[sortBy] || ((r) => r.id);
     return [...filteredItems].sort((a, b) => {
@@ -559,6 +560,11 @@ function DimensionsTable({
                   hint="Länge × Breite × Höhe in cm">L × B × H</Th>
               <Th sortKey="weightKg" sortBy={sortBy} sortDir={sortDir} onSort={onSort}
                   align="right" mono w={70}>kg</Th>
+              <Th sortKey="palletLoadMax" sortBy={sortBy} sortDir={sortDir} onSort={onSort}
+                  align="right" mono w={80}
+                  hint="Max. Anzahl Kartons dieses Formats auf einer EUR-Palette">
+                Max/Pal.
+              </Th>
               <Th w={100}>Quelle</Th>
               <Th sortKey="updated" sortBy={sortBy} sortDir={sortDir} onSort={onSort} w={140}>
                 Letzte Änderung
@@ -694,6 +700,11 @@ function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, on
           {row.lengthCm.toFixed(1)} × {row.widthCm.toFixed(1)} × {row.heightCm.toFixed(1)}
         </Td>
         <Td align="right" mono>{row.weightKg.toFixed(2)}</Td>
+        <Td align="right" mono>
+          {row.palletLoadMax != null ? row.palletLoadMax : (
+            <span style={{ color: T.text.faint }}>—</span>
+          )}
+        </Td>
         <Td><SourceBadge source={row.source} /></Td>
         <Td>
           <div style={{ fontSize: 12, color: T.text.secondary }}>{updated.short}</div>
@@ -734,7 +745,7 @@ function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, on
       </tr>
       {isExpanded && (
         <tr style={{ background: T.bg.surface2 }}>
-          <td colSpan={9} style={{
+          <td colSpan={10} style={{
             padding: 0,
             borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
           }}>
@@ -812,6 +823,14 @@ function DimRowExpansion({ row, updated }) {
                      hint="L × B × H, ohne Pack-Coeff" />
           <DimMetric label="Dichte" value={density > 0 ? `${density.toFixed(0)} kg/m³` : '—'}
                      hint="Gewicht / Volumen — Plausibilitätscheck. Wasser ≈ 1000 kg/m³" />
+          <DimMetric label="Max. Kartons / Palette"
+                     value={row.palletLoadMax != null ? row.palletLoadMax : '—'}
+                     hint="Empirische Obergrenze: wieviele Kartons dieses Formats physisch auf eine EUR-Palette passen (Stapelhöhe + Bodenrand-Verluste)" />
+          {row.palletLoadMax != null && (
+            <DimMetric label="↑ Beitrag pro Karton"
+                       value={`${(100 / row.palletLoadMax).toFixed(2)} %`}
+                       hint="Welchen Anteil der Pallet-Kapazität ein einzelner Karton dieses Formats belegt" />
+          )}
 
           <SectionLabel style={{ marginTop: 16 }}>Audit</SectionLabel>
           <DimMetric label="Quelle" value={<SourceBadge source={row.source} />} />
@@ -992,6 +1011,7 @@ function DimensionEditModal({ row, onClose, onSave, saving }) {
     widthCm: row?.widthCm ?? '',
     heightCm: row?.heightCm ?? '',
     weightKg: row?.weightKg ?? '',
+    palletLoadMax: row?.palletLoadMax ?? '',
   });
 
   // Esc closes the modal
@@ -1017,6 +1037,18 @@ function DimensionEditModal({ row, onClose, onSave, saving }) {
         return;
       }
     }
+    // Pallet load is OPTIONAL — empty stays null. Reject only on
+     // non-empty non-positive integer.
+    let palletLoadMax = null;
+    const rawPL = String(form.palletLoadMax || '').trim();
+    if (rawPL) {
+      const n = parseInt(rawPL, 10);
+      if (!isFinite(n) || n < 1) {
+        alert('Max. Kartons / Palette muss eine positive ganze Zahl sein (oder leer lassen).');
+        return;
+      }
+      palletLoadMax = n;
+    }
     onSave({
       fnskus, skus, eans,
       title: form.title || null,
@@ -1024,6 +1056,7 @@ function DimensionEditModal({ row, onClose, onSave, saving }) {
       widthCm: parseFloat(form.widthCm),
       heightCm: parseFloat(form.heightCm),
       weightKg: parseFloat(form.weightKg),
+      palletLoadMax,
     });
   };
 
@@ -1065,6 +1098,11 @@ function DimensionEditModal({ row, onClose, onSave, saving }) {
           <FieldInput label="B (cm)" type="number" step="0.1" value={form.widthCm}  onChange={(v) => setForm({ ...form, widthCm: v })} />
           <FieldInput label="H (cm)" type="number" step="0.1" value={form.heightCm} onChange={(v) => setForm({ ...form, heightCm: v })} />
           <FieldInput label="Gewicht (kg)" type="number" step="0.01" value={form.weightKg} onChange={(v) => setForm({ ...form, weightKg: v })} />
+          <FieldInput label="Max. Kartons / Palette"
+                      type="number" step="1"
+                      value={form.palletLoadMax}
+                      onChange={(v) => setForm({ ...form, palletLoadMax: v })}
+                      placeholder="z. B. 79 (leer lassen wenn unbekannt)" />
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 20, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} style={smallBtn}>Abbrechen</button>

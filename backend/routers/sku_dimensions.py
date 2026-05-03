@@ -72,10 +72,12 @@ async def lookup_sku_dimensions(
     keys_set = set(keys_clean)
     for r in rows:
         compact = SkuDimensionLookup(
+            id=r.id,
             length_cm=r.length_cm,
             width_cm=r.width_cm,
             height_cm=r.height_cm,
             weight_kg=r.weight_kg,
+            pallet_load_max=r.pallet_load_max,
             source=r.source,
         )
         # Bind under EVERY one of the row's keys that the caller asked for
@@ -166,6 +168,7 @@ async def admin_create_sku_dimension(
         width_cm=payload.width_cm,
         height_cm=payload.height_cm,
         weight_kg=payload.weight_kg,
+        pallet_load_max=payload.pallet_load_max,
         source="manual",
         updated_by=admin.email,
     )
@@ -199,6 +202,7 @@ async def admin_update_sku_dimension(
     row.width_cm = payload.width_cm
     row.height_cm = payload.height_cm
     row.weight_kg = payload.weight_kg
+    row.pallet_load_max = payload.pallet_load_max
     row.source = "manual"
     row.updated_by = admin.email
     await db.commit()
@@ -236,6 +240,10 @@ _WEIGHT_ALIASES = {
     "gewicht", "weight", "kg", "gewicht (kg)", "weight (kg)",
     "gewicht_kg", "weight_kg", "masse",
 }
+_PALLET_LOAD_ALIASES = {
+    "pallet load", "pallet_load", "palletload",
+    "max_per_pallet", "max per pallet", "max/palette", "max palette",
+}
 
 
 def _find_col(headers: list[str], aliases: set[str]) -> Optional[int]:
@@ -261,6 +269,16 @@ def _parse_float(v) -> Optional[float]:
         return float(str(v).replace(",", ".").strip())
     except (ValueError, TypeError):
         return None
+
+
+def _parse_int(v) -> Optional[int]:
+    """Pallet-load values often arrive as floats (Excel) or strings.
+    Round-trip via float to swallow "350.0" / "350,00" variants."""
+    f = _parse_float(v)
+    if f is None:
+        return None
+    n = int(round(f))
+    return n if n >= 1 else None
 
 
 def _normalize_ean_str(s: str) -> Optional[str]:
@@ -369,6 +387,7 @@ async def admin_import_sku_dimensions(
                 "b": c_b,
                 "h": c_h,
                 "weight": c_w,
+                "pallet_load": _find_col(headers, _PALLET_LOAD_ALIASES),
             }
             break
 
@@ -418,6 +437,7 @@ async def admin_import_sku_dimensions(
         b_val = _parse_float(cell("b"))
         h_val = _parse_float(cell("h"))
         w_val = _parse_float(cell("weight"))
+        pallet_load = _parse_int(cell("pallet_load"))
 
         if not (fnskus_in or skus_in or eans_in):
             result.skipped += 1
@@ -465,6 +485,10 @@ async def admin_import_sku_dimensions(
             existing.width_cm = b_val
             existing.height_cm = h_val
             existing.weight_kg = w_val
+            # Pallet-load: only overwrite when xlsx provides a value; a
+            # blank cell preserves whatever was set manually before.
+            if pallet_load is not None:
+                existing.pallet_load_max = pallet_load
             existing.source = "xlsx_import"
             existing.updated_by = admin.email
             existing.updated_at = now
@@ -479,6 +503,7 @@ async def admin_import_sku_dimensions(
                 width_cm=b_val,
                 height_cm=h_val,
                 weight_kg=w_val,
+                pallet_load_max=pallet_load,
                 source="xlsx_import",
                 updated_by=admin.email,
             )
@@ -520,7 +545,8 @@ async def admin_export_sku_dimensions(
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Dimensions"
-    headers = ["FNSKU", "SKU", "EAN", "Title", "L (cm)", "B (cm)", "H (cm)", "Gewicht (kg)", "Source", "Updated"]
+    headers = ["FNSKU", "SKU", "EAN", "Title", "L (cm)", "B (cm)", "H (cm)",
+               "Gewicht (kg)", "Pallet load", "Source", "Updated"]
     ws.append(headers)
     # Bold header row
     for cell in ws[1]:
@@ -539,6 +565,7 @@ async def admin_export_sku_dimensions(
             r.width_cm,
             r.height_cm,
             r.weight_kg,
+            r.pallet_load_max,
             r.source,
             r.updated_at.strftime("%Y-%m-%d %H:%M") if r.updated_at else None,
         ])

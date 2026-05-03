@@ -202,17 +202,23 @@ class SkuDimensionRead(APIModel):
     width_cm: float
     height_cm: float
     weight_kg: float
+    pallet_load_max: Optional[int] = None
     source: Optional[str] = None
     updated_at: datetime
     updated_by: Optional[str] = None
 
 
 class SkuDimensionLookup(BaseModel):
-    """Compact form embedded in the lookup response (no id/audit fields)."""
+    """Compact form embedded in the lookup response. Includes the row's
+    `id` (so the distributor can group same-format items even when they
+    share dims but ship under different SKUs) and `pallet_load_max` (the
+    empirical capacity used by the normalised-fraction algorithm)."""
+    id: int
     length_cm: float
     width_cm: float
     height_cm: float
     weight_kg: float
+    pallet_load_max: Optional[int] = None
     source: Optional[str] = None
 
 
@@ -232,8 +238,9 @@ class SkuDimensionUpsert(BaseModel):
 
     Dimensions must be > 0 (a row without size is meaningless for the
     distributor). Weight may be 0 as a "not measured yet" placeholder —
-    edit later via UI when the scale data arrives. The distributor
-    treats zero weight as a known unknown rather than a load contribution."""
+    edit later via UI when the scale data arrives. `pallet_load_max` is
+    optional; when null the distributor falls back to the volume soft
+    limit (1.59 m³)."""
     fnskus: list[str] = Field(default_factory=list)
     skus: list[str] = Field(default_factory=list)
     eans: list[str] = Field(default_factory=list)
@@ -242,6 +249,7 @@ class SkuDimensionUpsert(BaseModel):
     width_cm: float = Field(gt=0)
     height_cm: float = Field(gt=0)
     weight_kg: float = Field(ge=0)
+    pallet_load_max: Optional[int] = Field(default=None, ge=1)
 
 
 class SkuDimensionImportResult(BaseModel):

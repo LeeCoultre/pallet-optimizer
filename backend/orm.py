@@ -228,6 +228,11 @@ class SkuDimension(Base):
     width_cm: Mapped[float] = mapped_column(Float, nullable=False)
     height_cm: Mapped[float] = mapped_column(Float, nullable=False)
     weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
+    # Empirical max cartons of THIS format on one EUR pallet, factoring
+    # stack height + footprint voids. Distributor uses this to compute
+    # a normalised capacity fraction across all formats on the pallet
+    # (sum of count/max ≤ 1.0 = within physical capacity).
+    pallet_load_max: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

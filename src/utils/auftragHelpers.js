@@ -193,13 +193,35 @@ function mixedItemHeuristicKg(it) {
   return 0.10;
 }
 
+/* How many "parent Einheiten" of physical content live in ONE ESKU
+   carton — used to scale weight/volume.
+
+   When dim is matched via the ESKU's OWN identifier (fnsku/sku/ean/
+   asin), the dim row's per-Einheit values describe ONE ESKU Einheit.
+   So a carton holds `packsPerCarton` of those, and the multiplier is
+   `packsPerCarton`.
+
+   When dim is matched via `useItem` (the parent product's EAN — the
+   typical case for Lagerauftrag-derived ESKU), the dim row describes
+   the PARENT's per-Einheit. ESKU notation `(N × M)` is the parent's
+   Einheit re-packed: e.g. parent "(50 Rollen)" ↔ ESKU "(10 × 5
+   Rollen)" — same 50 rolls, just split into smaller packs. So 1
+   ESKU carton ≈ 1 parent Einheit physically, multiplier 1.
+
+   Without dim, we rely on heuristics elsewhere. */
+function eskuCartonRatio(it) {
+  if (!it.dimensions) return it.einzelneSku?.packsPerCarton ?? 1;
+  if (it.dimensionsMatch === 'use_item') return 1;
+  return it.einzelneSku?.packsPerCarton ?? 1;
+}
+
 /* TOTAL volume of an item across all of its Einheiten / cartons. */
 export function itemTotalVolumeCm3(it) {
   if (it.isEinzelneSku) {
     const cartons = it.einzelneSku?.cartonsCount ?? Math.max(1, Math.ceil((it.units || 0) / (it.einzelneSku?.packsPerCarton || 1)));
     if (it.dimensions) {
-      const n = it.einzelneSku?.packsPerCarton ?? 1;
-      const perCarton = it.dimensions.lengthCm * it.dimensions.widthCm * it.dimensions.heightCm * n * PACK_COEFF;
+      const ratio = eskuCartonRatio(it);
+      const perCarton = it.dimensions.lengthCm * it.dimensions.widthCm * it.dimensions.heightCm * ratio * PACK_COEFF;
       return cartons * perCarton;
     }
     return cartons * eskuCartonHeuristicCm3(it);
@@ -218,8 +240,8 @@ export function itemTotalWeightKg(it) {
   if (it.isEinzelneSku) {
     const cartons = it.einzelneSku?.cartonsCount ?? Math.max(1, Math.ceil((it.units || 0) / (it.einzelneSku?.packsPerCarton || 1)));
     if (it.dimensions) {
-      const n = it.einzelneSku?.packsPerCarton ?? 1;
-      return cartons * (it.dimensions.weightKg * n + TARA_KG);
+      const ratio = eskuCartonRatio(it);
+      return cartons * (it.dimensions.weightKg * ratio + TARA_KG);
     }
     return cartons * DEFAULT_KG_PER_CARTON;
   }
@@ -248,16 +270,16 @@ function itemCartonCount(it) {
    0.55 kg. The flat default was wrong by 10× for L4/L5 ESKU. */
 function eskuCartonVolumeCm3(it) {
   if (it.dimensions) {
-    const n = it.einzelneSku?.packsPerCarton ?? 1;
-    return it.dimensions.lengthCm * it.dimensions.widthCm * it.dimensions.heightCm * n * PACK_COEFF;
+    const ratio = eskuCartonRatio(it);
+    return it.dimensions.lengthCm * it.dimensions.widthCm * it.dimensions.heightCm * ratio * PACK_COEFF;
   }
   return eskuCartonHeuristicCm3(it);
 }
 
 function eskuCartonWeightKg(it) {
   if (it.dimensions) {
-    const n = it.einzelneSku?.packsPerCarton ?? 1;
-    return it.dimensions.weightKg * n + TARA_KG;
+    const ratio = eskuCartonRatio(it);
+    return it.dimensions.weightKg * ratio + TARA_KG;
   }
   // Per-Einheit weight × packsPerCarton + Tara — so Klebeband-x36
   // (~0.5kg/Einh × 36) yields 18kg per carton instead of 0.55kg.
@@ -432,26 +454,54 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
 
     for (const group of orderedGroups) {
       for (const e of group) {
-        const result = pickPallet(e, states);
-        const target = result.target;
-        target.add(e);
-        byPalletId[target.pallet.id].push({
-          ...e.item,
-          placementMeta: {
-            score: result.score,
-            breakdown: result.breakdown,
-            overload: result.overload,
-            flags: result.flags,
-          },
-        });
+        // Place EACH carton of the ESKU group separately so the capacity
+        // tracker sees N increments (not 1) and naturally splits the
+        // group across pallets if any one fills up. Aggregate the
+        // resulting placements per pallet for the UI.
+        const totalCartons = Math.max(1, e.cartons || 1);
+        const splits = {};   // { palletId: { count, lastResult } }
+        for (let i = 0; i < totalCartons; i++) {
+          const result = pickPallet(e, states);
+          const target = result.target;
+          target.add(e);
+          const pid = target.pallet.id;
+          if (!splits[pid]) splits[pid] = { count: 0, result };
+          splits[pid].count += 1;
+          splits[pid].result = result;     // keep latest score/flags per pallet
+          if (result.flags.includes('NO_VALID_PLACEMENT')) noValidCount += 1;
+        }
+
+        // Emit ONE list item per pallet that received any cartons of
+        // this ESKU group. `cartonsHere` carries the per-pallet split.
+        const splitEntries = Object.entries(splits);
+        const isSplit = splitEntries.length > 1;
+        for (const [pid, s] of splitEntries) {
+          const flags = [...(s.result.flags || [])];
+          if (isSplit) flags.push('SPLIT-GROUP');
+          byPalletId[pid].push({
+            ...e.item,
+            placementMeta: {
+              score: s.result.score,
+              breakdown: s.result.breakdown,
+              overload: s.result.overload,
+              flags,
+              cartonsHere: s.count,
+              cartonsTotalGroup: totalCartons,
+            },
+          });
+        }
+        // Reason — use the first (or only) pallet for trace
+        const primary = splitEntries[0];
         reasons[e.key] = {
-          source: result.flags.includes('NO_VALID_PLACEMENT') ? 'no_valid_placement' : 'assigned',
-          breakdown: result.breakdown,
-          overload: result.overload,
-          flags: result.flags,
-          palletId: target.pallet.id,
+          source: primary[1].result.flags.includes('NO_VALID_PLACEMENT')
+            ? 'no_valid_placement'
+            : (isSplit ? 'split' : 'assigned'),
+          breakdown: primary[1].result.breakdown,
+          overload: primary[1].result.overload,
+          flags: primary[1].result.flags,
+          palletId: primary[0],
+          splits: isSplit ? Object.fromEntries(splitEntries.map(([pid, s]) => [pid, s.count])) : null,
         };
-        if (result.flags.includes('NO_VALID_PLACEMENT')) noValidCount += 1;
       }
     }
   }
@@ -475,6 +525,19 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
            overloadCount, overloadedPalletCount, noValidCount };
 }
 
+/* `formatKey` for capacity tracking. Same physical product (one
+   sku_dimensions row) → one key; identifies items that share a
+   `pallet_load_max` value. Falls back to a synthetic key from L×B×H
+   when DB id is missing so heuristic items still group. */
+function formatKey(it) {
+  if (it?.dimensions?.id) return `id:${it.dimensions.id}`;
+  if (it?.dimensions) {
+    const d = it.dimensions;
+    return `dim:${d.lengthCm}x${d.widthCm}x${d.heightCm}`;
+  }
+  return null;     // unknown — capacity check skipped for this item
+}
+
 function buildPalletState(p) {
   let volCm3 = 0;
   let weightKg = 0;
@@ -484,6 +547,9 @@ function buildPalletState(p) {
   const useItemIds = new Set();
   const fnskus = new Set();
   const byLevel = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+  // Capacity tracking — { formatKey: cartons }, plus per-key max
+  const formatCounts = {};
+  const formatMax = {};
 
   for (const it of p.items || []) {
     const vol = itemTotalVolumeCm3(it);
@@ -496,7 +562,7 @@ function buildPalletState(p) {
     byLevel[lvl].push({
       item: it,
       source: 'mixed',
-      count: itemWorkUnits(it),  // Einheiten for Mixed, cartons for ESKU
+      count: itemWorkUnits(it),
       volCm3: vol,
       weightKg: wgt,
     });
@@ -504,21 +570,47 @@ function buildPalletState(p) {
     if (b !== 'GENERIC') brands.add(b);
     palletItemTokens(it).forEach((t) => useItemIds.add(t));
     if (it.fnsku) fnskus.add(it.fnsku);
+    // Capacity contribution. Mixed cartons = units (1 Einheit ≈ 1 carton
+    // for thermal-roll-style items). Skip if no pallet_load_max for the
+    // format — falls back to volume soft limit elsewhere.
+    const fk = formatKey(it);
+    const max = it.dimensions?.palletLoadMax;
+    if (fk && max) {
+      const cartons = it.isEinzelneSku
+        ? (it.einzelneSku?.cartonsCount ?? 1)
+        : (it.units || 0);
+      formatCounts[fk] = (formatCounts[fk] || 0) + cartons;
+      formatMax[fk] = max;
+    }
   }
 
-  // Detect Phase-1 overloads up-front (Mixed-Box content alone can already
-   // breach the 700 kg / 1.59 m³ soft limits before any ESKU is placed).
+  // Detect Phase-1 overloads up-front
   const overloadFlags = new Set();
   if (weightKg > PALLET_WEIGHT_KG) overloadFlags.add('OVERLOAD-W');
   if (volCm3   > PALLET_VOL_CM3)   overloadFlags.add('OVERLOAD-V');
+
+  // Capacity-fraction overload — sum of (count/max) across formats.
+  // > 1.0 means the pallet is physically over-stuffed by carton count
+  // (factoring stack height + footprint voids), even if volume in m³
+  // looks fine.
+  function capacityFraction() {
+    let f = 0;
+    for (const k of Object.keys(formatCounts)) {
+      f += formatCounts[k] / formatMax[k];
+    }
+    return f;
+  }
+  if (capacityFraction() > 1.0) overloadFlags.add('OVERLOAD-CAP');
 
   return {
     pallet: p,
     volCm3, weightKg,
     formats, levels, brands, useItemIds, fnskus,
+    formatCounts, formatMax,
     byLevel,
     overloadFlags,
     fillPct: volCm3 / PALLET_VOL_CM3,
+    capacityFraction,
     anyEsku: false,
     eligible: p.hasFourSideWarning !== true,    // H7
 
@@ -534,6 +626,12 @@ function buildPalletState(p) {
       if (e.brand !== 'GENERIC') this.brands.add(e.brand);
       if (e.useItemId) this.useItemIds.add(e.useItemId);
       if (e.item.fnsku) this.fnskus.add(e.item.fnsku);
+      // Capacity: one ESKU carton = +1 of this format's count
+      if (e.formatKey && e.palletLoadMax) {
+        this.formatCounts[e.formatKey] = (this.formatCounts[e.formatKey] || 0) + 1;
+        this.formatMax[e.formatKey] = e.palletLoadMax;
+        if (this.capacityFraction() > 1.0) this.overloadFlags.add('OVERLOAD-CAP');
+      }
       this.byLevel[e.level].push({
         item: e.item,
         source: 'esku',
@@ -552,14 +650,16 @@ function enrichEsku(item) {
   // Per-ESKU-carton volume / weight — placement loop adds one carton at a time.
   return {
     item,
-    key:        item.fnsku || item.sku || item.title,
+    key:           item.fnsku || item.sku || item.title,
     cartons,
-    volCm3:     eskuCartonVolumeCm3(item),
-    weightKg:   eskuCartonWeightKg(item),
-    formatSig:  formatSig(item),
-    level:      getLevel(item),
-    brand:      detectBrand(item.title),
-    useItemId:  extractUseItemId(item.useItem),
+    volCm3:        eskuCartonVolumeCm3(item),
+    weightKg:      eskuCartonWeightKg(item),
+    formatSig:     formatSig(item),
+    level:         getLevel(item),
+    brand:         detectBrand(item.title),
+    useItemId:     extractUseItemId(item.useItem),
+    formatKey:     formatKey(item),
+    palletLoadMax: item.dimensions?.palletLoadMax ?? null,
   };
 }
 
@@ -622,16 +722,45 @@ function scorePallet(carton, ps) {
   );
   score += breakdown.fillScore;
 
-  // Overload penalty: if THIS placement would push a not-yet-overloaded
-  // pallet past 700 kg or 1.59 m³, penalise heavily. Outweighs every
-  // bonus except useItem-match (which is so unique it almost always
-  // identifies the right physical product). FNSKU/format/brand
-  // clustering yields to physical limits when free space exists
-  // elsewhere. Skipped if the pallet is already overloaded — punishing
-  // further would just bias placement away with no benefit.
+  // ── Capacity fraction (Pallet load) — strongest signal when known.
+  // Empirical max-cartons-per-pallet captures stack height + edge voids
+  // that volume m³ alone misses. If THIS placement would push the
+  // pallet past 1.0 (= physical full), penalise massively so the
+  // distributor splits the group across multiple pallets instead of
+  // overstuffing one. Pre-existing over-1.0 keeps its small base
+  // penalty (so we don't pile MORE on a known-bad pallet) while still
+  // letting useItem-Match win as a tie-breaker if no clean option
+  // exists.
   let pen = 0;
-  if (ps.weightKg <= PALLET_WEIGHT_KG && (ps.weightKg + carton.weightKg) > PALLET_WEIGHT_KG) pen += 50000;
-  if (ps.volCm3   <= PALLET_VOL_CM3   && (ps.volCm3   + carton.volCm3)   > PALLET_VOL_CM3)   pen += 50000;
+  const currentFrac = ps.capacityFraction();
+  if (carton.formatKey && carton.palletLoadMax) {
+    const wouldFrac = currentFrac + (1 / carton.palletLoadMax);
+    breakdown.capacityFraction = wouldFrac;
+    if (wouldFrac > 1.0) {
+      pen += currentFrac <= 1.0 ? 100000 : 30000;
+      breakdown.capacityOverflow = true;
+    } else if (wouldFrac > 0.95) {
+      score += 200;
+      breakdown.nearCapacity = true;
+    }
+  } else if (currentFrac >= 1.0) {
+    // Carton has no known max, but the pallet's other formats have
+    // already filled it to physical capacity. Stacking more on top
+    // would still overstuff — soft-penalise so a less-full pallet
+    // wins. Doesn't apply when pallet has zero capacity-tracked items
+    // (then we have no signal and fall through to volume/weight).
+    pen += 30000;
+    breakdown.palletAtCapacity = true;
+  }
+
+  // Volume / weight soft-limit penalty — same logic, lighter weight
+  // (capacity fraction above is stricter). Only kicks in for items
+  // without pallet_load_max data.
+  if (!carton.palletLoadMax) {
+    if (ps.weightKg <= PALLET_WEIGHT_KG && (ps.weightKg + carton.weightKg) > PALLET_WEIGHT_KG) pen += 50000;
+    if (ps.volCm3   <= PALLET_VOL_CM3   && (ps.volCm3   + carton.volCm3)   > PALLET_VOL_CM3)   pen += 50000;
+  }
+
   if (pen > 0) {
     score -= pen;
     breakdown.overloadPenalty = pen;
@@ -702,6 +831,13 @@ function predictOverload(carton, ps) {
   const flags = [];
   if (ps.weightKg + carton.weightKg > PALLET_WEIGHT_KG) flags.push('OVERLOAD-W');
   if (ps.volCm3 + carton.volCm3 > PALLET_VOL_CM3) flags.push('OVERLOAD-V');
+  // Capacity fraction — empirical max cartons of THIS format on THIS
+  // pallet (factoring stack height + footprint voids). Only flagged
+  // when the carton's format has a known pallet_load_max.
+  if (carton.formatKey && carton.palletLoadMax) {
+    const wouldFrac = ps.capacityFraction() + (1 / carton.palletLoadMax);
+    if (wouldFrac > 1.0) flags.push('OVERLOAD-CAP');
+  }
   return flags;
 }
 
@@ -733,13 +869,15 @@ export async function enrichItemDims(items, lookupFn) {
   const lookups = res?.lookups || {};
   return items.map((it) => {
     const useId = extractUseItemId(it.useItem);
-    const dim =
-      lookups[it.fnsku] ||
-      lookups[it.sku] ||
-      lookups[it.ean] ||
-      lookups[it.asin] ||
-      (useId && lookups[useId]);
-    return dim ? { ...it, dimensions: dim, hasDimensions: true } : it;
+    let dim = null, source = null;
+    if (lookups[it.fnsku])      { dim = lookups[it.fnsku]; source = 'fnsku'; }
+    else if (lookups[it.sku])   { dim = lookups[it.sku];   source = 'sku'; }
+    else if (lookups[it.ean])   { dim = lookups[it.ean];   source = 'ean'; }
+    else if (lookups[it.asin])  { dim = lookups[it.asin];  source = 'asin'; }
+    else if (useId && lookups[useId]) { dim = lookups[useId]; source = 'use_item'; }
+    return dim
+      ? { ...it, dimensions: dim, dimensionsMatch: source, hasDimensions: true }
+      : it;
   });
 }
 
