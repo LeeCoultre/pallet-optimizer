@@ -722,6 +722,22 @@ function scorePallet(carton, ps) {
   );
   score += breakdown.fillScore;
 
+  // Empty-pallet preference — load-balancing across pallets of the same
+  // level. Strong enough to override brand+fnsku+level (3000+1000+500 =
+  // 4500) so a half-empty pallet wins over a near-full pallet of the
+  // same brand. Does NOT unseat format-match (10000) unless the pallet
+  // is more than half empty (>50% free) — the SOP explicitly prefers
+  // format affinity until the load gap becomes large enough that
+  // splitting the format becomes the right call.
+  const fillBefore = ps.volCm3 / PALLET_VOL_CM3;
+  if (fillBefore < 0.5) {
+    score += 10000;
+    breakdown.emptyPalletBonus = 10000;
+  } else if (fillBefore < 0.75) {
+    score += 5000;
+    breakdown.emptyPalletBonus = 5000;
+  }
+
   // ── Capacity fraction (Pallet load) — strongest signal when known.
   // Empirical max-cartons-per-pallet captures stack height + edge voids
   // that volume m³ alone misses. If THIS placement would push the
@@ -755,10 +771,13 @@ function scorePallet(carton, ps) {
 
   // Volume / weight soft-limit penalty — same logic, lighter weight
   // (capacity fraction above is stricter). Only kicks in for items
-  // without pallet_load_max data.
+  // without pallet_load_max data. Penalty applies on EVERY carton that
+  // would land on an over-limit pallet, not just the first one to push
+  // it over — otherwise subsequent cartons of the same group keep piling
+  // onto the already-overloaded pallet without scoring impact.
   if (!carton.palletLoadMax) {
-    if (ps.weightKg <= PALLET_WEIGHT_KG && (ps.weightKg + carton.weightKg) > PALLET_WEIGHT_KG) pen += 50000;
-    if (ps.volCm3   <= PALLET_VOL_CM3   && (ps.volCm3   + carton.volCm3)   > PALLET_VOL_CM3)   pen += 50000;
+    if ((ps.weightKg + carton.weightKg) > PALLET_WEIGHT_KG) pen += 50000;
+    if ((ps.volCm3   + carton.volCm3)   > PALLET_VOL_CM3)   pen += 50000;
   }
 
   if (pen > 0) {
@@ -775,6 +794,18 @@ function pickPallet(carton, states) {
   const eligible = states.filter((ps) => passesHardConstraints(carton, ps));
 
   if (eligible.length > 0) {
+    // Hard guardrail: prefer pallets that won't overflow weight/volume
+    // after this carton lands. Only fall back to overflow-allowed
+    // candidates when EVERY eligible pallet would overflow (genuine
+    // density problem — too many cartons for the pallet count). Without
+    // this filter the scoring fight (brand-match vs sweet-spot) could
+    // still send cartons onto an already-overloaded pallet.
+    const wouldNotOverflow = eligible.filter((ps) =>
+      (ps.weightKg + carton.weightKg) <= PALLET_WEIGHT_KG &&
+      (ps.volCm3   + carton.volCm3)   <= PALLET_VOL_CM3
+    );
+    const candidates = wouldNotOverflow.length > 0 ? wouldNotOverflow : eligible;
+
     // Score every eligible pallet, then pick best with FREE-VOLUME tie-break.
     // Without the tie-break the first pallet in iteration order won the
     // toss whenever scores matched, leading to lopsided placements.
@@ -782,7 +813,7 @@ function pickPallet(carton, states) {
     let bestScore = -Infinity;
     let bestFree = -Infinity;
     let bestBreakdown = null;
-    for (const ps of eligible) {
+    for (const ps of candidates) {
       const { score, breakdown } = scorePallet(carton, ps);
       const free = PALLET_VOL_CM3 - ps.volCm3;
       if (score > bestScore || (score === bestScore && free > bestFree)) {
