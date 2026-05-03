@@ -59,10 +59,41 @@ const CATEGORY_TO_LEVEL = {
   sonstige: 1,
 };
 
+/* Compact title for UI rendering — drops marketing/spec noise tokens
+   and surfaces the size hint (litres, kg, ml, grams) at the end so it
+   survives column-width ellipsis. Original `it.title` is preserved for
+   tooltips, parsing, and matching. */
+export function formatItemTitle(title) {
+  if (!title) return '—';
+  let size = null;
+  const sz = title.match(/\((\d+(?:[.,]\d+)?)\s*(ml|l|kg|g)\)/i);
+  if (sz) {
+    const num = parseFloat(sz[1].replace(',', '.'));
+    const unit = sz[2].toLowerCase();
+    size = unit === 'l'  ? `${num} L`
+         : unit === 'kg' ? `${num} kg`
+         : `${num} ${unit}`;
+  }
+  let core = title
+    .replace(/\s+(g\.g\.A\.?|100\s*%|vegan|kaltgepresst|gepresst)\b.*$/i, '')
+    .replace(/\s*\(\d+(?:[.,]\d+)?\s*(ml|l|kg|g)\)/gi, '')
+    .replace(/\s*[-–]\s*$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return size ? `${core} ${size}` : core;
+}
+
 export function getDisplayLevel(item) {
   if (item?.level) return item.level;
+  // Live items always have a title — go through SOP v1.1 title regex.
+  // The legacy `category` field (set by parseLagerauftrag.classifyItem)
+  // lumps Klebeband, Kürbiskernöl etc. into 'produktion' which would
+  // collapse multiple SOP levels (3, 4, 5) into a single L4 — wrong.
+  // Fall back to category mapping ONLY when the item has no title
+  // (legacy Historie summary rows).
+  if (item?.title) return getLevel(item);
   if (item?.category) return CATEGORY_TO_LEVEL[item.category] ?? 1;
-  return getLevel(item);
+  return 1;
 }
 
 /* ─── Pallet ordering ─────────────────────────────────────────────────────
@@ -321,50 +352,61 @@ function sizeBucket(it) {
   return `fmt:${formatSig(it)}`;
 }
 
+/* SOP picking order — drives both Pruefen rendering and Focus workflow.
+   The worker stacks the pallet bottom-up, so the order they tackle
+   items determines what physically lands first on the base.
+
+   Rule (set with the user 2026-05-03):
+     1. Group items by physical level (1..6).
+     2. Levels 5 (Kürbiskernöl) and 6 (Tachorollen) are the fragile cap
+        of the pallet — they ALWAYS come last. Inside that tail, L5
+        before L6 (Tacho is the absolute top of the stack).
+     3. All other groups (L1..L4) are ordered by total units DESC —
+        the bigger batch first so the worker clears the bulk of work
+        before chasing small remainders.
+     4. Within each group: units DESC, stable by original .docx index.
+
+   Works for both Mixed (Phase 1) and ESKU (Phase 2) — for ESKU the
+   "units" axis is the carton count. */
 export function sortItemsForPallet(items) {
   if (!items?.length) return items || [];
+  const FINAL_LEVELS = new Set([5, 6]);
+
   const enriched = items.map((it, i) => ({
     item: it,
     origIdx: i,
-    totalWeight: itemTotalWeightKg(it),
-    totalVol: itemTotalVolumeCm3(it),
-    units: it.units || 0,
-    bucket: sizeBucket(it),
+    level: getDisplayLevel(it),
+    units: it.isEinzelneSku
+      ? (it.einzelneSku?.cartonsCount ?? it.placementMeta?.cartonsHere ?? 1)
+      : (it.units || 0),
   }));
 
-  // Group by sizeBucket — items with the same (or similar) carton size
-  // travel together on the pallet to minimise reorientation at the
-  // packing station.
   const groups = new Map();
   for (const e of enriched) {
-    if (!groups.has(e.bucket)) groups.set(e.bucket, []);
-    groups.get(e.bucket).push(e);
+    if (!groups.has(e.level)) groups.set(e.level, []);
+    groups.get(e.level).push(e);
   }
 
-  // Order groups by HEAVIEST item DESC — heavy/bulky anchors form the
-  // pallet base; lighter clusters layer on top. (Weight is a better
-  // physical proxy than volume for "what should go first" — many small
-  // units stuffed into a Mixed-Box are not a heavy load.)
-  const orderedGroups = [...groups.values()].sort((a, b) => {
-    const maxA = Math.max(...a.map((x) => x.totalWeight));
-    const maxB = Math.max(...b.map((x) => x.totalWeight));
-    if (maxA !== maxB) return maxB - maxA;
-    // Tie-break: bigger total volume group first
-    const volA = Math.max(...a.map((x) => x.totalVol));
-    const volB = Math.max(...b.map((x) => x.totalVol));
-    return volB - volA;
-  });
+  const orderedGroups = [...groups.entries()]
+    .sort(([la, ga], [lb, gb]) => {
+      const finalA = FINAL_LEVELS.has(la);
+      const finalB = FINAL_LEVELS.has(lb);
+      if (finalA !== finalB) return finalA ? 1 : -1;          // non-final first
+      if (finalA && finalB) return la - lb;                   // L5 then L6
+      // Both non-final: total units DESC, then ascending level for stability
+      const sumA = ga.reduce((s, e) => s + e.units, 0);
+      const sumB = gb.reduce((s, e) => s + e.units, 0);
+      if (sumA !== sumB) return sumB - sumA;
+      return la - lb;
+    })
+    .map(([, g]) => g);
 
-  // Within each group: weight DESC, then units DESC (more numerous
-  // batches first), then stable on origIdx.
   for (const g of orderedGroups) {
     g.sort((a, b) => {
-      if (a.totalWeight !== b.totalWeight) return b.totalWeight - a.totalWeight;
       if (a.units !== b.units) return b.units - a.units;
       return a.origIdx - b.origIdx;
     });
   }
-
   return orderedGroups.flatMap((g) => g.map((e) => e.item));
 }
 
@@ -1121,6 +1163,13 @@ function shortArticleName(item) {
     if (!s) s = title.split(/[,(]/)[0].trim();
     if (s.length > 50) s = s.slice(0, 47) + '…';
     return s;
+  }
+
+  if (lvl === 5) {
+    // Kernöl: drop "g.g.A. 100% vegan und kaltgepresst" noise and
+    // surface the litre/ml hint at the end (parser keeps the full title
+    // for matching, this is just for rendering).
+    return formatItemTitle(title);
   }
 
   if (title.length > 50) return title.slice(0, 47) + '…';

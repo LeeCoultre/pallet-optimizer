@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
 import {
   pruefenView, distributeEinzelneSku, enrichItemDims,
-  levelDistribution, sortItemsForPallet, LEVEL_META,
+  levelDistribution, sortItemsForPallet, formatItemTitle, LEVEL_META,
 } from '../utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '../marathonApi.js';
 import {
@@ -234,7 +234,7 @@ export default function PruefenScreen() {
             </div>
             {view.pallets.map((p, i) => {
               const raw = enrichedPallets.find((r) => r.id === p.id);
-              const eskuAssigned = eskuDist[p.id] || [];
+              const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
               const palletState = palletStates[p.id];
               return (
                 <PalletRow
@@ -720,7 +720,7 @@ function ItemTable({ items, accent, showLevel, showFlags, title }) {
                 alignItems: 'center',
                 gap: 6,
               }} title={it.title}>
-                {(it.title || '').length > 50 ? (it.title || '').slice(0, 47) + '…' : (it.title || '—')}
+                {formatItemTitle(it.title)}
                 {it.placementMeta && (
                   <ScoreBreakdown breakdown={it.placementMeta.breakdown} score={it.placementMeta.score} />
                 )}

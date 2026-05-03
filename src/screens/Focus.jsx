@@ -67,9 +67,11 @@ export default function FocusScreen() {
   const rawPallets = useMemo(
     () => enrichedSourcePallets.map((p) => {
       const sortedMixed = sortItemsForPallet(p.items || []);
-      const eskuOnP = (distribution.byPalletId[p.id] || []);   // already in level-asc order
-      // Mixed first (Phase 1), ESKU last (Phase 2) — matches SOP picking order.
-      return { ...p, items: [...sortedMixed, ...eskuOnP] };
+      const sortedEsku = sortItemsForPallet(distribution.byPalletId[p.id] || []);
+      // Mixed first (Phase 1), ESKU last (Phase 2) — matches SOP picking
+      // order. Both lists go through the same sortItemsForPallet so the
+      // L5/L6-last + count-DESC rule applies uniformly.
+      return { ...p, items: [...sortedMixed, ...sortedEsku] };
     }),
     [enrichedSourcePallets, distribution],
   );
