@@ -659,30 +659,38 @@ export function validateParsing(rawText, parsed) {
   // off-by-N typos. We surface mismatches as warnings (so the operator can
   // verify), while pallet-count + per-pallet item-count above are the
   // structural errors that indicate real parsing failures.
+  // Header totals are user-entered in the Word template. A mismatch with
+  // the actual sum is now treated as a HARD error (was warn) — these
+  // discrepancies have caused live picking errors that cost real money,
+  // so we block the Focus step until the operator reconciles them.
   if (parsed.meta?.totalSkus != null && parsed.format !== 'schilder' && parsed.meta.totalSkus !== totalSkus) {
     issues.push({
-      severity: 'warn',
+      severity: 'error',
       kind: 'sku-mismatch',
       msg: `Header zeigt ${parsed.meta.totalSkus} eindeutige SKUs, im Auftrag erkannt: ${totalSkus}`,
     });
   }
   if (parsed.meta?.totalUnits != null && parsed.format !== 'schilder' && parsed.meta.totalUnits !== totalUnits) {
     issues.push({
-      severity: 'warn',
+      severity: 'error',
       kind: 'unit-mismatch',
       msg: `Header zeigt ${parsed.meta.totalUnits} Einheiten, summiert: ${totalUnits} (Δ ${parsed.meta.totalUnits - totalUnits})`,
     });
   }
 
-  // 5. Per-item warnings
+  // 5. Per-item checks
   parsed.pallets.forEach((p) =>
     p.items.forEach((it) => {
       if (!it.units || it.units <= 0) {
+        // Zero-units is now a HARD error: a row that survived parsing
+        // with units=0 means we either misread the .docx column layout
+        // or the user typed an empty cell. Either way, picking the
+        // pallet against this row is impossible.
         issues.push({
-          severity: 'warn',
+          severity: 'error',
           kind: 'zero-units',
           palletId: p.id,
-          msg: `${p.id} / ${it.fnsku || it.sku}: количество = 0`,
+          msg: `${p.id} / ${it.fnsku || it.sku}: количество = 0 oder fehlt`,
         });
       }
       if (parsed.format !== 'schilder') {

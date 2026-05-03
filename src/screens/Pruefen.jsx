@@ -38,32 +38,32 @@ export default function PruefenScreen() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Build pallets/esku with enriched items overlaid by FNSKU (preserves order)
-  const enrichedById = useMemo(() => {
-    if (!dimsQ.data) return null;
-    const map = new Map();
-    for (const it of dimsQ.data) {
-      const k = it.fnsku || it.sku || it.title;
-      if (k) map.set(k, it);
-    }
-    return map;
-  }, [dimsQ.data]);
-
+  // Build pallets/esku with enriched items overlaid by POSITION, not by
+  // FNSKU. The same FNSKU can appear on multiple pallets with different
+  // `units` / `useItem` / etc. — keying enrichment by FNSKU caused one
+  // pallet's row to silently overwrite the other's quantity (the
+  // FBA15LKWFFTR bug where X0011CI9FH on P1-B2 inherited the units
+  // value from P1-B1). enrichItemDims preserves input order, so we walk
+  // the same sequence we passed in (allItems = pallets flat → ESKU).
   const enrichedPallets = useMemo(() => {
-    const base = enrichedById
-      ? rawPallets.map((p) => ({
-          ...p,
-          items: (p.items || []).map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it),
-        }))
-      : rawPallets;
-    // Sort items within each pallet for picking order — same logic as Focus
+    const enriched = dimsQ.data || null;
+    let cursor = 0;
+    const base = rawPallets.map((p) => ({
+      ...p,
+      items: (p.items || []).map((origIt) => {
+        const fromDims = enriched ? enriched[cursor] : null;
+        cursor += 1;
+        return fromDims || origIt;
+      }),
+    }));
     return base.map((p) => ({ ...p, items: sortItemsForPallet(p.items || []) }));
-  }, [rawPallets, enrichedById]);
+  }, [rawPallets, dimsQ.data]);
 
   const enrichedEsku = useMemo(() => {
-    if (!enrichedById) return eskuItems;
-    return eskuItems.map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it);
-  }, [eskuItems, enrichedById]);
+    if (!dimsQ.data) return eskuItems;
+    const palletItemsCount = rawPallets.reduce((n, p) => n + (p.items?.length || 0), 0);
+    return eskuItems.map((it, i) => dimsQ.data[palletItemsCount + i] || it);
+  }, [eskuItems, rawPallets, dimsQ.data]);
 
   const view = useMemo(() => pruefenView({ ...current?.parsed, pallets: enrichedPallets }), [current?.parsed, enrichedPallets]);
   const distribution = useMemo(

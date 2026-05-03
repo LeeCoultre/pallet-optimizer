@@ -34,31 +34,28 @@ export default function FocusScreen() {
     enabled: !!current?.id && allItems.length > 0,
     staleTime: 5 * 60 * 1000,
   });
-  const enrichedById = useMemo(() => {
-    if (!dimsQ.data) return null;
-    const map = new Map();
-    for (const it of dimsQ.data) {
-      const k = it.fnsku || it.sku || it.title;
-      if (k) map.set(k, it);
-    }
-    return map;
-  }, [dimsQ.data]);
-
-  // Sort items within each pallet for picking flow + APPEND distributed
-  // ESKU after the Mixed items (Phase 2 in the SOP). The injected ESKU
-  // carry placementMeta so the operator sees OVERLOAD / NO_VALID flags
-  // mid-workflow without having to revisit Pruefen.
+  // Overlay enrichment by POSITION, not by FNSKU. The same FNSKU can
+  // appear on multiple pallets with different units/useItem — keying by
+  // FNSKU silently overwrites one row's quantity with another's (the
+  // FBA15LKWFFTR bug). enrichItemDims preserves input order, so we walk
+  // the same sequence we passed in (pallet items flat → ESKU).
   const enrichedSourcePallets = useMemo(() => {
-    if (!enrichedById) return sourcePallets;
+    const enriched = dimsQ.data || null;
+    let cursor = 0;
     return sourcePallets.map((p) => ({
       ...p,
-      items: (p.items || []).map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it),
+      items: (p.items || []).map((origIt) => {
+        const fromDims = enriched ? enriched[cursor] : null;
+        cursor += 1;
+        return fromDims || origIt;
+      }),
     }));
-  }, [sourcePallets, enrichedById]);
+  }, [sourcePallets, dimsQ.data]);
   const enrichedEsku = useMemo(() => {
-    if (!enrichedById) return rawEsku;
-    return rawEsku.map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it);
-  }, [rawEsku, enrichedById]);
+    if (!dimsQ.data) return rawEsku;
+    const palletItemsCount = sourcePallets.reduce((n, p) => n + (p.items?.length || 0), 0);
+    return rawEsku.map((it, i) => dimsQ.data[palletItemsCount + i] || it);
+  }, [rawEsku, sourcePallets, dimsQ.data]);
   const distribution = useMemo(
     () => distributeEinzelneSku(enrichedSourcePallets, enrichedEsku),
     [enrichedSourcePallets, enrichedEsku],
