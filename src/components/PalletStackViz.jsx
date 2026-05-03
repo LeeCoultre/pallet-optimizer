@@ -1,13 +1,12 @@
-/* PalletStackViz — vertical 6-level stack of one EUR pallet.
+/* PalletStackViz — minimal glass-morphism side view of one EUR pallet.
    Bottom = Level 1 (Thermorollen), Top = Level 6 (Tachorollen).
-   Layer height = volume on that level (cartons normalized).
-   Hover any layer for tooltip with carton count + weight + volume.
 
    Two sizes:
      "row"  — compact 36×72 inline cell, no labels (used in pallet table)
-     "card" — full 180×320 with axis labels + ESKU markers (expanded view) */
+     "card" — full card with frame + KPI rail (in the expanded view)
+*/
 
-import { useState } from 'react';
+import { useState, useId } from 'react';
 import { LEVEL_META } from '../utils/auftragHelpers.js';
 import { T } from './ui.jsx';
 
@@ -15,17 +14,19 @@ const PALLET_VOL_M3   = 1.59;
 const PALLET_WEIGHT_KG = 700;
 
 export default function PalletStackViz({ palletState, size = 'row', onClick }) {
-  const W = size === 'card' ? 130 : 36;        // narrower so card fits 220px column with legend
-  const H = size === 'card' ? 280 : 72;
-  const showLabels = size === 'card';
+  const isCard = size === 'card';
+  const W = isCard ? 168 : 36;
+  const H = isCard ? 320 : 72;
 
-  const ps = palletState;
-  if (!ps) {
+  if (!palletState) {
     return (
       <div style={{
         width: W, height: H,
-        background: T.bg.surface3,
-        borderRadius: T.radius.sm,
+        background: 'rgba(255,255,255,0.5)',
+        border: `1px dashed ${T.border.strong}`,
+        borderRadius: isCard ? 14 : 6,
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
       }} />
     );
   }
@@ -33,76 +34,94 @@ export default function PalletStackViz({ palletState, size = 'row', onClick }) {
   // Compute volume per level (cm³)
   const volByLevel = {};
   for (let lvl = 1; lvl <= 6; lvl++) {
-    const items = ps.byLevel?.[lvl] || [];
+    const items = palletState.byLevel?.[lvl] || [];
     volByLevel[lvl] = items.reduce((s, x) => s + (x.volCm3 || 0), 0);
   }
   const palletVolCm3 = PALLET_VOL_M3 * 1e6;
-  const totalUsed = Object.values(volByLevel).reduce((s, v) => s + v, 0);
-  // Each level's height is proportional to its share of pallet capacity (capped at 100%)
-  const levelHeights = {};
-  for (let lvl = 1; lvl <= 6; lvl++) {
-    levelHeights[lvl] = Math.min(1, volByLevel[lvl] / palletVolCm3) * H;
-  }
 
-  const overloadW = ps.overloadFlags?.has?.('OVERLOAD-W');
-  const overloadV = ps.overloadFlags?.has?.('OVERLOAD-V');
-  const noValid = (ps.byLevel ? Object.values(ps.byLevel) : [])
+  const levelHeights = {};
+  let totalUsedHeight = 0;
+  for (let lvl = 1; lvl <= 6; lvl++) {
+    const h = Math.min(1, volByLevel[lvl] / palletVolCm3) * H;
+    levelHeights[lvl] = h;
+    totalUsedHeight += h;
+  }
+  totalUsedHeight = Math.min(H, totalUsedHeight);
+
+  const overloadW = palletState.overloadFlags?.has?.('OVERLOAD-W');
+  const overloadV = palletState.overloadFlags?.has?.('OVERLOAD-V');
+  const overloadCap = palletState.overloadFlags?.has?.('OVERLOAD-CAP');
+  const noValid = (palletState.byLevel ? Object.values(palletState.byLevel) : [])
     .flat()
     .some((x) => x.item?.placementMeta?.flags?.includes?.('NO_VALID_PLACEMENT'));
+  const flagged = overloadW || overloadV || overloadCap || noValid;
 
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        position: 'relative',
-        display: 'flex',
-        flexDirection: showLabels ? 'column' : 'row',  // stack legend BELOW in card mode
-        gap: showLabels ? 12 : 0,
-        alignItems: 'flex-start',
-        cursor: onClick ? 'pointer' : 'default',
-      }}
-    >
-      <StackPyramid
-        width={W}
-        height={H}
+  if (!isCard) {
+    return (
+      <PalletFrame
+        palletState={palletState}
         levelHeights={levelHeights}
         volByLevel={volByLevel}
-        palletState={ps}
-        showLabels={showLabels}
-        outline={overloadW || overloadV ? T.status.danger.main : T.border.strong}
+        totalUsedHeight={totalUsedHeight}
+        W={W} H={H}
+        showLabels={false}
+        flagged={flagged}
+        onClick={onClick}
       />
+    );
+  }
 
-      {showLabels && (
-        <Legend palletState={ps} totalVol={totalUsed} width={W} />
-      )}
+  const fillPct = Math.min(100, (palletState.volCm3 / palletVolCm3) * 100);
+  const wgtPct = Math.min(100, (palletState.weightKg / PALLET_WEIGHT_KG) * 100);
+  const freeM3 = Math.max(0, PALLET_VOL_M3 - palletState.volCm3 / 1e6);
+  const freeKg = Math.max(0, PALLET_WEIGHT_KG - palletState.weightKg);
 
-      {(overloadW || overloadV || noValid) && (
-        <div style={{
-          position: 'absolute',
-          top: -6, right: -6,
-          width: 16, height: 16,
-          borderRadius: '50%',
-          background: noValid ? '#DC2626' : T.status.warn.main,
-          color: '#fff',
-          fontSize: 10,
-          fontWeight: 700,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-        }}>
-          !
-        </div>
-      )}
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: `${W}px 1fr`,
+      gap: 22,
+      alignItems: 'flex-start',
+      width: '100%',
+    }}>
+      <PalletFrame
+        palletState={palletState}
+        levelHeights={levelHeights}
+        volByLevel={volByLevel}
+        totalUsedHeight={totalUsedHeight}
+        W={W} H={H}
+        showLabels
+        flagged={flagged}
+        onClick={onClick}
+      />
+      <KPIRail
+        volCm3={palletState.volCm3}
+        weightKg={palletState.weightKg}
+        fillPct={fillPct}
+        wgtPct={wgtPct}
+        freeM3={freeM3}
+        freeKg={freeKg}
+        overloadV={overloadV}
+        overloadW={overloadW}
+        overloadCap={overloadCap}
+        noValid={noValid}
+        anyEsku={palletState.anyEsku}
+      />
     </div>
   );
 }
 
-/* ─── Pyramid SVG ─────────────────────────────────────────────────────── */
-function StackPyramid({ width, height, levelHeights, volByLevel, palletState, showLabels, outline }) {
+/* ─── The frame: glass surface with soft layers ─────────────────────── */
+function PalletFrame({
+  palletState, levelHeights, volByLevel, totalUsedHeight,
+  W, H, showLabels, flagged, onClick,
+}) {
   const [hover, setHover] = useState(null);
-  // Stack bottom-up: Level 1 at the bottom, Level 6 at the top
-  let yCursor = height;
+  const patternId = useId().replace(/:/g, '');
+
+  const radius = showLabels ? 14 : 6;
+  // Stack bottom-up
+  let yCursor = H;
   const layers = [];
   for (let lvl = 1; lvl <= 6; lvl++) {
     const h = levelHeights[lvl];
@@ -111,119 +130,332 @@ function StackPyramid({ width, height, levelHeights, volByLevel, palletState, sh
     layers.push({ lvl, y: yCursor, h });
   }
 
-  // Empty space outline
-  const emptyY = 0;
-  const emptyH = layers.length === 0 ? height : layers[layers.length - 1].y;
-
   return (
-    <div style={{ position: 'relative' }}>
+    <div
+      onClick={onClick}
+      style={{
+        position: 'relative',
+        width: W,
+        height: H,
+        cursor: onClick ? 'pointer' : 'default',
+        borderRadius: radius,
+        background: T.bg.surface,
+        border: `1px solid ${flagged ? T.status.danger.border : T.border.primary}`,
+        boxShadow: flagged
+          ? `0 4px 16px ${T.status.danger.bg}`
+          : T.shadow.card,
+        overflow: 'hidden',
+        transition: 'box-shadow 220ms ease',
+      }}
+    >
       <svg
-        width={width}
-        height={height}
-        style={{
-          display: 'block',
-          background: T.bg.surface,
-          border: `1px solid ${outline}`,
-          borderRadius: 4,
-          overflow: 'visible',
-        }}
+        width={W}
+        height={H}
+        style={{ display: 'block', overflow: 'visible' }}
       >
-        {/* Empty space — dashed border on top */}
-        {emptyH > 0 && (
-          <rect
-            x={0}
-            y={emptyY}
-            width={width}
-            height={emptyH}
-            fill={T.bg.surface3}
-            opacity={0.4}
-          />
-        )}
+        <defs>
+          {/* Subtle dot grid for empty space — "breathing room" feel */}
+          <pattern id={`empty-${patternId}`} patternUnits="userSpaceOnUse"
+                   width="10" height="10">
+            <circle cx="2" cy="2" r="0.7" fill="rgba(15,23,42,0.06)" />
+          </pattern>
+          {/* Soft vertical gradient per level */}
+          {Object.entries(LEVEL_META).map(([lvl, meta]) => (
+            <linearGradient key={lvl} id={`lvl-${lvl}-${patternId}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"   stopColor={meta.color} stopOpacity="0.92" />
+              <stop offset="100%" stopColor={meta.color} stopOpacity="0.78" />
+            </linearGradient>
+          ))}
+          {/* Clip path for rounded corners on the contents */}
+          <clipPath id={`clip-${patternId}`}>
+            <rect x={0} y={0} width={W} height={H} rx={radius} ry={radius} />
+          </clipPath>
+        </defs>
 
-        {/* Pallet base — small dark line at bottom */}
-        <rect
-          x={0}
-          y={height - 1}
-          width={width}
-          height={1}
-          fill={T.text.faint}
-        />
+        <g clipPath={`url(#clip-${patternId})`}>
+          {/* Empty top zone — soft dot grid */}
+          <rect x={0} y={0} width={W} height={H} fill={`url(#empty-${patternId})`} />
 
-        {layers.map(({ lvl, y, h }) => {
-          const meta = LEVEL_META[lvl];
-          const isHover = hover === lvl;
-          const items = palletState.byLevel?.[lvl] || [];
-          const eskuCount = items.filter((x) => x.source === 'esku').length;
-          return (
-            <g
-              key={lvl}
-              onMouseEnter={() => setHover(lvl)}
-              onMouseLeave={() => setHover(null)}
-              style={{ cursor: 'help' }}
-            >
-              <rect
-                x={0}
-                y={y}
-                width={width}
-                height={h}
-                fill={meta.color}
-                opacity={isHover ? 1 : 0.85}
-                stroke={isHover ? '#000' : 'transparent'}
-                strokeWidth={1}
-              />
-              {/* ESKU dot indicators on the right edge */}
-              {eskuCount > 0 && showLabels && h >= 12 && (
-                <text
-                  x={width - 6}
-                  y={y + h / 2 + 3}
-                  textAnchor="end"
-                  fontSize={9}
-                  fontFamily={T.font.mono}
-                  fill="#fff"
-                  fontWeight={700}
-                >
-                  +{eskuCount}
-                </text>
-              )}
-              {showLabels && h >= 16 && (
-                <text
-                  x={6}
-                  y={y + h / 2 + 3}
-                  fontSize={10}
-                  fontFamily={T.font.ui}
-                  fill="#fff"
-                  fontWeight={600}
-                >
-                  L{lvl}
-                </text>
-              )}
-            </g>
-          );
-        })}
+          {/* Filled layers */}
+          {layers.map(({ lvl, y, h }) => {
+            const meta = LEVEL_META[lvl];
+            const isHover = hover === lvl;
+            const items = palletState.byLevel?.[lvl] || [];
+            const eskuCount = items.filter((x) => x.source === 'esku').length;
+            const lvlPct = (volByLevel[lvl] / (PALLET_VOL_M3 * 1e6)) * 100;
 
-        {/* Empty top dashed line */}
-        {emptyH > 4 && (
-          <line
-            x1={0}
-            x2={width}
-            y1={emptyH}
-            y2={emptyH}
-            stroke={T.text.faint}
-            strokeDasharray="2 3"
-            strokeWidth={1}
-          />
-        )}
+            return (
+              <g
+                key={lvl}
+                onMouseEnter={() => setHover(lvl)}
+                onMouseLeave={() => setHover(null)}
+                style={{ cursor: 'help' }}
+              >
+                <rect
+                  x={0}
+                  y={y}
+                  width={W}
+                  height={h}
+                  fill={`url(#lvl-${lvl}-${patternId})`}
+                  opacity={isHover ? 1 : 0.96}
+                  style={{
+                    transition: 'opacity 180ms ease',
+                    animation: 'pviz-rise 700ms cubic-bezier(0.16, 1, 0.3, 1) both',
+                    transformOrigin: '0 100%',
+                  }}
+                />
+                {/* Top edge highlight — light line for "depth" */}
+                <line
+                  x1={0} x2={W}
+                  y1={y + 0.5} y2={y + 0.5}
+                  stroke="#FFFFFF"
+                  strokeOpacity="0.45"
+                  strokeWidth="1"
+                />
+                {showLabels && h >= 22 && (
+                  <>
+                    <text
+                      x={12}
+                      y={y + h / 2 + 4}
+                      fontSize={11}
+                      fontFamily={T.font.ui}
+                      fill="#FFFFFF"
+                      fontWeight={600}
+                      style={{ letterSpacing: '0.02em' }}
+                    >
+                      L{lvl}
+                    </text>
+                    <text
+                      x={W - 12}
+                      y={y + h / 2 + 4}
+                      fontSize={10.5}
+                      fontFamily={T.font.ui}
+                      fill="#FFFFFF"
+                      fillOpacity="0.85"
+                      fontWeight={500}
+                      textAnchor="end"
+                    >
+                      {Math.round(lvlPct)}%
+                    </text>
+                  </>
+                )}
+                {eskuCount > 0 && showLabels && h >= 16 && (
+                  <circle cx={W - 10} cy={y + 8} r="2.5" fill="#FFFFFF" />
+                )}
+                {eskuCount > 0 && !showLabels && (
+                  <text
+                    x={W - 3}
+                    y={y + h / 2 + 3}
+                    textAnchor="end"
+                    fontSize={9}
+                    fontFamily={T.font.mono}
+                    fill="#fff"
+                    fontWeight={700}
+                  >
+                    +{eskuCount}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Subtle current-load line marker */}
+          {totalUsedHeight > 0 && totalUsedHeight < H && showLabels && (
+            <line
+              x1={0} x2={W}
+              y1={H - totalUsedHeight} y2={H - totalUsedHeight}
+              stroke="rgba(15,23,42,0.18)"
+              strokeWidth="0.75"
+              strokeDasharray="3 3"
+            />
+          )}
+        </g>
       </svg>
 
-      {hover && (
+      {hover && showLabels && (
         <Tooltip
           level={hover}
           volCm3={volByLevel[hover]}
           items={palletState.byLevel?.[hover] || []}
-          x={width + 6}
+          x={W + 10}
           y={layers.find((l) => l.lvl === hover)?.y ?? 0}
         />
       )}
+
+      <style>{`
+        @keyframes pviz-rise {
+          from { transform: scaleY(0); }
+          to   { transform: scaleY(1); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* ─── KPI rail: numbers + soft progress + free-space ─────────────────── */
+function KPIRail({
+  volCm3, weightKg, fillPct, wgtPct, freeM3, freeKg,
+  overloadV, overloadW, overloadCap, noValid, anyEsku,
+}) {
+  const volTone = overloadV ? 'danger' : fillPct >= 90 ? 'warn' : 'normal';
+  const wgtTone = overloadW ? 'danger' : wgtPct >= 90 ? 'warn' : 'normal';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <KPI
+        label="Volumen"
+        bigValue={(volCm3 / 1e6).toFixed(2)}
+        unit="m³"
+        denominator="/ 1.59"
+        pct={fillPct}
+        tone={volTone}
+      />
+      <KPI
+        label="Gewicht"
+        bigValue={Math.round(weightKg)}
+        unit="kg"
+        denominator="/ 700"
+        pct={wgtPct}
+        tone={wgtTone}
+      />
+      <FreeBlock m3={freeM3} kg={freeKg} overloadV={overloadV} overloadW={overloadW} />
+      {(anyEsku || overloadCap || noValid) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {anyEsku && <Pill tone="accent">+ ESKU verteilt</Pill>}
+          {overloadCap && <Pill tone="danger">Kapazität überlastet</Pill>}
+          {noValid && <Pill tone="danger">ESKU ohne Platzierung</Pill>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KPI({ label, bigValue, unit, denominator, pct, tone }) {
+  const trackColor = tone === 'danger' ? T.status.danger.main
+    : tone === 'warn' ? T.status.warn.main
+    : T.text.primary;
+  const valueColor = tone === 'danger' ? T.status.danger.text : T.text.primary;
+  return (
+    <div>
+      <div style={{
+        fontSize: 12,
+        color: T.text.subtle,
+        fontWeight: 500,
+        marginBottom: 6,
+        letterSpacing: '0.005em',
+      }}>
+        {label}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 8 }}>
+        <span style={{
+          fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
+          fontSize: 28,
+          fontWeight: 700,
+          letterSpacing: '-0.025em',
+          color: valueColor,
+          fontVariantNumeric: 'tabular-nums',
+          lineHeight: 1,
+        }}>
+          {bigValue}
+        </span>
+        <span style={{
+          fontSize: 12,
+          color: T.text.faint,
+          fontWeight: 500,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {denominator} {unit}
+        </span>
+      </div>
+      <div style={{
+        position: 'relative',
+        height: 4,
+        borderRadius: 999,
+        background: 'rgba(15,23,42,0.06)',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          position: 'absolute',
+          top: 0, left: 0,
+          height: '100%',
+          width: `${Math.min(100, pct)}%`,
+          borderRadius: 999,
+          background: trackColor,
+          transition: 'width 700ms cubic-bezier(0.16, 1, 0.3, 1)',
+        }} />
+      </div>
+      <div style={{
+        marginTop: 4,
+        fontSize: 11.5,
+        fontWeight: 500,
+        color: tone === 'danger' ? T.status.danger.text : T.text.subtle,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {tone === 'danger' ? `${Math.round(pct)}% · überladen` : `${Math.round(pct)}% belegt`}
+      </div>
+    </div>
+  );
+}
+
+function FreeBlock({ m3, kg, overloadV, overloadW }) {
+  return (
+    <div style={{
+      paddingTop: 12,
+      borderTop: `1px solid rgba(15,23,42,0.06)`,
+    }}>
+      <div style={{
+        fontSize: 12,
+        color: T.text.subtle,
+        fontWeight: 500,
+        marginBottom: 6,
+      }}>
+        Frei
+      </div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
+        <span style={{
+          fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
+          fontSize: 18,
+          fontWeight: 700,
+          letterSpacing: '-0.02em',
+          color: overloadV ? T.status.danger.text : T.text.primary,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {overloadV ? '–' : m3.toFixed(2)}
+          <span style={{ fontSize: 11, color: T.text.faint, fontWeight: 500, marginLeft: 4 }}>m³</span>
+        </span>
+        <span style={{
+          fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
+          fontSize: 18,
+          fontWeight: 700,
+          letterSpacing: '-0.02em',
+          color: overloadW ? T.status.danger.text : T.text.primary,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {overloadW ? '–' : Math.round(kg)}
+          <span style={{ fontSize: 11, color: T.text.faint, fontWeight: 500, marginLeft: 4 }}>kg</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Pill({ tone, children }) {
+  const palette =
+    tone === 'danger' ? { bg: 'rgba(239,68,68,0.10)',  color: T.status.danger.text }
+    : tone === 'warn' ? { bg: 'rgba(245,158,11,0.10)', color: T.status.warn.text }
+    : { bg: T.accent.bg, color: T.accent.text };
+  return (
+    <div style={{
+      padding: '5px 10px',
+      background: palette.bg,
+      color: palette.color,
+      fontSize: 11.5,
+      fontWeight: 600,
+      borderRadius: 999,
+      display: 'inline-flex',
+      width: 'fit-content',
+    }}>
+      {children}
     </div>
   );
 }
@@ -238,134 +470,39 @@ function Tooltip({ level, volCm3, items, x, y }) {
       position: 'absolute',
       left: x, top: y,
       zIndex: 50,
-      background: T.bg.surface,
-      border: `1px solid ${T.border.strong}`,
-      borderRadius: T.radius.sm,
-      boxShadow: T.shadow.raised,
-      padding: '8px 10px',
+      background: 'rgba(15,23,42,0.92)',
+      backdropFilter: 'blur(8px)',
+      WebkitBackdropFilter: 'blur(8px)',
+      color: '#FFFFFF',
+      padding: '10px 12px',
       fontSize: 11.5,
       fontFamily: T.font.ui,
-      color: T.text.primary,
       whiteSpace: 'nowrap',
       pointerEvents: 'none',
+      borderRadius: 10,
+      boxShadow: '0 6px 24px rgba(15,23,42,0.25)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
         <span style={{
-          width: 10, height: 10, borderRadius: 2,
+          width: 8, height: 8, borderRadius: 999,
           background: meta.color,
         }} />
-        <strong>L{level} · {meta.name}</strong>
+        <strong style={{ fontSize: 12 }}>L{level} · {meta.shortName}</strong>
       </div>
-      <div style={{ color: T.text.subtle, fontSize: 11 }}>
+      <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11 }}>
         {cartonCount} {cartonCount === 1 ? 'Karton' : 'Kartons'}
         {' · '}{weightKg.toFixed(1)} kg
         {' · '}{(volCm3 / 1e6).toFixed(3)} m³
       </div>
       {eskuCount > 0 && (
-        <div style={{ color: T.accent.main, fontSize: 11, marginTop: 2, fontWeight: 600 }}>
+        <div style={{
+          color: '#FF8A4D',
+          fontSize: 11, marginTop: 3,
+          fontWeight: 600,
+        }}>
           + {eskuCount} ESKU
         </div>
       )}
-    </div>
-  );
-}
-
-/* ─── Legend (right of card-size pyramid) ─────────────────────────────── */
-function Legend({ palletState, totalVol, width }) {
-  const ps = palletState;
-  const palletVolCm3 = PALLET_VOL_M3 * 1e6;
-  const fillPct = Math.min(100, Math.round((ps.volCm3 / palletVolCm3) * 100));
-  const wgtPct = Math.min(100, Math.round((ps.weightKg / PALLET_WEIGHT_KG) * 100));
-  const overW = ps.weightKg > PALLET_WEIGHT_KG;
-  const overV = ps.volCm3 > palletVolCm3;
-
-  return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 6,
-      fontSize: 11.5,
-      fontFamily: T.font.ui,
-      width: width || 130,
-    }}>
-      <Stat
-        label="Volumen"
-        value={`${(ps.volCm3 / 1e6).toFixed(2)} / 1.59 m³`}
-        pct={fillPct}
-        warning={overV}
-      />
-      <Stat
-        label="Gewicht"
-        value={`${ps.weightKg.toFixed(0)} / 700 kg`}
-        pct={wgtPct}
-        warning={overW}
-      />
-      {ps.anyEsku && (
-        <div style={{
-          marginTop: 2,
-          padding: '3px 7px',
-          background: T.accent.bg,
-          borderRadius: T.radius.sm,
-          color: T.accent.text,
-          fontSize: 10.5,
-          fontWeight: 600,
-          textAlign: 'center',
-        }}>
-          + ESKU verteilt
-        </div>
-      )}
-      {ps.overloadFlags?.size > 0 && (
-        <div style={{
-          padding: '3px 7px',
-          background: T.status.danger.bg,
-          border: `1px solid ${T.status.danger.border}`,
-          borderRadius: T.radius.sm,
-          color: T.status.danger.text,
-          fontSize: 10.5,
-          fontWeight: 600,
-          textAlign: 'center',
-        }}>
-          ⚠ {[...ps.overloadFlags].join(' · ')}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Stat({ label, value, pct, warning }) {
-  return (
-    <div>
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        marginBottom: 3,
-      }}>
-        <span style={{ color: T.text.subtle, fontWeight: 500, fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          {label}
-        </span>
-        <span style={{
-          color: warning ? T.status.danger.text : T.text.primary,
-          fontWeight: 600,
-          fontVariantNumeric: 'tabular-nums',
-        }}>
-          {value}
-        </span>
-      </div>
-      <div style={{
-        height: 4,
-        background: T.bg.surface3,
-        borderRadius: 2,
-        overflow: 'hidden',
-      }}>
-        <div style={{
-          width: `${Math.min(100, pct)}%`,
-          height: '100%',
-          background: warning ? T.status.danger.main
-            : pct >= 92 ? T.status.warn.main
-            : T.accent.main,
-          transition: 'width 400ms cubic-bezier(0.16, 1, 0.3, 1)',
-        }} />
-      </div>
     </div>
   );
 }

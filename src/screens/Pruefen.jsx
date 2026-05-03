@@ -614,13 +614,13 @@ function ExpandedPallet({ items, eskuAssigned, palletState, isLast }) {
     <div
       onClick={(e) => e.stopPropagation()}
       style={{
-        padding: '20px 20px 24px 60px',
+        padding: '24px 20px 28px 60px',
         background: T.bg.surface2,
         borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
         cursor: 'default',
         display: 'grid',
-        gridTemplateColumns: '220px 1fr',
-        gap: 24,
+        gridTemplateColumns: '360px 1fr',
+        gap: 32,
         alignItems: 'flex-start',
       }}
     >
@@ -653,144 +653,203 @@ function ItemTable({ items, accent, showLevel, showFlags, title }) {
     <div>
       {title && (
         <div style={{
-          fontSize: 11.5,
+          fontSize: 13,
           fontWeight: 600,
-          color: T.text.subtle,
-          marginBottom: 8,
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
+          color: T.text.secondary,
+          marginBottom: 12,
+          letterSpacing: '-0.005em',
         }}>
           {title}
+          <span style={{
+            color: T.text.faint,
+            fontWeight: 500,
+            marginLeft: 8,
+            fontSize: 12,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            · {items.length}
+          </span>
         </div>
       )}
       <div style={{
-        background: T.bg.surface,
-        border: `1px solid ${T.border.primary}`,
-        borderRadius: T.radius.md,
-        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
       }}>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: showLevel
-            ? '40px minmax(0, 2fr) 1fr 1fr 50px 80px 60px'
-            : '40px minmax(0, 2.4fr) 1.2fr 1.2fr 80px',
-          padding: '8px 14px',
-          background: T.bg.surface2,
-          borderBottom: `1px solid ${T.border.primary}`,
-          fontSize: 11,
-          fontWeight: 500,
-          color: T.text.subtle,
-          gap: 8,
-        }}>
-          <span>#</span>
-          <span>Name</span>
-          <span>Code</span>
-          <span>Use-Item</span>
-          {showLevel && <span style={{ textAlign: 'center' }}>L</span>}
-          {showFlags && <span style={{ textAlign: 'center' }}>Flags</span>}
-          <span style={{ textAlign: 'right' }}>Menge</span>
-        </div>
         {items.map((it, i) => {
-          const lvl = it.placementMeta ? (it.level || 1) : null;
+          const lvl = (it.placementMeta || showLevel) ? (it.level || 1) : null;
           const meta = lvl ? LEVEL_META[lvl] : null;
           const flags = it.placementMeta?.flags || [];
+          const menge = it.placementMeta
+            ? (it.placementMeta.cartonsHere ?? it.einzelneSku?.cartonsCount ?? '—')
+            : (it.units ?? '—');
+          const mengeUnit = it.placementMeta ? (menge === 1 ? 'Karton' : 'Kartons') : 'Stk';
+          const code = it.fnsku || it.sku || '—';
+          const useItem = it.useItem || null;
           return (
-            <div key={i} style={{
-              display: 'grid',
-              gridTemplateColumns: showLevel
-                ? '40px minmax(0, 2fr) 1fr 1fr 50px 80px 60px'
-                : '40px minmax(0, 2.4fr) 1.2fr 1.2fr 80px',
-              padding: '8px 14px',
-              borderBottom: i < items.length - 1 ? `1px solid ${T.border.subtle}` : 'none',
-              alignItems: 'center',
-              fontSize: 13,
-              color: T.text.secondary,
-              background: accent ? T.accent.bg : T.bg.surface,
-              gap: 8,
-            }}>
-              <span style={{ fontSize: 11, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
-                {String(i + 1).padStart(2, '0')}
-              </span>
-              <span style={{
-                color: T.text.primary,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-              }} title={it.title}>
-                {formatItemTitle(it.title)}
-                {it.placementMeta && (
-                  <ScoreBreakdown breakdown={it.placementMeta.breakdown} score={it.placementMeta.score} />
-                )}
-              </span>
-              <span style={{
-                fontFamily: T.font.mono,
-                fontSize: 12,
-                color: T.text.muted,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                {it.fnsku || it.sku || '—'}
-              </span>
-              <span style={{
-                fontFamily: T.font.mono,
-                fontSize: 12,
-                color: T.text.subtle,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                {it.useItem || '—'}
-              </span>
-              {showLevel && (
-                <span style={{ textAlign: 'center' }}>
-                  {meta && (
-                    <span style={{
-                      display: 'inline-flex',
-                      width: 22, height: 22,
-                      borderRadius: T.radius.sm,
-                      background: meta.color,
-                      color: '#fff',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}>
-                      {lvl}
-                    </span>
-                  )}
-                </span>
-              )}
-              {showFlags && (
-                <span style={{ textAlign: 'center', display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  {flags.length === 0 ? (
-                    <span style={{ color: T.text.faint, fontSize: 12 }}>OK</span>
-                  ) : (
-                    flags.map((f, j) => (
-                      <span key={j} title={f} style={{
-                        fontSize: 9,
-                        fontWeight: 700,
-                        padding: '1px 4px',
-                        borderRadius: 2,
-                        background: f === 'NO_VALID_PLACEMENT' ? T.status.danger.main : T.status.warn.main,
-                        color: '#fff',
-                      }}>
-                        {f.replace('OVERLOAD-', '').replace('NO_VALID_PLACEMENT', '!!')}
-                      </span>
-                    ))
-                  )}
-                </span>
-              )}
-              <span style={{
-                fontVariantNumeric: 'tabular-nums',
-                fontWeight: 600,
-                textAlign: 'right',
-                color: T.text.primary,
-              }}>
-                {it.units || 0}
-              </span>
-            </div>
+            <ItemRow
+              key={i}
+              index={i + 1}
+              title={formatItemTitle(it.title)}
+              fullTitle={it.title}
+              code={code}
+              useItem={useItem}
+              menge={menge}
+              mengeUnit={mengeUnit}
+              levelMeta={meta}
+              levelNumber={lvl}
+              flags={flags}
+              accent={accent}
+              placementMeta={it.placementMeta}
+            />
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function ItemRow({ index, title, fullTitle, code, useItem, menge, mengeUnit, levelMeta, levelNumber, flags, accent, placementMeta }) {
+  const danger = flags.includes('NO_VALID_PLACEMENT');
+  const warn = flags.some((f) => f.startsWith('OVERLOAD-'));
+  return (
+    <div
+      title={fullTitle}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr auto',
+        alignItems: 'flex-start',
+        gap: 14,
+        padding: '14px 16px',
+        background: accent ? T.accent.bg : T.bg.surface,
+        border: `1px solid ${accent ? T.accent.border : T.border.primary}`,
+        borderRadius: T.radius.lg,
+        boxShadow: T.shadow.card,
+        transition: 'border-color 160ms ease, box-shadow 160ms ease',
+        position: 'relative',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = accent ? T.accent.main : T.border.strong;
+        e.currentTarget.style.boxShadow = T.shadow.raised;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = accent ? T.accent.border : T.border.primary;
+        e.currentTarget.style.boxShadow = T.shadow.card;
+      }}
+    >
+      {/* Index + level badge */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 56, paddingTop: 2 }}>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 11,
+          color: T.text.faint,
+          fontVariantNumeric: 'tabular-nums',
+          fontWeight: 500,
+        }}>
+          {String(index).padStart(2, '0')}
+        </span>
+        {levelMeta && (
+          <span title={`L${levelNumber} · ${levelMeta.name}`} style={{
+            display: 'inline-flex',
+            width: 26, height: 26,
+            borderRadius: T.radius.sm,
+            background: levelMeta.color,
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: 700,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            L{levelNumber}
+          </span>
+        )}
+      </div>
+
+      {/* Title block */}
+      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{
+          color: T.text.primary,
+          fontSize: 14,
+          fontWeight: 500,
+          letterSpacing: '-0.005em',
+          lineHeight: 1.4,
+          wordBreak: 'break-word',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 6,
+          flexWrap: 'wrap',
+        }}>
+          <span>{title}</span>
+          {placementMeta && (
+            <ScoreBreakdown breakdown={placementMeta.breakdown} score={placementMeta.score} />
+          )}
+        </div>
+        <div style={{
+          display: 'flex',
+          gap: 10,
+          alignItems: 'center',
+          fontSize: 11.5,
+          color: T.text.faint,
+          fontFamily: T.font.mono,
+          letterSpacing: '0.005em',
+          flexWrap: 'wrap',
+        }}>
+          <span style={{ fontWeight: 500, color: T.text.muted }}>{code}</span>
+          {useItem && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}>
+                {useItem}
+              </span>
+            </>
+          )}
+          {flags.length > 0 && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              {flags.map((f, j) => (
+                <span key={j} title={f} style={{
+                  fontFamily: T.font.ui,
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  background: danger && f === 'NO_VALID_PLACEMENT'
+                    ? 'rgba(239,68,68,0.12)'
+                    : 'rgba(245,158,11,0.12)',
+                  color: danger && f === 'NO_VALID_PLACEMENT'
+                    ? T.status.danger.text
+                    : T.status.warn.text,
+                  letterSpacing: '0.01em',
+                }}>
+                  {f.replace('OVERLOAD-', '').replace('NO_VALID_PLACEMENT', 'No fit')}
+                </span>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Menge — large on the right */}
+      <div style={{ textAlign: 'right' }}>
+        <div style={{
+          fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
+          fontSize: 22,
+          fontWeight: 700,
+          letterSpacing: '-0.025em',
+          color: danger ? T.status.danger.text : warn ? T.status.warn.text : T.text.primary,
+          fontVariantNumeric: 'tabular-nums',
+          lineHeight: 1,
+        }}>
+          {typeof menge === 'number' ? menge.toLocaleString('de-DE') : menge}
+        </div>
+        <div style={{
+          marginTop: 2,
+          fontSize: 11,
+          color: T.text.faint,
+          fontWeight: 500,
+        }}>
+          {mengeUnit}
+        </div>
       </div>
     </div>
   );
