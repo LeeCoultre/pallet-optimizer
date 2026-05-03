@@ -185,6 +185,74 @@ class AuftragSummary(APIModel):
         )
 
 
+# ─── SKU Dimensions ──────────────────────────────────────────────────
+
+class SkuDimensionRead(APIModel):
+    """Row as returned to admin/list and to lookup callers.
+
+    Each key type is a list because one physical product (one row) often
+    ships under multiple Amazon FNSKUs / merchant SKUs (different
+    sales channels, regions, PRIME vs EV)."""
+    id: int
+    fnskus: list[str] = Field(default_factory=list)
+    skus: list[str] = Field(default_factory=list)
+    eans: list[str] = Field(default_factory=list)
+    title: Optional[str] = None
+    length_cm: float
+    width_cm: float
+    height_cm: float
+    weight_kg: float
+    source: Optional[str] = None
+    updated_at: datetime
+    updated_by: Optional[str] = None
+
+
+class SkuDimensionLookup(BaseModel):
+    """Compact form embedded in the lookup response (no id/audit fields)."""
+    length_cm: float
+    width_cm: float
+    height_cm: float
+    weight_kg: float
+    source: Optional[str] = None
+
+
+class SkuDimensionLookupResponse(BaseModel):
+    """Batch lookup result: { lookups: { "<key>": dim, ... }, missing: [...] }.
+
+    A single physical-product row can be reachable through several keys —
+    the response binds the SAME compact dim under each requested key
+    that hit it. So callers can probe with whichever identifier they
+    have and always get back the dimensions."""
+    lookups: dict[str, SkuDimensionLookup] = Field(default_factory=dict)
+    missing: list[str] = Field(default_factory=list)
+
+
+class SkuDimensionUpsert(BaseModel):
+    """POST/PATCH input. At least one of (fnskus, skus, eans) must be non-empty.
+
+    Dimensions must be > 0 (a row without size is meaningless for the
+    distributor). Weight may be 0 as a "not measured yet" placeholder —
+    edit later via UI when the scale data arrives. The distributor
+    treats zero weight as a known unknown rather than a load contribution."""
+    fnskus: list[str] = Field(default_factory=list)
+    skus: list[str] = Field(default_factory=list)
+    eans: list[str] = Field(default_factory=list)
+    title: Optional[str] = None
+    length_cm: float = Field(gt=0)
+    width_cm: float = Field(gt=0)
+    height_cm: float = Field(gt=0)
+    weight_kg: float = Field(ge=0)
+
+
+class SkuDimensionImportResult(BaseModel):
+    imported: int = 0
+    updated: int = 0
+    skipped: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+# ─── Auftraege — full detail ─────────────────────────────────────────
+
 class AuftragDetail(AuftragSummary):
     """Full record incl. parsed payload, raw text, and workflow state."""
     raw_text: Optional[str] = None

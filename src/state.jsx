@@ -272,15 +272,24 @@ export function useAppState() {
   }, [current, progressMut]);
 
   /* Mark current article fertig + advance. Returns true when last article
-     of the last pallet has been completed (UI uses this to auto-navigate). */
-  const completeCurrentItem = useCallback(() => {
+     of the last pallet has been completed (UI uses this to auto-navigate).
+
+     Focus injects Phase-2 ESKU into pallet.items locally; state.jsx only
+     sees the parser's Mixed items. To keep advance/Fertig consistent, the
+     caller passes its EFFECTIVE items length and item — when present these
+     win over what state would derive from `current.parsed`. Without
+     overrides the function preserves the legacy single-call shape. */
+  const completeCurrentItem = useCallback((effectiveItemsCount, effectiveItem = null) => {
     if (!current?.parsed) return false;
     const pallet = current.parsed.pallets[current.currentPalletIdx];
     if (!pallet) return false;
-    const item = pallet.items[current.currentItemIdx];
-    if (!item) return false;
-
-    const code = item.fnsku || item.sku;
+    const itemsLength = effectiveItemsCount ?? pallet.items.length;
+    const item = effectiveItem || pallet.items[current.currentItemIdx];
+    if (!item && effectiveItemsCount == null) return false;
+    // ESKU position falls outside parser's pallet.items. Use a synthetic
+    // code so the completedKeys row is unique and audit-traceable.
+    const code = (item && (item.fnsku || item.sku))
+      || `pos-${current.currentItemIdx}`;
     const key = `${pallet.id}|${current.currentItemIdx}|${code}`;
     const completedKeys = { ...(current.completedKeys || {}), [key]: Date.now() };
 
@@ -289,7 +298,7 @@ export function useAppState() {
     let nextItemIdx     = current.currentItemIdx + 1;
     let didFinishAll    = false;
 
-    if (nextItemIdx >= pallet.items.length) {
+    if (nextItemIdx >= itemsLength) {
       palletTimings = {
         ...palletTimings,
         [pallet.id]: {

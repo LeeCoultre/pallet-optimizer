@@ -32,7 +32,7 @@ async def clean_db():
     """Wipe every Marathon table before each test (RESTART IDENTITY + CASCADE)."""
     async with engine.begin() as conn:
         await conn.execute(text(
-            "TRUNCATE audit_log, auftraege, users RESTART IDENTITY CASCADE"
+            "TRUNCATE audit_log, auftraege, users, sku_dimensions RESTART IDENTITY CASCADE"
         ))
     yield
     # Drop any auth overrides set during the test.

@@ -1,33 +1,77 @@
 /* Pruefen — Schritt 02. Daten kontrollieren.
-   Design System v3 (siehe DESIGN.md). */
+   Design System v3 (siehe DESIGN.md).
+
+   v2 — SOP v1.1: 6-level hierarchy, PalletStackViz, OVERLOAD flags. */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
-import { pruefenView, distributeEinzelneSku } from '../utils/auftragHelpers.js';
+import {
+  pruefenView, distributeEinzelneSku, enrichItemDims,
+  levelDistribution, sortItemsForPallet, LEVEL_META,
+} from '../utils/auftragHelpers.js';
+import { lookupSkuDimensions } from '../marathonApi.js';
 import {
   Page, Topbar, StepperBar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
   Label, Badge, Button, Meta, Kpi, ValidationBanner,
   T,
 } from '../components/ui.jsx';
-
-const CAT = {
-  THERMO:     { color: '#3B82F6', bg: '#EFF6FF', text: '#1D4ED8', name: 'Thermorollen' },
-  PRODUKTION: { color: '#10B981', bg: '#ECFDF5', text: '#047857', name: 'Big Bags / Produktion' },
-  HEIPA:      { color: '#06B6D4', bg: '#ECFEFF', text: '#0E7490', name: 'Heipa' },
-  VEIT:       { color: '#A855F7', bg: '#FAF5FF', text: '#7E22CE', name: 'Veit' },
-  TACHO:      { color: '#F97316', bg: '#FFF7ED', text: '#C2410C', name: 'Tachorollen' },
-  SONSTIGE:   { color: '#71717A', bg: '#FAFAFA', text: '#3F3F46', name: 'Sonstige' },
-};
+import PalletStackViz from '../components/PalletStackViz.jsx';
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function PruefenScreen() {
   const { current, goToStep, cancelCurrent } = useAppState();
-  const view = useMemo(() => pruefenView(current?.parsed), [current?.parsed]);
   const rawPallets = current?.parsed?.pallets || [];
   const eskuItems  = current?.parsed?.einzelneSkuItems || [];
-  const eskuResult = useMemo(() => distributeEinzelneSku(rawPallets, eskuItems), [rawPallets, eskuItems]);
-  const eskuDist   = eskuResult.byPalletId;
+
+  // Async dim/weight enrichment (cached forever per Auftrag — these don't change)
+  const allItems = useMemo(() => [
+    ...rawPallets.flatMap((p) => p.items || []),
+    ...eskuItems,
+  ], [rawPallets, eskuItems]);
+
+  const dimsQ = useQuery({
+    queryKey: ['sku-dims', current?.id],
+    queryFn: () => enrichItemDims(allItems, lookupSkuDimensions),
+    enabled: !!current?.id && allItems.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Build pallets/esku with enriched items overlaid by FNSKU (preserves order)
+  const enrichedById = useMemo(() => {
+    if (!dimsQ.data) return null;
+    const map = new Map();
+    for (const it of dimsQ.data) {
+      const k = it.fnsku || it.sku || it.title;
+      if (k) map.set(k, it);
+    }
+    return map;
+  }, [dimsQ.data]);
+
+  const enrichedPallets = useMemo(() => {
+    const base = enrichedById
+      ? rawPallets.map((p) => ({
+          ...p,
+          items: (p.items || []).map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it),
+        }))
+      : rawPallets;
+    // Sort items within each pallet for picking order — same logic as Focus
+    return base.map((p) => ({ ...p, items: sortItemsForPallet(p.items || []) }));
+  }, [rawPallets, enrichedById]);
+
+  const enrichedEsku = useMemo(() => {
+    if (!enrichedById) return eskuItems;
+    return eskuItems.map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it);
+  }, [eskuItems, enrichedById]);
+
+  const view = useMemo(() => pruefenView({ ...current?.parsed, pallets: enrichedPallets }), [current?.parsed, enrichedPallets]);
+  const distribution = useMemo(
+    () => distributeEinzelneSku(enrichedPallets, enrichedEsku),
+    [enrichedPallets, enrichedEsku],
+  );
+  const eskuDist = distribution.byPalletId;
+  const palletStates = distribution.palletStates;
 
   const validation = current?.validation || { ok: true, errorCount: 0, warningCount: 0 };
   const validView = {
@@ -96,6 +140,26 @@ export default function PruefenScreen() {
           />
         </div>
 
+        {/* OVERLOAD / NO_VALID_PLACEMENT escalation banner */}
+        {(distribution.overloadCount > 0 || distribution.noValidCount > 0) && (
+          <div style={{ marginBottom: 32 }}>
+            <ValidationBanner
+              tone={distribution.noValidCount > 0 ? 'warn' : 'warn'}
+              title={
+                distribution.noValidCount > 0
+                  ? `🚨 ${distribution.noValidCount} ESKU-Karton(s) ohne gültige Platzierung`
+                  : `⚠ ${distribution.overloadCount} OVERLOAD-Flag(s) gesetzt`
+              }
+              sub={
+                distribution.noValidCount > 0
+                  ? 'Hard-Constraints H1-H7 verletzt — Bridge-Eskalation erforderlich.'
+                  : 'Soft-Limits 700 kg / 1.59 m³ überschritten — Bridge informieren.'
+              }
+              action={<Badge tone="warn">Eskalation</Badge>}
+            />
+          </div>
+        )}
+
         {/* KPI grid */}
         <section style={{ marginBottom: 32 }}>
           <SectionHeader title="Übersicht" sub="Wichtige Kennzahlen auf einen Blick." />
@@ -116,7 +180,7 @@ export default function PruefenScreen() {
           </div>
         </section>
 
-        {/* Auslastung + Kategorien */}
+        {/* Auslastung + Levels */}
         <section style={{
           display: 'grid',
           gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)',
@@ -124,7 +188,7 @@ export default function PruefenScreen() {
           marginBottom: 32,
         }}>
           <AuslastungCard pct={view.stats.fillPct} />
-          <CategoriesCard pallets={view.pallets} />
+          <LevelsCard pallets={enrichedPallets} />
         </section>
 
         {/* Validation checklist */}
@@ -147,26 +211,31 @@ export default function PruefenScreen() {
           </Card>
         </section>
 
-        {/* Pallets table */}
+        {/* Pallets table — with PalletStackViz */}
         <section style={{ marginBottom: 40 }}>
           <SectionHeader
             title={`Paletten (${view.pallets.length})`}
-            sub={`Klick auf eine Palette zeigt alle Artikel${eskuItems.length > 0 ? ' inkl. der zugewiesenen Einzelne-SKU-Items' : ''}. Reihenfolge: leichteste zuerst, Tachorollen zum Schluss.`}
+            sub={
+              eskuItems.length > 0
+                ? `Stack-Pyramide zeigt die physische Ladung pro Palette (Level 1 unten → 6 oben). Klick öffnet Details inkl. ${eskuItems.length} verteilte ESKU-Kartons.`
+                : 'Stack-Pyramide zeigt die physische Ladung pro Palette (Level 1 unten → 6 oben). Klick öffnet Artikel-Liste.'
+            }
           />
           <Card style={{ padding: 0, overflow: 'hidden' }}>
             <div style={tableHeader}>
               <span style={{ width: 40 }}>#</span>
               <span style={{ flex: '0 0 90px' }}>Pallet-ID</span>
-              <span style={{ flex: '0 0 160px' }}>Kategorie</span>
-              <span style={{ flex: '0 0 90px' }}>Artikel</span>
-              <span style={{ flex: '0 0 110px' }}>Einheiten</span>
-              <span style={{ flex: '0 0 130px' }}>Auslastung</span>
+              <span style={{ flex: '0 0 70px' }}>Stack</span>
+              <span style={{ flex: '0 0 100px' }}>Top-Level</span>
+              <span style={{ flex: '0 0 80px' }}>Artikel</span>
+              <span style={{ flex: '0 0 90px' }}>Einheiten</span>
               <span style={{ flex: 1 }}>Formate</span>
               <span style={{ flex: '0 0 24px' }} />
             </div>
             {view.pallets.map((p, i) => {
-              const raw = rawPallets.find((r) => r.id === p.id);
+              const raw = enrichedPallets.find((r) => r.id === p.id);
               const eskuAssigned = eskuDist[p.id] || [];
+              const palletState = palletStates[p.id];
               return (
                 <PalletRow
                   key={p.id}
@@ -174,6 +243,7 @@ export default function PruefenScreen() {
                   index={i}
                   items={raw?.items || []}
                   eskuAssigned={eskuAssigned}
+                  palletState={palletState}
                   isExpanded={expandedId === p.id}
                   onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
                   isLast={i === view.pallets.length - 1}
@@ -189,6 +259,8 @@ export default function PruefenScreen() {
       <StickyBar
         validated={validView.ok}
         stats={view.stats}
+        overloadCount={distribution.overloadCount}
+        noValidCount={distribution.noValidCount}
         onStartFocus={onStartFocus}
       />
     </Page>
@@ -292,9 +364,9 @@ function AuslastungCard({ pct }) {
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Meta label="Volumen"       value={`${(pct * 7.92).toFixed(2)} m³`} mono />
-          <Meta label="Kapazität"     value="7,92 m³" mono />
-          <Meta label="Maximalhöhe"   value="1.650 mm" mono />
+          <Meta label="Ø Volumen / Palette" value={`${(pct * 1.59).toFixed(2)} m³`} mono />
+          <Meta label="Soft-Limit"          value="1,59 m³" mono />
+          <Meta label="Gewicht-Limit"       value="700 kg (soft)" mono />
         </div>
       </div>
     </Card>
@@ -302,27 +374,15 @@ function AuslastungCard({ pct }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════ */
-function CategoriesCard({ pallets }) {
-  const totals = {};
-  let grand = 0;
-  pallets.forEach((p) => {
-    totals[p.category] = (totals[p.category] || 0) + p.units;
-    grand += p.units;
-  });
-  const segments = Object.entries(totals)
-    .sort((a, b) => b[1] - a[1])
-    .map(([cat, units]) => ({
-      cat,
-      units,
-      pct: units / grand,
-      meta: CAT[cat] || CAT.SONSTIGE,
-    }));
+function LevelsCard({ pallets }) {
+  const distribution = useMemo(() => levelDistribution(pallets), [pallets]);
+  const grand = distribution.reduce((s, d) => s + d.units, 0);
 
   return (
     <Card style={{ padding: '20px 24px' }}>
       <SectionHeader
-        title="Kategorien"
-        sub={`Verteilung über ${grand.toLocaleString('de-DE')} Einheiten.`}
+        title="Levels"
+        sub={`Verteilung über ${grand.toLocaleString('de-DE')} Einheiten · Stapelreihenfolge unten → oben.`}
       />
 
       {/* Stacked bar */}
@@ -335,28 +395,28 @@ function CategoriesCard({ pallets }) {
         marginTop: 4,
         marginBottom: 16,
       }}>
-        {segments.map((s, i) => (
+        {distribution.map((s, i) => (
           <div
-            key={s.cat}
-            title={`${s.meta.name}: ${s.units.toLocaleString('de-DE')} (${Math.round(s.pct * 100)}%)`}
+            key={s.level}
+            title={`L${s.level} ${s.meta.name}: ${s.units.toLocaleString('de-DE')} (${Math.round(s.pct * 100)}%)`}
             style={{
               width: `${s.pct * 100}%`,
               background: s.meta.color,
-              borderRight: i < segments.length - 1 ? `2px solid ${T.bg.surface}` : 'none',
+              borderRight: i < distribution.length - 1 ? `2px solid ${T.bg.surface}` : 'none',
               transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           />
         ))}
       </div>
 
-      {/* Legend */}
+      {/* Legend — 2 columns of pills */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(2, 1fr)',
         gap: 8,
       }}>
-        {segments.map((s) => (
-          <div key={s.cat} style={{
+        {distribution.map((s) => (
+          <div key={s.level} style={{
             display: 'flex',
             alignItems: 'center',
             gap: 10,
@@ -366,11 +426,19 @@ function CategoriesCard({ pallets }) {
             borderRadius: T.radius.md,
           }}>
             <span style={{
-              width: 8, height: 8,
+              width: 22, height: 22,
               background: s.meta.color,
-              borderRadius: 2,
+              borderRadius: T.radius.sm,
               flexShrink: 0,
-            }} />
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#fff',
+              fontSize: 11,
+              fontWeight: 700,
+            }}>
+              {s.level}
+            </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{
                 fontSize: 12.5,
@@ -383,7 +451,7 @@ function CategoriesCard({ pallets }) {
                 {s.meta.name}
               </div>
               <div style={{ fontSize: 11, color: T.text.subtle, marginTop: 1 }}>
-                {s.cat}
+                Level {s.level}
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
@@ -450,9 +518,8 @@ function CheckRow({ ok, label, detail }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════ */
-function PalletRow({ pallet, index, items, eskuAssigned, isExpanded, onToggle, isLast }) {
-  const cat = CAT[pallet.category] || CAT.SONSTIGE;
-  const fill = Math.round(pallet.fillPct * 100);
+function PalletRow({ pallet, index, items, eskuAssigned, palletState, isExpanded, onToggle, isLast }) {
+  const meta = LEVEL_META[pallet.level] || LEVEL_META[1];
   return (
     <>
       <div
@@ -460,11 +527,12 @@ function PalletRow({ pallet, index, items, eskuAssigned, isExpanded, onToggle, i
         style={{
           display: 'flex',
           alignItems: 'center',
-          padding: '14px 20px',
+          padding: '10px 20px',
           borderBottom: !isLast && !isExpanded ? `1px solid ${T.border.subtle}` : 'none',
           background: isExpanded ? T.bg.surface2 : T.bg.surface,
           cursor: 'pointer',
           transition: 'background 150ms',
+          gap: 0,
         }}
         onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = T.bg.surface2; }}
         onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = T.bg.surface; }}
@@ -481,37 +549,30 @@ function PalletRow({ pallet, index, items, eskuAssigned, isExpanded, onToggle, i
         }}>
           {pallet.id}
         </span>
-        <span style={{ flex: '0 0 160px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Badge color={cat.color} bg={cat.bg} text={cat.text}>
-            {pallet.category}
+
+        {/* Mini stack-pyramid */}
+        <span style={{ flex: '0 0 70px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+          <PalletStackViz palletState={palletState} size="row" />
+        </span>
+
+        {/* Top-level badge */}
+        <span style={{ flex: '0 0 100px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Badge color={meta.color} bg={meta.bg} text={meta.text}>
+            L{pallet.level} {meta.shortName}
           </Badge>
+          {pallet.isSingleSku && (
+            <Badge tone="warn">Single</Badge>
+          )}
           {eskuAssigned.length > 0 && (
-            <Badge tone="accent">+{eskuAssigned.length} ESKU</Badge>
+            <Badge tone="accent">+{eskuAssigned.length}</Badge>
           )}
         </span>
-        <span style={{ flex: '0 0 90px', fontSize: 13.5, color: T.text.secondary, fontVariantNumeric: 'tabular-nums' }}>
+
+        <span style={{ flex: '0 0 80px', fontSize: 13.5, color: T.text.secondary, fontVariantNumeric: 'tabular-nums' }}>
           {pallet.articles}
         </span>
-        <span style={{ flex: '0 0 110px', fontSize: 13.5, color: T.text.secondary, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ flex: '0 0 90px', fontSize: 13.5, color: T.text.secondary, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
           {pallet.units.toLocaleString('de-DE')}
-        </span>
-        <span style={{ flex: '0 0 130px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{
-            width: 60,
-            height: 6,
-            background: T.bg.surface3,
-            borderRadius: T.radius.full,
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              width: `${Math.min(100, fill)}%`,
-              height: '100%',
-              background: cat.color,
-            }} />
-          </div>
-          <span style={{ fontSize: 12, color: T.text.subtle, fontVariantNumeric: 'tabular-nums' }}>
-            {fill}%
-          </span>
         </span>
         <span style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {pallet.formats.slice(0, 3).map((f) => (
@@ -537,115 +598,285 @@ function PalletRow({ pallet, index, items, eskuAssigned, isExpanded, onToggle, i
       </div>
 
       {isExpanded && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            padding: '8px 20px 20px 60px',
-            background: T.bg.surface2,
-            borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
-            cursor: 'default',
-          }}
-        >
-          <ItemTable items={items} />
-          {eskuAssigned.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <div style={{
-                fontSize: 11.5,
-                fontWeight: 600,
-                color: T.accent.main,
-                marginBottom: 8,
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-              }}>
-                Einzelne SKU · {eskuAssigned.length} zugewiesen
-              </div>
-              <ItemTable items={eskuAssigned} accent />
-            </div>
-          )}
-        </div>
+        <ExpandedPallet
+          items={items}
+          eskuAssigned={eskuAssigned}
+          palletState={palletState}
+          isLast={isLast}
+        />
       )}
     </>
   );
 }
 
-function ItemTable({ items, accent }) {
+function ExpandedPallet({ items, eskuAssigned, palletState, isLast }) {
   return (
-    <div style={{
-      background: T.bg.surface,
-      border: `1px solid ${T.border.primary}`,
-      borderRadius: T.radius.md,
-      overflow: 'hidden',
-    }}>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '40px minmax(0, 2.4fr) 1.2fr 1.2fr 80px',
-        padding: '8px 14px',
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        padding: '20px 20px 24px 60px',
         background: T.bg.surface2,
-        borderBottom: `1px solid ${T.border.primary}`,
-        fontSize: 11,
-        fontWeight: 500,
-        color: T.text.subtle,
-      }}>
-        <span>#</span>
-        <span>Name</span>
-        <span>Code</span>
-        <span>Use-Item</span>
-        <span style={{ textAlign: 'right' }}>Menge</span>
+        borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
+        cursor: 'default',
+        display: 'grid',
+        gridTemplateColumns: '220px 1fr',
+        gap: 24,
+        alignItems: 'flex-start',
+      }}
+    >
+      <PalletStackViz palletState={palletState} size="card" />
+
+      <div>
+        <ItemTable items={items} title="Mixed-Inhalt (Phase 1)" />
+        {eskuAssigned.length > 0 && (
+          <div style={{ marginTop: 18 }}>
+            <div style={{
+              fontSize: 11.5,
+              fontWeight: 600,
+              color: T.accent.main,
+              marginBottom: 8,
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+            }}>
+              Einzelne SKU · {eskuAssigned.length} zugewiesen (Phase 2)
+            </div>
+            <ItemTable items={eskuAssigned} accent showLevel showFlags />
+          </div>
+        )}
       </div>
-      {items.map((it, i) => (
-        <div key={i} style={{
-          display: 'grid',
-          gridTemplateColumns: '40px minmax(0, 2.4fr) 1.2fr 1.2fr 80px',
-          padding: '8px 14px',
-          borderBottom: i < items.length - 1 ? `1px solid ${T.border.subtle}` : 'none',
-          alignItems: 'center',
-          fontSize: 13,
-          color: T.text.secondary,
-          background: accent ? T.accent.bg : T.bg.surface,
-        }}>
-          <span style={{ fontSize: 11, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
-            {String(i + 1).padStart(2, '0')}
-          </span>
-          <span style={{
-            color: T.text.primary,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }} title={it.title}>
-            {(it.title || '').length > 50 ? (it.title || '').slice(0, 47) + '…' : (it.title || '—')}
-          </span>
-          <span style={{
-            fontFamily: T.font.mono,
-            fontSize: 12,
-            color: T.text.muted,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {it.fnsku || it.sku || '—'}
-          </span>
-          <span style={{
-            fontFamily: T.font.mono,
-            fontSize: 12,
-            color: T.text.subtle,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {it.useItem || '—'}
-          </span>
-          <span style={{
-            fontVariantNumeric: 'tabular-nums',
-            fontWeight: 600,
-            textAlign: 'right',
-            color: T.text.primary,
-          }}>
-            {it.units || 0}
-          </span>
-        </div>
-      ))}
     </div>
   );
 }
 
+function ItemTable({ items, accent, showLevel, showFlags, title }) {
+  return (
+    <div>
+      {title && (
+        <div style={{
+          fontSize: 11.5,
+          fontWeight: 600,
+          color: T.text.subtle,
+          marginBottom: 8,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+        }}>
+          {title}
+        </div>
+      )}
+      <div style={{
+        background: T.bg.surface,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: T.radius.md,
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: showLevel
+            ? '40px minmax(0, 2fr) 1fr 1fr 50px 80px 60px'
+            : '40px minmax(0, 2.4fr) 1.2fr 1.2fr 80px',
+          padding: '8px 14px',
+          background: T.bg.surface2,
+          borderBottom: `1px solid ${T.border.primary}`,
+          fontSize: 11,
+          fontWeight: 500,
+          color: T.text.subtle,
+          gap: 8,
+        }}>
+          <span>#</span>
+          <span>Name</span>
+          <span>Code</span>
+          <span>Use-Item</span>
+          {showLevel && <span style={{ textAlign: 'center' }}>L</span>}
+          {showFlags && <span style={{ textAlign: 'center' }}>Flags</span>}
+          <span style={{ textAlign: 'right' }}>Menge</span>
+        </div>
+        {items.map((it, i) => {
+          const lvl = it.placementMeta ? (it.level || 1) : null;
+          const meta = lvl ? LEVEL_META[lvl] : null;
+          const flags = it.placementMeta?.flags || [];
+          return (
+            <div key={i} style={{
+              display: 'grid',
+              gridTemplateColumns: showLevel
+                ? '40px minmax(0, 2fr) 1fr 1fr 50px 80px 60px'
+                : '40px minmax(0, 2.4fr) 1.2fr 1.2fr 80px',
+              padding: '8px 14px',
+              borderBottom: i < items.length - 1 ? `1px solid ${T.border.subtle}` : 'none',
+              alignItems: 'center',
+              fontSize: 13,
+              color: T.text.secondary,
+              background: accent ? T.accent.bg : T.bg.surface,
+              gap: 8,
+            }}>
+              <span style={{ fontSize: 11, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <span style={{
+                color: T.text.primary,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }} title={it.title}>
+                {(it.title || '').length > 50 ? (it.title || '').slice(0, 47) + '…' : (it.title || '—')}
+                {it.placementMeta && (
+                  <ScoreBreakdown breakdown={it.placementMeta.breakdown} score={it.placementMeta.score} />
+                )}
+              </span>
+              <span style={{
+                fontFamily: T.font.mono,
+                fontSize: 12,
+                color: T.text.muted,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {it.fnsku || it.sku || '—'}
+              </span>
+              <span style={{
+                fontFamily: T.font.mono,
+                fontSize: 12,
+                color: T.text.subtle,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {it.useItem || '—'}
+              </span>
+              {showLevel && (
+                <span style={{ textAlign: 'center' }}>
+                  {meta && (
+                    <span style={{
+                      display: 'inline-flex',
+                      width: 22, height: 22,
+                      borderRadius: T.radius.sm,
+                      background: meta.color,
+                      color: '#fff',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      {lvl}
+                    </span>
+                  )}
+                </span>
+              )}
+              {showFlags && (
+                <span style={{ textAlign: 'center', display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {flags.length === 0 ? (
+                    <span style={{ color: T.text.faint, fontSize: 12 }}>OK</span>
+                  ) : (
+                    flags.map((f, j) => (
+                      <span key={j} title={f} style={{
+                        fontSize: 9,
+                        fontWeight: 700,
+                        padding: '1px 4px',
+                        borderRadius: 2,
+                        background: f === 'NO_VALID_PLACEMENT' ? T.status.danger.main : T.status.warn.main,
+                        color: '#fff',
+                      }}>
+                        {f.replace('OVERLOAD-', '').replace('NO_VALID_PLACEMENT', '!!')}
+                      </span>
+                    ))
+                  )}
+                </span>
+              )}
+              <span style={{
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: 600,
+                textAlign: 'right',
+                color: T.text.primary,
+              }}>
+                {it.units || 0}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ScoreBreakdown({ breakdown, score }) {
+  const [open, setOpen] = useState(false);
+  const reasons = [];
+  if (breakdown.useItemMatch)        reasons.push(['useItem-Match', '+50000']);
+  if (breakdown.formatMatch)         reasons.push(['Format-Match', '+10000']);
+  if (breakdown.brandMatch)          reasons.push(['Brand-Match', '+3000']);
+  if (breakdown.fnskuMatch)          reasons.push(['Same FNSKU on pallet', '+1000']);
+  if (breakdown.levelMatch)          reasons.push(['Same Level on pallet', '+500']);
+  if (breakdown.monoLevelConflict)   reasons.push(['Mono-Level conflict', '−10000']);
+  if (breakdown.multiLevelMismatch)  reasons.push(['Multi-Level mismatch', '−200']);
+  if (breakdown.fillScore)           reasons.push([`Sweet-Spot 85% (fill score)`, `+${breakdown.fillScore}`]);
+
+  return (
+    <span style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        style={{
+          width: 14, height: 14,
+          borderRadius: '50%',
+          background: T.bg.surface3,
+          border: 'none',
+          color: T.text.subtle,
+          fontSize: 9,
+          cursor: 'help',
+          padding: 0,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+        title="Score breakdown"
+      >
+        ℹ
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute',
+          left: 18, top: -6,
+          zIndex: 60,
+          background: T.bg.surface,
+          border: `1px solid ${T.border.strong}`,
+          borderRadius: T.radius.sm,
+          boxShadow: T.shadow.raised,
+          padding: '8px 10px',
+          fontSize: 11,
+          minWidth: 220,
+          color: T.text.primary,
+          fontFamily: T.font.ui,
+          pointerEvents: 'none',
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            Score: {score === -Infinity ? '−∞ (kein Match)' : score}
+          </div>
+          {reasons.length === 0 && (
+            <div style={{ color: T.text.subtle }}>Nur Geometrie (Sweet-Spot).</div>
+          )}
+          {reasons.map(([label, val], i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span style={{ color: val.startsWith('−') ? T.status.danger.text : T.text.secondary }}>
+                {label}
+              </span>
+              <span style={{
+                fontVariantNumeric: 'tabular-nums',
+                fontWeight: 600,
+                color: val.startsWith('−') ? T.status.danger.text : T.text.primary,
+              }}>
+                {val}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </span>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════════════ */
-function StickyBar({ validated, stats, onStartFocus }) {
+function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus }) {
+  const hasFlags = overloadCount > 0 || noValidCount > 0;
   return (
     <div style={{
       position: 'fixed',
@@ -681,6 +912,24 @@ function StickyBar({ validated, stats, onStartFocus }) {
               : 'Validierung erforderlich'}
           </span>
         </span>
+        {hasFlags && (
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 12,
+            color: T.status.warn.text,
+            fontWeight: 600,
+            padding: '4px 10px',
+            background: T.status.warn.bg,
+            borderRadius: T.radius.sm,
+            border: `1px solid ${T.status.warn.border}`,
+          }}>
+            ⚠ {overloadCount > 0 && `${overloadCount} OVERLOAD`}
+            {overloadCount > 0 && noValidCount > 0 && ' · '}
+            {noValidCount > 0 && `${noValidCount} NO_VALID`}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 12.5, color: T.text.subtle }}>
           Geschätzt {formatDur(stats.durationSec)}
@@ -711,6 +960,7 @@ const tableHeader = {
   fontWeight: 500,
   color: T.text.subtle,
   letterSpacing: '0.02em',
+  gap: 0,
 };
 
 const fmtTag = {

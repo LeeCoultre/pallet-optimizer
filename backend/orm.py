@@ -19,8 +19,10 @@ from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum as SAEnum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -29,7 +31,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -196,3 +198,61 @@ class AuditLog(Base):
 
     def __repr__(self) -> str:
         return f"<AuditLog {self.action} by {self.user_id}>"
+
+
+# ─── sku_dimensions ──────────────────────────────────────────────────
+# Source of truth for L×B×H (cm) and weight (kg) per Einheit, used by
+# the Einzelne-SKU distributor to compute exact carton volumes/weights.
+# Loaded by the admin via xlsx upload. Lookup waterfall: fnsku → sku → ean.
+
+class SkuDimension(Base):
+    __tablename__ = "sku_dimensions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # One row = one physical product. Each key type is an array because
+    # the same packaging often ships under several Amazon FNSKUs and
+    # several merchant SKUs (e.g. PRIME vs EV channels).
+    fnskus: Mapped[list[str]] = mapped_column(
+        ARRAY(String(20)), nullable=False, server_default=text("'{}'::varchar[]")
+    )
+    skus: Mapped[list[str]] = mapped_column(
+        ARRAY(String(50)), nullable=False, server_default=text("'{}'::varchar[]")
+    )
+    eans: Mapped[list[str]] = mapped_column(
+        ARRAY(String(20)), nullable=False, server_default=text("'{}'::varchar[]")
+    )
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    length_cm: Mapped[float] = mapped_column(Float, nullable=False)
+    width_cm: Mapped[float] = mapped_column(Float, nullable=False)
+    height_cm: Mapped[float] = mapped_column(Float, nullable=False)
+    weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
+
+    source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    updated_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "cardinality(fnskus) + cardinality(skus) + cardinality(eans) >= 1",
+            name="ck_sku_dimensions_has_any_key",
+        ),
+        Index("ix_sku_dimensions_fnskus", "fnskus", postgresql_using="gin"),
+        Index("ix_sku_dimensions_skus", "skus", postgresql_using="gin"),
+        Index("ix_sku_dimensions_eans", "eans", postgresql_using="gin"),
+    )
+
+    def __repr__(self) -> str:
+        key = (
+            (self.fnskus and self.fnskus[0])
+            or (self.skus and self.skus[0])
+            or (self.eans and self.eans[0])
+            or "?"
+        )
+        return f"<SkuDimension {key} {self.length_cm}×{self.width_cm}×{self.height_cm} cm>"

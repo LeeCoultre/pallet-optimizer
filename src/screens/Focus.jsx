@@ -2,19 +2,15 @@
    Design System v3 (siehe DESIGN.md). */
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
-import { focusItemView } from '../utils/auftragHelpers.js';
+import {
+  focusItemView, sortItemsForPallet, distributeEinzelneSku,
+  enrichItemDims, LEVEL_META,
+} from '../utils/auftragHelpers.js';
+import { lookupSkuDimensions } from '../marathonApi.js';
 import { detectWiederholt } from '../utils/wiederholtLogic.js';
 import { Page, Card, Badge, Button, Meta, T } from '../components/ui.jsx';
-
-const CAT = {
-  THERMO:     { color: '#3B82F6', bg: '#EFF6FF', text: '#1D4ED8', name: 'Thermorollen' },
-  PRODUKTION: { color: '#10B981', bg: '#ECFDF5', text: '#047857', name: 'Big Bags / Produktion' },
-  HEIPA:      { color: '#06B6D4', bg: '#ECFEFF', text: '#0E7490', name: 'Heipa' },
-  VEIT:       { color: '#A855F7', bg: '#FAF5FF', text: '#7E22CE', name: 'Veit' },
-  TACHO:      { color: '#F97316', bg: '#FFF7ED', text: '#C2410C', name: 'Tachorollen' },
-  SONSTIGE:   { color: '#71717A', bg: '#FAFAFA', text: '#3F3F46', name: 'Sonstige' },
-};
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function FocusScreen() {
@@ -24,7 +20,59 @@ export default function FocusScreen() {
     completeCurrentItem, cancelCurrent, goToStep,
   } = useAppState();
 
-  const rawPallets = current?.parsed?.pallets || [];
+  // Pull dim/weight enrichment from the same lookup Pruefen uses.
+  // Cached forever per Auftrag — these never change mid-workflow.
+  const sourcePallets = current?.parsed?.pallets || [];
+  const rawEsku       = current?.parsed?.einzelneSkuItems || [];
+  const allItems = useMemo(
+    () => [...sourcePallets.flatMap((p) => p.items || []), ...rawEsku],
+    [sourcePallets, rawEsku],
+  );
+  const dimsQ = useQuery({
+    queryKey: ['sku-dims', current?.id],
+    queryFn: () => enrichItemDims(allItems, lookupSkuDimensions),
+    enabled: !!current?.id && allItems.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+  const enrichedById = useMemo(() => {
+    if (!dimsQ.data) return null;
+    const map = new Map();
+    for (const it of dimsQ.data) {
+      const k = it.fnsku || it.sku || it.title;
+      if (k) map.set(k, it);
+    }
+    return map;
+  }, [dimsQ.data]);
+
+  // Sort items within each pallet for picking flow + APPEND distributed
+  // ESKU after the Mixed items (Phase 2 in the SOP). The injected ESKU
+  // carry placementMeta so the operator sees OVERLOAD / NO_VALID flags
+  // mid-workflow without having to revisit Pruefen.
+  const enrichedSourcePallets = useMemo(() => {
+    if (!enrichedById) return sourcePallets;
+    return sourcePallets.map((p) => ({
+      ...p,
+      items: (p.items || []).map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it),
+    }));
+  }, [sourcePallets, enrichedById]);
+  const enrichedEsku = useMemo(() => {
+    if (!enrichedById) return rawEsku;
+    return rawEsku.map((it) => enrichedById.get(it.fnsku || it.sku || it.title) || it);
+  }, [rawEsku, enrichedById]);
+  const distribution = useMemo(
+    () => distributeEinzelneSku(enrichedSourcePallets, enrichedEsku),
+    [enrichedSourcePallets, enrichedEsku],
+  );
+
+  const rawPallets = useMemo(
+    () => enrichedSourcePallets.map((p) => {
+      const sortedMixed = sortItemsForPallet(p.items || []);
+      const eskuOnP = (distribution.byPalletId[p.id] || []);   // already in level-asc order
+      // Mixed first (Phase 1), ESKU last (Phase 2) — matches SOP picking order.
+      return { ...p, items: [...sortedMixed, ...eskuOnP] };
+    }),
+    [enrichedSourcePallets, distribution],
+  );
   const palletIdx  = Math.min(current?.currentPalletIdx ?? 0, Math.max(0, rawPallets.length - 1));
   const itemIdx    = current?.currentItemIdx ?? 0;
   const completedKeysObj = current?.completedKeys || {};
@@ -105,7 +153,10 @@ export default function FocusScreen() {
       return;
     }
     const hit = detectWiederholt(rawPallets, palletIdx, itemIdx);
-    completeCurrentItem();
+    // Pass effective items length + current item — state.jsx only sees
+    // parser's Mixed items, so without these overrides Fertig on a
+    // Phase-2 ESKU position would silently no-op.
+    completeCurrentItem(rawPallet.items.length, rawItem);
     if (hit) setWiederholt(hit);
   }, [rawPallet, rawItem, rawPallets, palletIdx, itemIdx, completeCurrentItem,
       isLastItemOfPallet, allPalletCopied]);
@@ -116,6 +167,17 @@ export default function FocusScreen() {
     const t = setTimeout(() => setWiederholt(null), 5000);
     return () => clearTimeout(t);
   }, [wiederholt]);
+
+  /* Reset transient "just-copied" markers on every item change. Without
+     this, navigating from item A (FNSKU "X001ABC") to item B with the
+     same code (e.g. another carton in the same ESKU group) leaves the
+     CodeCard rendering as "✓ kopiert" — operator sees a false positive
+     and might skip a real copy. The chip-strip state (copiedKeys) is
+     position-based and intentionally persists. */
+  useEffect(() => {
+    setCopiedCode(null);
+    setFlashUse(null);
+  }, [palletIdx, itemIdx]);
 
   /* All-done detection */
   useEffect(() => {
@@ -189,7 +251,7 @@ export default function FocusScreen() {
     );
   }
 
-  const cat = CAT[item.category] || CAT.SONSTIGE;
+  const cat = item.levelMeta || LEVEL_META[1];
 
   return (
     <Page>
@@ -247,10 +309,35 @@ export default function FocusScreen() {
             </span>
           </span>
           <span style={{ flex: 1 }} />
+          {item.isEsku && (
+            <Badge tone="accent">
+              EINZELNE SKU · Phase 2
+            </Badge>
+          )}
           <Badge color={cat.color} bg={cat.bg} text={cat.text}>
-            {cat.name}
+            L{item.level} · {cat.name}
           </Badge>
         </div>
+
+        {/* ESKU placement warnings */}
+        {item.isEsku && item.placementFlags?.length > 0 && (
+          <div style={{
+            padding: '10px 14px',
+            background: item.placementFlags.includes('NO_VALID_PLACEMENT')
+              ? T.status.danger.bg : T.status.warn.bg,
+            border: `1px solid ${item.placementFlags.includes('NO_VALID_PLACEMENT')
+              ? T.status.danger.border : T.status.warn.border}`,
+            borderRadius: T.radius.sm,
+            color: item.placementFlags.includes('NO_VALID_PLACEMENT')
+              ? T.status.danger.text : T.status.warn.text,
+            fontSize: 13,
+            fontWeight: 500,
+          }}>
+            {item.placementFlags.includes('NO_VALID_PLACEMENT')
+              ? '🚨 NO_VALID_PLACEMENT — Bridge eskalieren vor Verarbeitung'
+              : `⚠ ${item.placementFlags.join(' · ')} — Bridge informieren`}
+          </div>
+        )}
 
         {/* Hero — product name */}
         <div key={`name-${pallet.id}-${itemIdx}`} className="mr-rise">
@@ -314,7 +401,7 @@ export default function FocusScreen() {
               letterSpacing: '0.04em',
               marginBottom: 8,
             }}>
-              Menge
+              {item.isEsku ? 'FBA-Kartons' : 'Menge'}
             </div>
             <div style={{
               fontFamily: T.font.ui,
@@ -325,14 +412,16 @@ export default function FocusScreen() {
               color: T.text.primary,
               fontVariantNumeric: 'tabular-nums',
             }}>
-              {item.units}
+              {item.isEsku ? item.eskuCartons : item.units}
             </div>
             <div style={{
               marginTop: 6,
               fontSize: 13,
               color: T.text.subtle,
             }}>
-              Kartons
+              {item.isEsku
+                ? `je eigenes FBA Box ID Label — ${item.units} Einheiten gesamt`
+                : 'Kartons'}
             </div>
           </div>
 
@@ -343,7 +432,14 @@ export default function FocusScreen() {
             flexDirection: 'column',
             gap: 16,
           }}>
-            {item.rollen ? (
+            {item.isEsku ? (
+              <>
+                <Meta label="Pro Karton"
+                      value={`${item.eskuPacksPerCarton ?? '—'} Einheiten`} mono />
+                <Meta label="Einheiten gesamt"
+                      value={item.units.toLocaleString('de-DE')} mono />
+              </>
+            ) : item.rollen ? (
               <>
                 <Meta label="Pro Karton" value={`${item.rollen} ${item.rollenUnit || 'Rollen'}`} mono />
                 <Meta label={`${item.rollenUnit || 'Rollen'} gesamt`} value={(item.units * item.rollen).toLocaleString('de-DE')} mono />
@@ -444,6 +540,8 @@ function PalletFlow({ pallets, currentIdx }) {
    only the explicit copy action does. Click a chip to jump to it. */
 function ItemFlow({ items, palletIdx, currentIdx, copiedKeys, onPick }) {
   if (!items || items.length === 0) return null;
+  const eskuCount = items.filter((it) => it.isEinzelneSku).length;
+  const mixedCount = items.length - eskuCount;
   return (
     <div style={{
       position: 'sticky',
@@ -466,21 +564,32 @@ function ItemFlow({ items, palletIdx, currentIdx, copiedKeys, onPick }) {
         marginRight: 4,
       }}>
         Artikel
+        {eskuCount > 0 && (
+          <span style={{ marginLeft: 6, color: T.text.faint, textTransform: 'none' }}>
+            ({mixedCount} mixed · <span style={{ color: T.accent.main }}>⬢ {eskuCount} ESKU</span>)
+          </span>
+        )}
       </span>
       {items.map((it, i) => {
         const isCopied = copiedKeys?.has?.(`${palletIdx}|${i}`);
         const isActive = i === currentIdx;
+        const isEsku   = it.isEinzelneSku === true;
+        const hasFlags = (it.placementMeta?.flags || []).length > 0;
         return (
           <ItemChip
             key={i}
             idx={i + 1}
             isActive={isActive}
             isDone={isCopied}
+            isEsku={isEsku}
+            hasFlags={hasFlags}
             onClick={() => onPick(i)}
             title={
               `${it.title || it.fnsku || it.sku || ''}\n` +
+              `${isEsku ? '⬢ Einzelne SKU\n' : ''}` +
               `${isCopied ? '✓ Code kopiert' : '✗ noch nicht kopiert'}` +
-              `${isActive ? ' · aktiv' : ''}`
+              `${isActive ? ' · aktiv' : ''}` +
+              `${hasFlags ? '\n⚠ ' + it.placementMeta.flags.join(', ') : ''}`
             }
           />
         );
@@ -489,7 +598,7 @@ function ItemFlow({ items, palletIdx, currentIdx, copiedKeys, onPick }) {
   );
 }
 
-function ItemChip({ idx, isActive, isDone, onClick, title }) {
+function ItemChip({ idx, isActive, isDone, isEsku, hasFlags, onClick, title }) {
   const c = isDone
     ? { bg: T.status.success.bg,  border: T.status.success.border, text: T.status.success.text }
     : { bg: T.status.danger.bg,   border: T.status.danger.border,  text: T.status.danger.text  };
@@ -498,11 +607,13 @@ function ItemChip({ idx, isActive, isDone, onClick, title }) {
       onClick={onClick}
       title={title}
       style={{
+        position: 'relative',
         minWidth: 30,
         height: 26,
-        padding: '0 8px',
+        padding: isEsku ? '0 8px 0 14px' : '0 8px',  // room for ⬢ marker
         background: c.bg,
-        border: `${isActive ? 2 : 1}px solid ${isActive ? T.accent.main : c.border}`,
+        // ESKU chips use a dashed border to set them apart from Mixed
+        border: `${isActive ? 2 : 1}px ${isEsku ? 'dashed' : 'solid'} ${isActive ? T.accent.main : c.border}`,
         borderRadius: T.radius.sm,
         color: c.text,
         fontFamily: T.font.mono,
@@ -518,7 +629,27 @@ function ItemChip({ idx, isActive, isDone, onClick, title }) {
         justifyContent: 'center',
       }}
     >
+      {isEsku && (
+        <span style={{
+          position: 'absolute',
+          left: 4, top: '50%',
+          transform: 'translateY(-50%)',
+          fontSize: 9,
+          color: T.accent.main,
+          opacity: 0.85,
+        }}>⬢</span>
+      )}
       {idx}
+      {hasFlags && (
+        <span style={{
+          position: 'absolute',
+          top: -3, right: -3,
+          width: 8, height: 8,
+          borderRadius: '50%',
+          background: T.status.warn.main,
+          border: `1px solid ${T.bg.surface}`,
+        }} />
+      )}
     </button>
   );
 }

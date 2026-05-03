@@ -143,3 +143,75 @@ export const adminListAudit = (params = {}) =>
 
 export const adminGetStats = () =>
   call('GET', '/api/admin/stats');
+
+/* ─── SKU Dimensions (lookup is auth, admin endpoints require role) ─── */
+
+/* Batch lookup. `keys` is a flat array of FNSKU/SKU/EAN strings.
+   Backend probes each in parallel; same row may bind under multiple keys. */
+export const lookupSkuDimensions = async (keys = []) => {
+  const clean = (keys || []).map((k) => k && String(k).trim()).filter(Boolean);
+  if (clean.length === 0) return { lookups: {}, missing: [] };
+  const q = clean.map((k) => `keys=${encodeURIComponent(k)}`).join('&');
+  return call('GET', `/api/sku-dimensions/lookup?${q}`);
+};
+
+export const adminListSkuDimensions = (params = {}) => {
+  const snake = {};
+  for (const [k, v] of Object.entries(params)) {
+    snake[k.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())] = v;
+  }
+  return call('GET', `/api/admin/sku-dimensions${qs(snake)}`);
+};
+
+export const adminCreateSkuDimension = (payload) =>
+  call('POST', '/api/admin/sku-dimensions', payload);
+
+export const adminUpdateSkuDimension = (id, payload) =>
+  call('PATCH', `/api/admin/sku-dimensions/${id}`, payload);
+
+export const adminDeleteSkuDimension = (id) =>
+  call('DELETE', `/api/admin/sku-dimensions/${id}`);
+
+/* Download current DB state as .xlsx. Triggers browser download via
+   Blob URL — the auth path bypasses the JSON wrapper because the body
+   is binary, not JSON. */
+export const adminExportSkuDimensions = async () => {
+  const headers = {};
+  const token = await getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/admin/sku-dimensions/export`, { headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new ApiError(res.status, err?.detail ?? 'Export fehlgeschlagen');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  // Use server's Content-Disposition filename if present, else a default
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="?([^";]+)"?/);
+  a.download = m ? m[1] : `dimensions_export.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return { ok: true };
+};
+
+/* multipart upload — bypasses the JSON body path; auth header still applied. */
+export const adminImportSkuDimensions = async (file) => {
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers = {};
+  const token = await getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/admin/sku-dimensions/import`, {
+    method: 'POST',
+    headers,
+    body: fd,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(res.status, data?.detail ?? data);
+  return snakeToCamel(data);
+};

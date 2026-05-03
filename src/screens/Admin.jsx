@@ -1,7 +1,7 @@
 /* Admin panel — gated by useMe().role === 'admin'.
    Four tabs: Aufträge | Benutzer | Audit-Log | KPIs. */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer,
@@ -18,12 +18,14 @@ import {
 import {
   Page, Topbar, Card, SectionHeader, Eyebrow, PageH1, Lead, Badge, Kpi, T,
 } from '../components/ui.jsx';
+import DimensionsTab from './admin/DimensionsTab.jsx';
 
 const TABS = [
-  { id: 'auftraege', label: 'Aufträge'   },
-  { id: 'users',     label: 'Benutzer'   },
-  { id: 'audit',     label: 'Audit-Log'  },
-  { id: 'kpi',       label: 'KPIs'       },
+  { id: 'auftraege',  label: 'Aufträge'   },
+  { id: 'users',      label: 'Benutzer'   },
+  { id: 'audit',      label: 'Audit-Log'  },
+  { id: 'kpi',        label: 'KPIs'       },
+  { id: 'dimensions', label: 'Dimensions' },
 ];
 
 const PAGE_SIZE = 25;
@@ -62,10 +64,11 @@ export default function AdminScreen() {
         <TabBar tabs={TABS} active={tab} onSelect={setTab} />
 
         <div style={{ marginTop: 24 }}>
-          {tab === 'auftraege' && <AuftraegeTab />}
-          {tab === 'users'     && <UsersTab />}
-          {tab === 'audit'     && <AuditTab />}
-          {tab === 'kpi'       && <KpiTab />}
+          {tab === 'auftraege'  && <AuftraegeTab />}
+          {tab === 'users'      && <UsersTab />}
+          {tab === 'audit'      && <AuditTab />}
+          {tab === 'kpi'        && <KpiTab />}
+          {tab === 'dimensions' && <DimensionsTab />}
         </div>
       </main>
     </Page>
@@ -415,6 +418,7 @@ function TopUsersChart({ users }) {
     </div>
   );
 }
+
 
 /* ════════════════════════════════════════════════════════════════════════
    SHARED UI HELPERS

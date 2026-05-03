@@ -77,7 +77,7 @@ Schema versioned via Alembic. **Migrations live at `backend/alembic/versions/`.*
 .venv/bin/python -m backend.seed                       # legacy seed (4 fake users) — rarely needed in Sprint 2+
 ```
 
-Tables: `users`, `auftraege`, `audit_log`, `alembic_version`. See
+Tables: `users`, `auftraege`, `audit_log`, `sku_dimensions`, `alembic_version`. See
 [backend/orm.py](backend/orm.py) for schema. Hot details:
 - `auftraege` is one row through the whole lifecycle
   (`queued → in_progress → completed`); we don't have separate queue/
@@ -86,6 +86,10 @@ Tables: `users`, `auftraege`, `audit_log`, `alembic_version`. See
   preserves the audit trail (file_name lives in `meta.file_name`).
 - `users.clerk_id` (unique, indexed) maps to Clerk; `email` is unique
   too. INITIAL_ADMIN_EMAIL match drives the first admin promotion.
+- `sku_dimensions` (added in ESKU v2) holds L×B×H + weight per Einheit,
+  keyed by FNSKU OR SKU OR EAN (CHECK constraint enforces ≥1 key).
+  Admins upload via xlsx through Admin → Dimensions; the ESKU
+  distributor batch-fetches at Pruefen mount.
 
 ## Tests
 
@@ -152,6 +156,7 @@ backend/
     history.py         GET/DELETE history (admin-only delete)
     users.py           GET /api/users (open) + GET /api/me (auth)
     admin.py           /api/admin/* — list, role toggle, audit, stats
+    sku_dimensions.py  /api/sku-dimensions/lookup + /api/admin/sku-dimensions/* (xlsx import)
     packing.py         pre-existing CP-SAT solver (unrelated)
     xlsx_import.py     pre-existing
   alembic/             migrations
@@ -191,10 +196,11 @@ src/
 | **1.5** | Bug: one user could claim multiple Auftraege; backend now 409s if caller has another in_progress |
 | **2** | Clerk auth (magic-link, invite-only); lazy user provisioning; admin-only DELETE history; CORS tightening; full admin panel (4 tabs); pytest grew to 30 |
 | **2.5 polish** | Pagination + sortable columns in admin; recharts KPI bar charts |
-| **brand** | New 3-chevron logo on black square; themable accent palette (default `#FF5B1F`) — picker in Einstellungen, 5 shades derived at runtime via CSS vars in `:root`. Removed pallet weight cap (warehouse has no max kg) |
+| **brand** | New 3-chevron logo on black square; themable accent palette (default `#FF5B1F`) — picker in Einstellungen, 5 shades derived at runtime via CSS vars in `:root`. (Pallet weight cap was removed here, but ESKU v2 reintroduced it as a SOFT 700 kg limit — see ESKU v2 row.) |
 | **sidebar** | Collapse toggle 224↔64px (persisted, exposes `--sidebar-width`); CurrentProgress mini-stepper for active workflow; Quick-Start ▶ on hover; native HTML5 DnD reorder; "Heute: X fertig · Yh Zm" line. Build bumped to v2.1.0 |
 | **historie fix** | Sprint 2 trimmed `/api/history` to Summary which broke the row-expand article list. Now expanding a row lazy-fetches Detail via `getAuftrag(id)` and flattens `parsed.pallets[].items` |
 | **focus item-flow** | Sticky strip lists every item of the current pallet as numbered chips. Green = Artikel-Code copied; Red = not yet. Click jumps to item. Pallet transition (Artikel abschließen on last item / arrow-right across boundary) is **blocked** until every item on the current pallet is green |
+| **ESKU v2** | Einzelne-SKU distribution rewritten per SOP v1.1: 6-level physical hierarchy (Thermorollen 1 → Tachorollen 6) replaces old `category`. Hard constraints H1-H4 (level order) + H7 (Single-SKU pallets via `pallet.hasFourSideWarning`). Sweet-Spot 85% scoring kept as tie-breaker on top of useItem/format/brand/FNSKU/level bonuses. Soft 700 kg / 1.59 m³ limits → OVERLOAD-W/-V flags (no block, surface in UI + sticky bar). Pruefen renders a vertical Stack-Pyramide per pallet with hover tooltips + score-breakdown popover for each placed ESKU. Real `L×B×H + Gewicht` from new `sku_dimensions` table (admin uploads `Dimensional_list.xlsx` via new "Dimensions" admin tab); falls back to heuristics when no row. 16 new backend tests. Build bumped to v2.2.0. |
 
 ## What's NOT done (backlog)
 
@@ -269,6 +275,23 @@ proper `rgba(...)` literal.
    and lives in component state, NOT in DB. Reload resets it. If we ever
    want copy state to survive across sessions, sync it to backend (new
    column on `auftraege` or extend `completed_keys`).
+10. **`category` field is dead in v2** — items still have `category` from
+    `parseLagerauftrag.js` (line 253) for historical Aufträge in Historie,
+    but ALL active code reads `level` via `getLevel(item)` /
+    `getDisplayLevel(item)` from `auftragHelpers.js`. The legacy
+    `LagerauftragParser.jsx` (433KB, archive-only) still uses category;
+    don't touch it. ESKU placement scoring lives in
+    `distributeEinzelneSku()` — same name as before but completely
+    rewritten signature: now returns `{ byPalletId, unassigned, reasons,
+    palletStates, overloadCount, noValidCount }`. `palletStates` is what
+    `PalletStackViz` consumes for the vertical pyramid.
+11. **ESKU dimensional data lookup is async** — Pruefen calls
+    `enrichItemDims(items, lookupSkuDimensions)` via TanStack Query (key
+    `['sku-dims', auftragId]`, staleTime 5min). Items WITHOUT a row in
+    `sku_dimensions` fall back to `itemBoxVolCm3()` heuristics +
+    `DEFAULT_KG_PER_CARTON=0.55`. The fallback is silent (no warning) —
+    if a worker complains "the OVERLOAD-W flag is wrong", check first
+    whether the SKU has a row via Admin → Dimensions.
 
 ## Working with Claude in this repo
 

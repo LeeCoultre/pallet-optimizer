@@ -3,21 +3,12 @@
 
 import { useMemo } from 'react';
 import { useAppState } from '../state.jsx';
-import { pruefenView, palletTimingRows, categoryDistribution } from '../utils/auftragHelpers.js';
+import { pruefenView, palletTimingRows, levelDistribution, LEVEL_META } from '../utils/auftragHelpers.js';
 import {
   Page, Topbar, StepperBar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
   Badge, Button, Kpi, T,
 } from '../components/ui.jsx';
-
-const CAT = {
-  THERMO:     { color: '#3B82F6', name: 'Thermorollen' },
-  PRODUKTION: { color: '#10B981', name: 'Big Bags / Produktion' },
-  HEIPA:      { color: '#06B6D4', name: 'Heipa' },
-  VEIT:       { color: '#A855F7', name: 'Veit' },
-  TACHO:      { color: '#F97316', name: 'Tachorollen' },
-  SONSTIGE:   { color: '#71717A', name: 'Sonstige' },
-};
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function AbschlussScreen() {
@@ -42,8 +33,8 @@ export default function AbschlussScreen() {
         units:       view.stats.units,
         cartons:     view.stats.cartons,
       },
-      palletTimings:        palletTimingRows(pallets, current.palletTimings),
-      categoryDistribution: categoryDistribution(pallets),
+      palletTimings:     palletTimingRows(pallets, current.palletTimings),
+      levelDistribution: levelDistribution(pallets),
       queueRemaining:       queue.length,
     };
   }, [current, queue]);
@@ -137,7 +128,7 @@ export default function AbschlussScreen() {
           gap: 12,
         }}>
           <PalletTimings timings={data.palletTimings} totalSec={data.stats.durationSec} />
-          <Categories distribution={data.categoryDistribution} />
+          <Levels distribution={data.levelDistribution} />
         </section>
 
       </main>
@@ -239,7 +230,7 @@ function PalletTimings({ timings, totalSec }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
         {timings.map((t, i) => {
           const pct = maxSec > 0 ? t.durSec / maxSec : 0;
-          const color = (CAT[t.category] || CAT.SONSTIGE).color;
+          const color = (LEVEL_META[t.level] || LEVEL_META[1]).color;
           return (
             <div key={t.id} style={{
               display: 'grid',
@@ -297,13 +288,13 @@ function PalletTimings({ timings, totalSec }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════ */
-function Categories({ distribution }) {
+function Levels({ distribution }) {
   const total = distribution.reduce((s, d) => s + d.units, 0);
   return (
     <Card style={{ padding: '20px 24px' }}>
       <SectionHeader
-        title="Kategorien"
-        sub={`${total.toLocaleString('de-DE')} Einheiten verteilt auf ${distribution.length} Kategorien.`}
+        title="Levels"
+        sub={`${total.toLocaleString('de-DE')} Einheiten auf ${distribution.length} ${distribution.length === 1 ? 'Level' : 'Levels'}.`}
       />
 
       {/* Stacked bar */}
@@ -316,77 +307,80 @@ function Categories({ distribution }) {
         marginTop: 4,
         marginBottom: 12,
       }}>
-        {distribution.map((d, i) => {
-          const color = (CAT[d.cat] || CAT.SONSTIGE).color;
-          return (
-            <div
-              key={d.cat}
-              title={`${d.cat}: ${d.units.toLocaleString('de-DE')} (${Math.round(d.pct * 100)}%)`}
-              style={{
-                width: `${d.pct * 100}%`,
-                background: color,
-                borderRight: i < distribution.length - 1 ? `2px solid ${T.bg.surface}` : 'none',
-                transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
-              }}
-            />
-          );
-        })}
+        {distribution.map((d, i) => (
+          <div
+            key={d.level}
+            title={`L${d.level} ${d.meta.name}: ${d.units.toLocaleString('de-DE')} (${Math.round(d.pct * 100)}%)`}
+            style={{
+              width: `${d.pct * 100}%`,
+              background: d.meta.color,
+              borderRight: i < distribution.length - 1 ? `2px solid ${T.bg.surface}` : 'none',
+              transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
+          />
+        ))}
       </div>
 
       {/* Legend */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto' }}>
-        {distribution.map((d) => {
-          const meta = CAT[d.cat] || CAT.SONSTIGE;
-          return (
-            <div key={d.cat} style={{
-              display: 'flex',
+        {distribution.map((d) => (
+          <div key={d.level} style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '8px 10px',
+            background: T.bg.surface2,
+            border: `1px solid ${T.border.primary}`,
+            borderRadius: T.radius.md,
+          }}>
+            <span style={{
+              width: 22, height: 22,
+              background: d.meta.color,
+              borderRadius: T.radius.sm,
+              flexShrink: 0,
+              display: 'inline-flex',
               alignItems: 'center',
-              gap: 10,
-              padding: '8px 10px',
-              background: T.bg.surface2,
-              border: `1px solid ${T.border.primary}`,
-              borderRadius: T.radius.md,
+              justifyContent: 'center',
+              color: '#fff',
+              fontSize: 11,
+              fontWeight: 700,
+              fontVariantNumeric: 'tabular-nums',
             }}>
-              <span style={{
-                width: 8, height: 8,
-                background: meta.color,
-                borderRadius: 2,
-                flexShrink: 0,
-              }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  color: T.text.primary,
-                }}>
-                  {meta.name}
-                </div>
-                <div style={{ fontSize: 11, color: T.text.subtle, marginTop: 1 }}>
-                  {d.cat}
-                </div>
+              {d.level}
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: T.text.primary,
+              }}>
+                {d.meta.name}
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: T.text.primary,
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  {d.units.toLocaleString('de-DE')}
-                </div>
-                <div style={{
-                  fontSize: 11,
-                  color: meta.color,
-                  fontWeight: 600,
-                  marginTop: 1,
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  {Math.round(d.pct * 100)}%
-                </div>
+              <div style={{ fontSize: 11, color: T.text.subtle, marginTop: 1 }}>
+                Level {d.level}
               </div>
             </div>
-          );
-        })}
+            <div style={{ textAlign: 'right' }}>
+              <div style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: T.text.primary,
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {d.units.toLocaleString('de-DE')}
+              </div>
+              <div style={{
+                fontSize: 11,
+                color: d.meta.color,
+                fontWeight: 600,
+                marginTop: 1,
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {Math.round(d.pct * 100)}%
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </Card>
   );
