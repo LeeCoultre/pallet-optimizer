@@ -356,7 +356,7 @@ function sizeBucket(it) {
    The worker stacks the pallet bottom-up, so the order they tackle
    items determines what physically lands first on the base.
 
-   Rule (set with the user 2026-05-03):
+   Rule (set with the user 2026-05-03 / refined 2026-05-04):
      1. Group items by physical level (1..6).
      2. Levels 5 (Kürbiskernöl) and 6 (Tachorollen) are the fragile cap
         of the pallet — they ALWAYS come last. Inside that tail, L5
@@ -364,10 +364,17 @@ function sizeBucket(it) {
      3. All other groups (L1..L4) are ordered by total units DESC —
         the bigger batch first so the worker clears the bulk of work
         before chasing small remainders.
-     4. Within each group: units DESC, stable by original .docx index.
+     4. Within each group:
+        a. total volume DESC (the bigger format anchors the layer);
+        b. if the volume gap is < 10% of the larger one (formats
+           occupy roughly the same footprint), fall back to units
+           DESC so the more numerous batch is handled first;
+        c. stable by original .docx index.
 
    Works for both Mixed (Phase 1) and ESKU (Phase 2) — for ESKU the
    "units" axis is the carton count. */
+const VOL_TIE_BREAK_THRESHOLD = 0.10;
+
 export function sortItemsForPallet(items) {
   if (!items?.length) return items || [];
   const FINAL_LEVELS = new Set([5, 6]);
@@ -379,6 +386,7 @@ export function sortItemsForPallet(items) {
     units: it.isEinzelneSku
       ? (it.einzelneSku?.cartonsCount ?? it.placementMeta?.cartonsHere ?? 1)
       : (it.units || 0),
+    totalVol: itemTotalVolumeCm3(it),
   }));
 
   const groups = new Map();
@@ -403,7 +411,15 @@ export function sortItemsForPallet(items) {
 
   for (const g of orderedGroups) {
     g.sort((a, b) => {
+      // Primary: total volume DESC, but only if the gap is meaningful
+      const vMax = Math.max(a.totalVol, b.totalVol);
+      const vDiff = Math.abs(a.totalVol - b.totalVol);
+      if (vMax > 0 && vDiff / vMax > VOL_TIE_BREAK_THRESHOLD) {
+        return b.totalVol - a.totalVol;
+      }
+      // Tied volume → larger batch wins
       if (a.units !== b.units) return b.units - a.units;
+      // Stable by original .docx position
       return a.origIdx - b.origIdx;
     });
   }

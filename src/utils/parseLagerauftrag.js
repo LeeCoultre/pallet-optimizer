@@ -48,8 +48,26 @@ export function parseTitleMeta(title) {
   const dimStr = dimMatch ? `${rawW} × ${rawH}` : null;
   const normH = normalizeHeight(rawH);
   const dim = dimMatch ? { w: rawW, h: rawH, normH, normW: rawW } : null;
-  const rollenMatch = cleanTitle.match(/(\d+)\s*(?:Stck|Stk|Rollen|Rolls|Stück|Pcs|Pieces|er[\s-]+Pack)\b\.?/i);
-  const rollen = rollenMatch ? parseInt(rollenMatch[1], 10) : null;
+  // Rolls-per-Einheit detection. Two patterns:
+  //   (a) Explicit count anywhere in the title: "50 Rollen" / "10 Stk" /
+  //       "(50 Stück)" — the strongest signal.
+  //   (b) Leading multiplier prefix: "50 EC-Cash Thermorollen…" /
+  //       "10x Thermorollen…" — common in supplier titles where the
+  //       Einheit count is written as the very first token. Only used
+  //       when (a) does not match, so explicit "(N Rollen)" still wins.
+  let rollen = null;
+  const explicit = cleanTitle.match(/(\d+)\s*(?:Stck|Stk|Rollen|Rolls|Stück|Pcs|Pieces|er[\s-]+Pack)\b\.?/i);
+  if (explicit) rollen = parseInt(explicit[1], 10);
+  if (rollen == null) {
+    const lead = cleanTitle.match(/^(\d+)\s*[xх×]?\s+(?=\D)/);
+    if (lead) {
+      const n = parseInt(lead[1], 10);
+      // Reject obviously-not-a-count prefixes (e.g. zip codes, years,
+      // SKUs that start with digits). Pack counts are at most a few
+      // hundred; anything bigger almost certainly isn't a multiplier.
+      if (n > 0 && n <= 500) rollen = n;
+    }
+  }
   return { dimStr, rollen, dim };
 }
 
