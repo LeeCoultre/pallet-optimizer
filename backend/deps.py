@@ -7,6 +7,13 @@ in our users table (Clerk owns the auth, we own the role + audit log).
 INITIAL_ADMIN_EMAIL env var picks the bootstrap admin: the first user
 to sign in with that email gets role='admin'. Everyone else starts as
 'user'; flip them via the admin panel later.
+
+ALLOW_ANONYMOUS=true   (LOCAL DEV ONLY, never set on Railway):
+  Requests without a Bearer token are accepted and bound to a single
+  shared "anonymous@local" user (lazy-created on first hit, role='user').
+  Lets the warehouse team test the workflow before Clerk Sign-In is
+  wired up, or after a session expires. Frontend mirrors via
+  VITE_ALLOW_ANONYMOUS=true to keep the TanStack Query gates open.
 """
 
 import os
@@ -27,6 +34,46 @@ from backend.clerk import (
 )
 from backend.database import get_db
 from backend.orm import User, UserRole
+
+# Anonymous-mode constants — only consulted when ALLOW_ANONYMOUS=true.
+ANON_CLERK_ID = "__anonymous_local__"
+ANON_EMAIL    = "anonymous@local"
+ANON_NAME     = "Anonymous (local dev)"
+
+
+def _allow_anonymous() -> bool:
+    """Read the env var afresh each call so test-suites can flip it
+    via monkeypatch without restarting the app."""
+    return (os.getenv("ALLOW_ANONYMOUS") or "").strip().lower() == "true"
+
+
+async def _get_or_create_anonymous(db: AsyncSession) -> User:
+    """Return the singleton anonymous-mode user, creating it on first hit.
+    All anonymous requests share this row so audit logs / FKs stay sane."""
+    user = (
+        await db.execute(select(User).where(User.clerk_id == ANON_CLERK_ID))
+    ).scalar_one_or_none()
+    if user is not None:
+        return user
+    user = User(
+        clerk_id=ANON_CLERK_ID,
+        email=ANON_EMAIL,
+        name=ANON_NAME,
+        role=UserRole.user,
+        last_login_at=datetime.now(timezone.utc),
+    )
+    db.add(user)
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Race: a parallel request just created the same row. Pick up theirs.
+        await db.rollback()
+        user = (
+            await db.execute(select(User).where(User.clerk_id == ANON_CLERK_ID))
+        ).scalar_one()
+    else:
+        await db.refresh(user)
+    return user
 
 
 async def _provision_user(clerk_id: str, db: AsyncSession) -> User:
@@ -74,6 +121,12 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if not authorization or not authorization.startswith("Bearer "):
+        # Local-dev fallback: when ALLOW_ANONYMOUS is on, a missing or
+        # malformed Authorization header binds to the shared anonymous user.
+        # An invalid (but Bearer-prefixed) token still fails below — we only
+        # bypass the "no token at all" path, never the cryptography.
+        if _allow_anonymous():
+            return await _get_or_create_anonymous(db)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Missing Bearer token"
         )

@@ -98,15 +98,23 @@ async function parseDocxFile(file) {
 
 /* ─────────────────────────────────────────────────────────────────────── */
 
+/* Local-dev anonymous mode mirrors the backend's ALLOW_ANONYMOUS flag.
+   When VITE_ALLOW_ANONYMOUS=true, the queries fire even without a Clerk
+   session — marathonApi.js sends the request with no Authorization header
+   and the backend (with ALLOW_ANONYMOUS=true) binds it to the shared
+   anonymous@local user. NEVER set this in a Railway env. */
+const ALLOW_ANONYMOUS = import.meta.env.VITE_ALLOW_ANONYMOUS === 'true';
+
 export function useAppState() {
   const qc = useQueryClient();
   const { isSignedIn } = useAuth();
+  const effectivelySignedIn = isSignedIn || ALLOW_ANONYMOUS;
 
   /* ── Queries ───────────────────────────────────────────────────────── */
   const meQ = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
-    enabled: !!isSignedIn,
+    enabled: !!effectivelySignedIn,
     refetchInterval: false,
     staleTime: Infinity,
     retry: false,
@@ -115,13 +123,13 @@ export function useAppState() {
   const auftraegeQ = useQuery({
     queryKey: ['auftraege'],
     queryFn: listAuftraege,
-    enabled: !!isSignedIn,
+    enabled: !!effectivelySignedIn,
   });
 
   const historyQ = useQuery({
     queryKey: ['history'],
     queryFn: () => getHistory(50, 0),
-    enabled: !!isSignedIn,
+    enabled: !!effectivelySignedIn,
   });
 
   const all = auftraegeQ.data ?? [];
