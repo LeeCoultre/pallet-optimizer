@@ -14,10 +14,12 @@ import { lookupSkuDimensions } from '../marathonApi.js';
 import {
   Page, Topbar, StepperBar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
-  Label, Badge, Button, Meta, Kpi, ValidationBanner,
+  Label, Badge, Button, Meta, Kpi,
   T,
 } from '../components/ui.jsx';
 import PalletStackViz from '../components/PalletStackViz.jsx';
+import PreflightCard from '../components/PreflightCard.jsx';
+import { analyzeAuftrag } from '../utils/preflightAnalyzer.js';
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function PruefenScreen() {
@@ -73,7 +75,7 @@ export default function PruefenScreen() {
   const eskuDist = distribution.byPalletId;
   const palletStates = distribution.palletStates;
 
-  const validation = current?.validation || { ok: true, errorCount: 0, warningCount: 0 };
+  const validation = current?.validation || { ok: true, errorCount: 0, warningCount: 0, issues: [] };
   const validView = {
     ok: validation.ok ?? (validation.errorCount === 0),
     errors: validation.errorCount || 0,
@@ -84,6 +86,30 @@ export default function PruefenScreen() {
   };
 
   const [expandedId, setExpandedId] = useState(null);
+
+  // Pre-flight briefing — single source of truth for "is this Auftrag ready?".
+  // Aggregates parsing/structural/capacity/coverage flags into one card above
+  // the pallet list. Pure function; recomputes only when its inputs change.
+  const briefing = useMemo(
+    () => analyzeAuftrag({
+      parsed: current?.parsed,
+      validation,
+      distribution,
+      enrichedPallets,
+      enrichedEsku,
+    }),
+    [current?.parsed, validation, distribution, enrichedPallets, enrichedEsku],
+  );
+
+  const handleJumpToPallet = (palletId) => {
+    setExpandedId(palletId);
+    // Defer to next tick so the row has finished rendering its expanded state
+    // before we scroll. Centred so the operator sees it without hunting.
+    setTimeout(() => {
+      const el = document.getElementById(`pallet-row-${palletId}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+  };
 
   if (!view) {
     return (
@@ -128,37 +154,12 @@ export default function PruefenScreen() {
         {/* Identity card */}
         <IdentityCard view={view} />
 
-        {/* Validation banner */}
+        {/* Pre-flight briefing — replaces parsing-validation + OVERLOAD banners
+            with one unified card that aggregates everything the operator
+            needs to know BEFORE diving into the pallet list. */}
         <div style={{ marginTop: 16, marginBottom: 32 }}>
-          <ValidationBanner
-            tone={validView.ok ? 'success' : (validView.errors > 0 ? 'warn' : 'warn')}
-            title={validView.ok ? 'Alles in Ordnung' : 'Mit Auffälligkeiten'}
-            sub={validView.ok
-              ? `Alle ${view.stats.palletCount} Paletten und ${view.stats.articles} Artikel wurden ohne Fehler geparst.`
-              : `${validView.errors} Fehler · ${validView.warnings} Warnungen festgestellt.`}
-            action={<Badge tone={validView.ok ? 'success' : 'warn'}>{validView.ok ? 'Validiert' : 'Prüfen'}</Badge>}
-          />
+          <PreflightCard briefing={briefing} onJumpToPallet={handleJumpToPallet} />
         </div>
-
-        {/* OVERLOAD / NO_VALID_PLACEMENT escalation banner */}
-        {(distribution.overloadCount > 0 || distribution.noValidCount > 0) && (
-          <div style={{ marginBottom: 32 }}>
-            <ValidationBanner
-              tone={distribution.noValidCount > 0 ? 'warn' : 'warn'}
-              title={
-                distribution.noValidCount > 0
-                  ? `🚨 ${distribution.noValidCount} ESKU-Karton(s) ohne gültige Platzierung`
-                  : `⚠ ${distribution.overloadCount} OVERLOAD-Flag(s) gesetzt`
-              }
-              sub={
-                distribution.noValidCount > 0
-                  ? 'Hard-Constraints H1-H7 verletzt — Bridge-Eskalation erforderlich.'
-                  : 'Soft-Limits 700 kg / 1.59 m³ überschritten — Bridge informieren.'
-              }
-              action={<Badge tone="warn">Eskalation</Badge>}
-            />
-          </div>
-        )}
 
         {/* KPI grid */}
         <section style={{ marginBottom: 32 }}>
@@ -523,6 +524,7 @@ function PalletRow({ pallet, index, items, eskuAssigned, palletState, isExpanded
   return (
     <>
       <div
+        id={`pallet-row-${pallet.id}`}
         onClick={onToggle}
         style={{
           display: 'flex',
@@ -533,6 +535,7 @@ function PalletRow({ pallet, index, items, eskuAssigned, palletState, isExpanded
           cursor: 'pointer',
           transition: 'background 150ms',
           gap: 0,
+          scrollMarginTop: 80,
         }}
         onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = T.bg.surface2; }}
         onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = T.bg.surface; }}
