@@ -1,14 +1,57 @@
 import os
+import time
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from .database import get_db
 from .routers import admin, auftraege, history, packing, sku_dimensions, users, xlsx_import
 
-app = FastAPI(title="Pallet Loading Optimizer", version="1.0.0")
+
+# ─── Production safety: refuse to start with ALLOW_ANONYMOUS on Railway ──
+#
+# ALLOW_ANONYMOUS=true is a local-dev convenience that binds requests
+# without a Bearer token to a shared anonymous@local user. On Railway
+# (or any other production-shaped environment) leaving it on means
+# anyone on the internet can post/modify Aufträge — catastrophic.
+#
+# We detect prod via env vars Railway / Kubernetes / Heroku / Fly set
+# automatically. The guard runs at import time so a misconfigured
+# deploy fails fast at boot rather than silently leaking.
+def _verify_anonymous_safety() -> None:
+    if (os.getenv("ALLOW_ANONYMOUS") or "").strip().lower() != "true":
+        return
+    is_prod_signal = any(
+        os.getenv(name)
+        for name in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_PROJECT_ID",
+            "KUBERNETES_SERVICE_HOST",
+            "DYNO",                  # Heroku
+            "FLY_APP_NAME",          # Fly.io
+        )
+    )
+    if is_prod_signal:
+        raise SystemExit(
+            "REFUSING TO START — ALLOW_ANONYMOUS=true detected in a "
+            "production-shaped environment (Railway/K8s/Heroku/Fly). "
+            "This would let any unauthenticated request act as the "
+            "anonymous@local user. Unset ALLOW_ANONYMOUS in your "
+            "service variables and redeploy.",
+        )
+
+
+_verify_anonymous_safety()
+
+_BOOT_TS = time.time()
+APP_VERSION = "2.2.0"
+
+app = FastAPI(title="Pallet Loading Optimizer", version=APP_VERSION)
 
 # Same-origin in prod (single-service Railway deploy) → CORS doesn't apply.
 # Local dev runs Vite on 5176 + uvicorn on 8001, different origins, CORS needed.
@@ -39,7 +82,37 @@ app.include_router(sku_dimensions.router)  # /api/sku-dimensions/*, /api/admin/s
 
 @app.get("/health")
 async def health():
+    """Lightweight readiness probe — no DB hit. Used by Railway's
+    health check; returns 200 as long as the process is alive. For a
+    real diagnostic that checks DB connectivity, call /api/health."""
     return {"status": "ok"}
+
+
+@app.get("/api/health")
+async def api_health(db: AsyncSession = Depends(get_db)):
+    """Diagnostic endpoint with DB ping + uptime + version. Pings the
+    DB with a trivial SELECT 1 so a hung Postgres surfaces here even
+    when the FastAPI process itself is fine. The DynamicIsland's
+    connection probe + any external monitor can call this every 30s."""
+    db_ok = False
+    db_error = None
+    try:
+        await db.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception as e:
+        db_error = str(e)[:160]
+
+    uptime = max(0, int(time.time() - _BOOT_TS))
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "db": "ok" if db_ok else "error",
+        "db_error": db_error,
+        "version": APP_VERSION,
+        "uptime_sec": uptime,
+        "anonymous_mode": (
+            (os.getenv("ALLOW_ANONYMOUS") or "").strip().lower() == "true"
+        ),
+    }
 
 
 # Serve built frontend if present (single-service deploy on Railway).

@@ -4,6 +4,7 @@ import { ClerkProvider } from '@clerk/clerk-react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { applyAccent, getStoredAccent } from './utils/accent.js'
 
 /* Apply the user's saved accent color before React mounts so the first
@@ -29,10 +30,15 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <ClerkProvider publishableKey={CLERK_KEY}>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </ClerkProvider>
+    {/* ErrorBoundary wraps everything — even ClerkProvider init can throw
+        (e.g. on a malformed publishable key) so the fallback UI must
+        sit one level above it. */}
+    <ErrorBoundary>
+      <ClerkProvider publishableKey={CLERK_KEY}>
+        <QueryClientProvider client={queryClient}>
+          <App />
+        </QueryClientProvider>
+      </ClerkProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )
