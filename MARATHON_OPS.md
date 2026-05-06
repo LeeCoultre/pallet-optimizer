@@ -307,7 +307,94 @@ the suite refuses to start with a helpful error.
 
 ---
 
-## 8 · Maintenance schedule
+## 8 · Splitting dev and prod databases
+
+Right now `DATABASE_URL` points at one Postgres for **both** the
+deployed Marathon service and your local dev/test runs. Per CLAUDE.md
+we acknowledged this as «Railway-hosted, single instance shared
+dev/prod». Acceptable while there were no real users; **not** a place
+to be once 5 warehouse workers depend on the data.
+
+### Why it's needed
+
+Two failure modes the shared setup leaves wide open:
+
+1. **Local-dev side effects in prod.** Running uvicorn locally with
+   `ALLOW_ANONYMOUS=true` (or just creating test Aufträge through the
+   browser) inserts rows into the live DB. We saw this exact issue
+   when cleaning the `anonymous@local` user — it had real Aufträge
+   bound to it from local-only sessions.
+2. **Schema migrations land before code.** `alembic upgrade head`
+   from your laptop hits prod immediately, so a half-tested
+   migration script breaks the live app the moment you run it.
+
+### One-time setup (≈ 15 minutes)
+
+1. Railway → your Marathon project → **+ New** → **Database** →
+   **PostgreSQL**. Name it `Postgres-dev`.
+2. Open the new service → **Variables** tab → copy
+   `DATABASE_PUBLIC_URL` (it looks like
+   `postgresql://postgres:…@…railway.app:5432/railway`).
+3. On your laptop, edit `.env`:
+   ```bash
+   # Local dev — points at the new dev DB
+   DATABASE_URL=postgresql://postgres:…@…railway.app:5432/railway
+   # Pytest — same dev DB, or a third Postgres if you want full
+   # separation (recommended later, optional now).
+   TEST_DATABASE_URL=postgresql://postgres:…@…railway.app:5432/railway
+   ```
+4. Apply migrations to the dev DB:
+   ```bash
+   .venv/bin/alembic upgrade head
+   ```
+5. Verify the dev DB is reachable + empty:
+   ```bash
+   psql "$DATABASE_URL" -c "SELECT count(*) FROM users;"
+   # → 0
+   ```
+6. **Production stays untouched.** The deployed `Marathon` service
+   on Railway still references the original `Postgres` (production)
+   service via `DATABASE_URL`. Don't change that.
+7. Optional but recommended: rename the prod Postgres service to
+   `Postgres-prod` for clarity in the dashboard.
+
+### Verifying the split worked
+
+```bash
+# Local — should show 0 or only the seed admin
+.venv/bin/python -c "
+import os
+from urllib.parse import urlparse
+u = urlparse(os.environ['DATABASE_URL'])
+print('local DB host:', u.hostname)
+"
+
+# Prod — what Railway sees
+curl -s https://lagerauftrag-production.up.railway.app/api/health | jq .
+# uptime_sec + db: ok mean prod is fine
+```
+
+If both report different hostnames / row counts → split is real and
+working.
+
+### Promoting a schema change to prod
+
+After a migration is verified on dev:
+
+```bash
+git push origin main          # Railway auto-deploys the new code
+                              # Alembic migrations run inside the
+                              # container at boot, hitting the prod
+                              # DB — see Dockerfile CMD.
+```
+
+> Migrations should be **additive** (new columns nullable, new
+> tables) until you've coordinated with active users — never drop
+> a column the app code is still reading from.
+
+---
+
+## 9 · Maintenance schedule
 
 | Frequency | Task |
 |---|---|
@@ -321,7 +408,7 @@ the suite refuses to start with a helpful error.
 
 ---
 
-## 9 · Escalation
+## 10 · Escalation
 
 | Issue | Who |
 |---|---|

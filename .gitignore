@@ -41,3 +41,6 @@ venv/
 
 # Local test fixtures (real customer .docx, kept locally only)
 public/test-orders/
+
+# Test coverage reports
+coverage/

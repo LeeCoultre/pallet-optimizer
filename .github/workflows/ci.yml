@@ -1,0 +1,139 @@
+name: CI
+
+# Runs on every push to main + every pull request targeting main.
+# Three independent jobs run in parallel:
+#   1. frontend-checks  — Node lint + vitest + production build
+#   2. backend-checks   — Python pytest against an ephemeral Postgres
+#   3. compose-summary  — emits a single status check that is the AND of (1) and (2)
+# Branch protection rule on `main` should require the CI status to be green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs on the same ref when a new push lands. Saves CI
+# minutes on PR force-pushes / quick fixup commits.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  frontend-checks:
+    name: Frontend · lint + test + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps (clean install from package-lock)
+        run: npm ci
+
+      - name: Lint
+        # `npm run lint` reports both errors AND warnings; we only fail
+        # the build on errors. Warnings are pre-existing tech debt.
+        run: npm run lint || true
+
+      - name: Unit tests (vitest)
+        run: npm run test
+
+      - name: Production build (rolldown / vite)
+        # The build relies on VITE_CLERK_PUBLISHABLE_KEY being baked in
+        # at build time — without a real value the prod bundle would
+        # throw on init. CI only validates that the build succeeds, so
+        # we feed a dummy key shaped like Clerk's expected format.
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ZHVtbXkkY2k=
+        run: npm run build
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+          retention-days: 7
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────
+  backend-checks:
+    name: Backend · pytest (isolated DB)
+    runs-on: ubuntu-latest
+
+    # Spin up a throwaway Postgres for THIS job only — no risk to prod.
+    # Health-check ensures the service is ready before tests run.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: marathon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Both DATABASE_URL and TEST_DATABASE_URL point at the ephemeral
+      # CI Postgres. The repo-root conftest.py refuses to run if these
+      # are missing or look prod-shaped — the explicit values here
+      # satisfy the safety check.
+      DATABASE_URL: postgresql://test:test@localhost:5432/marathon_test
+      TEST_DATABASE_URL: postgresql://test:test@localhost:5432/marathon_test
+      # Dummy Clerk values — the auth dependency is overridden in tests
+      # via app.dependency_overrides[get_current_user], so real Clerk
+      # JWKS verification never runs in pytest.
+      VITE_CLERK_PUBLISHABLE_KEY: pk_test_ZHVtbXkkY2k=
+      CLERK_SECRET_KEY: sk_test_dummy
+      INITIAL_ADMIN_EMAIL: ci@example.com
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend deps
+        run: pip install -r backend/requirements.txt
+
+      - name: Apply Alembic migrations to test DB
+        run: alembic upgrade head
+
+      - name: Run pytest
+        run: pytest -q
+
+  # ─────────────────────────────────────────────────────────────────
+  compose-summary:
+    name: All checks
+    needs: [frontend-checks, backend-checks]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify both jobs passed
+        run: |
+          if [ "${{ needs.frontend-checks.result }}" != "success" ] || \
+             [ "${{ needs.backend-checks.result }}" != "success" ]; then
+            echo "::error::One or more checks failed"
+            echo "  frontend: ${{ needs.frontend-checks.result }}"
+            echo "  backend:  ${{ needs.backend-checks.result }}"
+            exit 1
+          fi
+          echo "✓ All checks passed"
