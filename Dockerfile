@@ -42,8 +42,13 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --upgrade pip && pip install -r backend/requirements.txt
 
 COPY backend ./backend
+COPY alembic.ini ./alembic.ini
 COPY --from=frontend /app/dist ./dist
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Apply DB migrations on every container start, then launch the API.
+# Idempotent: alembic skips already-applied revisions. If a migration
+# fails, the container fails to start — exactly what we want, since
+# running the new app code against an un-migrated schema would 500.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
