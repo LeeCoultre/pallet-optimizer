@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { AppStateProvider, useAppState } from './state.jsx';
 import { AppShell } from './components/AppShell.jsx';
+import DynamicIsland from './components/DynamicIsland.jsx';
 import UploadScreen from './screens/Upload.jsx';
 import PruefenScreen from './screens/Pruefen.jsx';
 import FocusScreen from './screens/Focus.jsx';
@@ -28,6 +29,10 @@ export default function App() {
   return (
     <AppStateProvider>
       <Router />
+      {/* Floating fixed-position morphing pill — always-visible single
+          source of "what's important right now". Reads app state via
+          its own hook, no prop wiring needed. */}
+      <DynamicIsland />
     </AppStateProvider>
   );
 }
