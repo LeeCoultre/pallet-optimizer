@@ -7,6 +7,9 @@ import {
   applyAccent, getStoredAccent, setStoredAccent, resetAccent, DEFAULT_ACCENT,
 } from '../utils/accent.js';
 import {
+  EXPERIMENT_META, useExperiment,
+} from '../utils/experiments.js';
+import {
   Page, Topbar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
   Button, T,
@@ -86,6 +89,14 @@ export default function EinstellungenScreen() {
           <Row label="Bodenfläche"  value="1.200 × 800 mm" mono />
           <Row label="Maximalhöhe"  value="1.650 mm"       mono />
           <Row label="Maximalvolumen" value="1,584 m³"     mono isLast />
+        </SettingsCard>
+
+        {/* Experimente */}
+        <SettingsCard
+          title="Experimente"
+          sub="Funktionen in Erprobung. Standardmäßig deaktiviert — schaltest du selbst frei, wenn du sie ausprobieren möchtest. Deaktivieren ist jederzeit möglich, kein Datenverlust."
+        >
+          <ExperimentRow flag="dynamicIsland" isLast />
         </SettingsCard>
 
         {/* Branding */}
@@ -226,6 +237,97 @@ function AccentRow() {
         </Button>
       )}
     </div>
+  );
+}
+
+/* ── Experiment row — toggle for opt-in features. Reads description
+   from EXPERIMENT_META so the registry of available flags lives in
+   one place (src/utils/experiments.js). ───────────────────────────── */
+function ExperimentRow({ flag, isLast }) {
+  const [enabled, setEnabled] = useExperiment(flag);
+  const meta = EXPERIMENT_META[flag] || { label: flag, description: '' };
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      padding: '16px 0',
+      borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
+      gap: 16,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: T.text.primary }}>
+            {meta.label}
+          </span>
+          {meta.badge && (
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: T.accent.text,
+              background: T.accent.bg,
+              border: `1px solid ${T.accent.border}`,
+              padding: '1px 6px',
+              borderRadius: 999,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+            }}>
+              {meta.badge}
+            </span>
+          )}
+        </div>
+        {meta.description && (
+          <p style={{
+            margin: 0,
+            fontSize: 12.5,
+            color: T.text.subtle,
+            lineHeight: 1.5,
+            letterSpacing: '-0.005em',
+            maxWidth: 560,
+          }}>
+            {meta.description}
+          </p>
+        )}
+      </div>
+      <Toggle checked={enabled} onChange={setEnabled} ariaLabel={meta.label} />
+    </div>
+  );
+}
+
+/* iOS-style toggle. Click anywhere on the pill switches. Accent CSS
+   var when on so it picks up the user's chosen brand colour. */
+function Toggle({ checked, onChange, ariaLabel }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      onClick={() => onChange(!checked)}
+      style={{
+        flexShrink: 0,
+        width: 40,
+        height: 24,
+        borderRadius: 999,
+        background: checked ? `var(--accent, ${T.accent.main})` : T.bg.surface3,
+        border: `1px solid ${checked ? `var(--accent, ${T.accent.main})` : T.border.primary}`,
+        cursor: 'pointer',
+        padding: 0,
+        position: 'relative',
+        transition: 'background 200ms, border-color 200ms',
+      }}
+    >
+      <span style={{
+        position: 'absolute',
+        top: 2,
+        left: checked ? 18 : 2,
+        width: 18,
+        height: 18,
+        borderRadius: '50%',
+        background: '#fff',
+        boxShadow: '0 1px 3px rgba(15, 23, 42, 0.18)',
+        transition: 'left 200ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+      }} />
+    </button>
   );
 }
 

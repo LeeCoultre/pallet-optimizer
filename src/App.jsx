@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { AppStateProvider, useAppState } from './state.jsx';
 import { AppShell } from './components/AppShell.jsx';
 import DynamicIsland from './components/DynamicIsland.jsx';
+import { useExperiment } from './utils/experiments.js';
 import UploadScreen from './screens/Upload.jsx';
 import PruefenScreen from './screens/Pruefen.jsx';
 import FocusScreen from './screens/Focus.jsx';
@@ -26,13 +27,14 @@ export default function App() {
   useEffect(() => {
     LEGACY_KEYS.forEach((k) => localStorage.removeItem(k));
   }, []);
+  // Experimental floating pill — opt-in via Einstellungen → Experimente.
+  // Gated here so the component never even mounts (and never starts its
+  // 1Hz tick / connection probe) until the user has explicitly enabled it.
+  const [islandEnabled] = useExperiment('dynamicIsland');
   return (
     <AppStateProvider>
       <Router />
-      {/* Floating fixed-position morphing pill — always-visible single
-          source of "what's important right now". Reads app state via
-          its own hook, no prop wiring needed. */}
-      <DynamicIsland />
+      {islandEnabled && <DynamicIsland />}
     </AppStateProvider>
   );
 }

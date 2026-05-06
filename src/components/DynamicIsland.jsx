@@ -61,6 +61,7 @@ export default function DynamicIsland() {
   const conn = useConnectionStatus();
   const [mode, setMode] = useState('glance');             // 'glance' | 'compact' | 'expanded'
   const [pulseKey, setPulseKey] = useState(0);
+  const [isHovering, setIsHovering] = useState(false);    // pin-open while cursor is inside
   const lastSignatureRef = useRef(briefing?.signature);
   const lastConnRef = useRef(conn.state);
   const collapseTimerRef = useRef(null);
@@ -100,9 +101,16 @@ export default function DynamicIsland() {
     }
   }, [conn.state]);
 
-  /* ─── Auto-collapse — sticky-on-warning + sticky-on-offline ────── */
+  /* ─── Auto-collapse — pinned-while-hovering, sticky on alerts ──── */
   useEffect(() => {
     if (mode === 'glance') return;
+    // Cursor is inside — hold the current mode indefinitely so the
+    // operator can read the briefing at their own pace. The timer
+    // restarts the moment the cursor leaves.
+    if (isHovering) {
+      clearTimeout(collapseTimerRef.current);
+      return;
+    }
     const sticky =
       briefing?.severity === 'warn' ||
       briefing?.severity === 'error' ||
@@ -113,18 +121,20 @@ export default function DynamicIsland() {
       setMode('glance');
     }, AUTO_COLLAPSE_MS);
     return () => clearTimeout(collapseTimerRef.current);
-  }, [mode, briefing?.severity, conn.state]);
+  }, [mode, briefing?.severity, conn.state, isHovering]);
 
   /* ─── Hover/click handlers (with debounce) ──────────────────────── */
   const hoverTimerRef = useRef(null);
   const handleMouseEnter = () => {
     clearTimeout(hoverTimerRef.current);
+    setIsHovering(true);
     hoverTimerRef.current = setTimeout(() => {
       setMode((m) => (m === 'glance' ? 'compact' : m));
     }, HOVER_EXPAND_DELAY);
   };
   const handleMouseLeave = () => {
     clearTimeout(hoverTimerRef.current);
+    setIsHovering(false);
   };
   const handleClick = () => {
     setMode((m) => {
