@@ -30,7 +30,9 @@ const SEVERITY_PALETTE = {
 };
 
 export default function PreflightCard({ briefing, onJumpToPallet, onAction }) {
-  const [open, setOpen] = useState(briefing?.worst !== 'ok');
+  // Collapsed by default — header tone (red/amber/green) already conveys
+  // status at a glance; user clicks to drill into specific flags.
+  const [open, setOpen] = useState(false);
 
   if (!briefing) return null;
 

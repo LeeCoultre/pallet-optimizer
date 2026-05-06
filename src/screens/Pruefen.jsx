@@ -19,6 +19,7 @@ import {
 } from '../components/ui.jsx';
 import PreflightCard from '../components/PreflightCard.jsx';
 import PalletStoryCard from '../components/PalletStoryCard.jsx';
+import PalletMiniCard from '../components/PalletMiniCard.jsx';
 import { analyzeAuftrag } from '../utils/preflightAnalyzer.js';
 import { buildPalletStory, rankPallets } from '../utils/palletStory.js';
 
@@ -100,12 +101,27 @@ export default function PruefenScreen() {
     [current?.parsed, validation, distribution, enrichedPallets, enrichedEsku],
   );
 
+  // View-mode for the pallet section: 'story' (full hero cards, default)
+  // or 'overview' (compact 3-up grid for fast scan). Stored in localStorage
+  // so the operator's choice survives refresh.
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window === 'undefined') return 'story';
+    return localStorage.getItem('pruefen.palletViewMode') === 'overview'
+      ? 'overview' : 'story';
+  });
+  const switchViewMode = (mode) => {
+    setViewMode(mode);
+    try { localStorage.setItem('pruefen.palletViewMode', mode); } catch { /* ignore quota */ }
+  };
+
   const handleJumpToPallet = (palletId) => {
-    // Story cards are always-open — no expansion needed, just scroll.
+    // From PreflightCard or MiniCard click — always land on the full Story
+    // Card so the operator gets context, not just a thumbnail.
+    if (viewMode !== 'story') switchViewMode('story');
     setTimeout(() => {
       const el = document.getElementById(`pallet-row-${palletId}`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 60);
+    }, 80);
   };
 
   // One-shot superlative ranking ("Größte Palette" etc.) — pure function,
@@ -216,48 +232,85 @@ export default function PruefenScreen() {
           </Card>
         </section>
 
-        {/* Pallets — Story Cards. Each pallet gets a system-generated headline
-            ("Größte Palette", "Single-SKU · 4-Seiten", "Mixed-Pyramide"...)
-            and a hero card with all info open by default. */}
+        {/* Pallets — Story Cards (default) or Übersicht grid for quick scan. */}
         <section style={{ marginBottom: 40 }}>
           <SectionHeader
             title={`Paletten (${view.pallets.length})`}
             sub={
-              eskuItems.length > 0
-                ? `Story-Karten — jede Palette mit Headline, Auslastung und Top-Artikeln auf einen Blick. ${eskuItems.length} ESKU-Kartons sind verteilt.`
-                : 'Story-Karten — jede Palette mit Headline, Auslastung und Top-Artikeln auf einen Blick.'
+              viewMode === 'overview'
+                ? 'Übersicht — alle Paletten als Mini-Karten für schnellen Vergleich. Klick öffnet die volle Story.'
+                : (eskuItems.length > 0
+                    ? `Story-Karten — Headline, Auslastung und Top-Artikel pro Palette. ${eskuItems.length} ESKU-Kartons sind verteilt.`
+                    : 'Story-Karten — Headline, Auslastung und Top-Artikel pro Palette.')
+            }
+            right={
+              <ViewModeToggle
+                value={viewMode}
+                onChange={switchViewMode}
+              />
             }
           />
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-          }}>
-            {view.pallets.map((p, i) => {
-              const raw = enrichedPallets.find((r) => r.id === p.id);
-              const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
-              const palletState = palletStates[p.id];
-              const story = buildPalletStory({
-                pallet: p,
-                items: raw?.items || [],
-                eskuAssigned,
-                palletState,
-                ranking,
-              });
-              return (
-                <PalletStoryCard
-                  key={p.id}
-                  pallet={p}
-                  index={i}
-                  items={raw?.items || []}
-                  eskuAssigned={eskuAssigned}
-                  palletState={palletState}
-                  story={story}
-                  onStartFocus={onStartFocus}
-                />
-              );
-            })}
-          </div>
+          {viewMode === 'overview' ? (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: 12,
+            }}>
+              {view.pallets.map((p, i) => {
+                const raw = enrichedPallets.find((r) => r.id === p.id);
+                const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
+                const palletState = palletStates[p.id];
+                const story = buildPalletStory({
+                  pallet: p,
+                  items: raw?.items || [],
+                  eskuAssigned,
+                  palletState,
+                  ranking,
+                });
+                return (
+                  <PalletMiniCard
+                    key={p.id}
+                    pallet={p}
+                    index={i}
+                    eskuAssigned={eskuAssigned}
+                    palletState={palletState}
+                    story={story}
+                    onClick={() => handleJumpToPallet(p.id)}
+                  />
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+            }}>
+              {view.pallets.map((p, i) => {
+                const raw = enrichedPallets.find((r) => r.id === p.id);
+                const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
+                const palletState = palletStates[p.id];
+                const story = buildPalletStory({
+                  pallet: p,
+                  items: raw?.items || [],
+                  eskuAssigned,
+                  palletState,
+                  ranking,
+                });
+                return (
+                  <PalletStoryCard
+                    key={p.id}
+                    pallet={p}
+                    index={i}
+                    items={raw?.items || []}
+                    eskuAssigned={eskuAssigned}
+                    palletState={palletState}
+                    story={story}
+                  />
+                );
+              })}
+            </div>
+          )}
         </section>
 
       </main>
@@ -599,6 +652,77 @@ function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus
   );
 }
 
+
+/* ════════════════════════════════════════════════════════════════════════ */
+/* Segmented toggle for the Paletten section view-mode. Two pill buttons,
+   the active one filled with surface, the other ghosted — matches the
+   density-toggle pattern used elsewhere in the design system. */
+function ViewModeToggle({ value, onChange }) {
+  const options = [
+    { id: 'story',    label: 'Story',     icon: <StoryIcon /> },
+    { id: 'overview', label: 'Übersicht', icon: <GridIcon /> },
+  ];
+  return (
+    <div style={{
+      display: 'inline-flex',
+      gap: 2,
+      padding: 2,
+      background: T.bg.surface3,
+      border: `1px solid ${T.border.primary}`,
+      borderRadius: T.radius.md,
+    }}>
+      {options.map((opt) => {
+        const active = value === opt.id;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            aria-pressed={active}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 10px',
+              fontSize: 12,
+              fontWeight: 500,
+              color: active ? T.text.primary : T.text.subtle,
+              background: active ? T.bg.surface : 'transparent',
+              border: 0,
+              borderRadius: T.radius.sm,
+              cursor: 'pointer',
+              fontFamily: T.font.ui,
+              boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+              transition: 'background 150ms, color 150ms',
+            }}
+          >
+            {opt.icon}
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StoryIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="3" width="12" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="2" y="9" width="12" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+function GridIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+      <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 function formatDur(sec) {

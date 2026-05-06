@@ -21,7 +21,7 @@ import {
   itemTotalVolumeCm3,
 } from '../utils/auftragHelpers.js';
 import PalletStackViz from './PalletStackViz.jsx';
-import { Button, Badge, T } from './ui.jsx';
+import { Badge, T } from './ui.jsx';
 
 const TONE_PALETTE = {
   warn:    { bg: T.status.warn.bg,    border: T.status.warn.border,    text: T.status.warn.text,    chipBg: T.status.warn.bg },
@@ -40,7 +40,6 @@ export default function PalletStoryCard({
   items,              // raw enriched items list
   eskuAssigned,       // ESKU items assigned to this pallet (with placementMeta)
   palletState,        // distribute()'s palletStates[id]
-  onStartFocus,       // optional callback
 }) {
   const [showAllItems, setShowAllItems] = useState(false);
   const palette = TONE_PALETTE[story.tone] || TONE_PALETTE.neutral;
@@ -229,32 +228,14 @@ export default function PalletStoryCard({
         )}
       </div>
 
-      {/* ── Section 3 · KPI gauge + actions ───────────────────────────── */}
+      {/* ── Section 3 · KPI gauge ─────────────────────────────────────── */}
       <div style={{
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 16,
+        justifyContent: 'center',
       }}>
         <FillGauge capacity={story.capacity} />
-
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-          width: '100%',
-        }}>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onStartFocus}
-            style={{ width: '100%' }}
-            title="Direkt zu diesem Auftrag in Focus springen"
-          >
-            Focus →
-          </Button>
-        </div>
       </div>
     </article>
   );
