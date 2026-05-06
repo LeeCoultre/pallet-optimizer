@@ -38,12 +38,11 @@ export default function PalletMiniCard({ pallet, index, story, eskuAssigned, pal
         display: 'grid',
         gridTemplateColumns: '60px 1fr',
         gap: 12,
-        padding: '14px 14px 14px 18px',
+        padding: '16px 16px',
         background: T.bg.surface,
         border: `1px solid ${T.border.primary}`,
-        borderLeft: `3px solid ${meta.color}`,
-        borderRadius: T.radius.md,
-        boxShadow: T.shadow.card,
+        borderRadius: 14,
+        boxShadow: '0 1px 2px rgba(17,24,39,0.02), 0 6px 16px -12px rgba(17,24,39,0.05)',
         cursor: 'pointer',
         textAlign: 'left',
         fontFamily: T.font.ui,
@@ -53,12 +52,12 @@ export default function PalletMiniCard({ pallet, index, story, eskuAssigned, pal
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = accentBorder;
-        e.currentTarget.style.boxShadow = T.shadow.raised;
+        e.currentTarget.style.boxShadow = '0 2px 4px rgba(17,24,39,0.04), 0 12px 28px -16px rgba(17,24,39,0.10)';
         e.currentTarget.style.transform = 'translateY(-1px)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.borderColor = T.border.primary;
-        e.currentTarget.style.boxShadow = T.shadow.card;
+        e.currentTarget.style.boxShadow = '0 1px 2px rgba(17,24,39,0.02), 0 6px 16px -12px rgba(17,24,39,0.05)';
         e.currentTarget.style.transform = 'none';
       }}
     >
@@ -113,20 +112,13 @@ export default function PalletMiniCard({ pallet, index, story, eskuAssigned, pal
           <MiniGauge pct={fillPct} color={gaugeColor} />
         </div>
 
-        {/* Headline */}
-        <div style={{
-          fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
-          fontSize: 14,
-          fontWeight: 700,
-          color: T.text.primary,
-          letterSpacing: '-0.015em',
-          lineHeight: 1.2,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}>
-          {story.headline}
-        </div>
+        {/* Headline — type-tag + content (2-line hierarchy) */}
+        <SplitHeadline
+          headline={story.headline}
+          tone={story.tone}
+          tagSize={9.5}
+          contentSize={14}
+        />
 
         {/* Levels mini-stripe */}
         {story.levels.length > 0 && (
@@ -169,6 +161,67 @@ export default function PalletMiniCard({ pallet, index, story, eskuAssigned, pal
         </div>
       </div>
     </button>
+  );
+}
+
+/* ─── SplitHeadline ──────────────────────────────────────────────────
+   Splits a story headline by the " · " separator into a tone-colored
+   uppercase tag (top line) + primary content (bottom line). When the
+   headline has no separator, the whole phrase becomes the content
+   line and the tag is omitted.
+
+   Tone palette maps story tone → tag color. Warn = amber, accent =
+   orange, cool = deep blue, danger = red. Neutral keeps primary.
+   ──────────────────────────────────────────────────────────────────── */
+const TONE_TAG_COLOR = {
+  warn:    T.status.warn.text,
+  accent:  T.accent.text,
+  cool:    '#1E40AF',
+  special: T.text.primary,
+  danger:  T.status.danger.text,
+  neutral: T.text.subtle,
+};
+
+function SplitHeadline({ headline, tone, tagSize = 10, contentSize = 14 }) {
+  if (!headline) return null;
+  const parts = headline.split(' · ');
+  const hasSplit = parts.length >= 2;
+  const tag = hasSplit ? parts[0] : null;
+  const content = hasSplit ? parts.slice(1).join(' · ') : headline;
+  const tagColor = TONE_TAG_COLOR[tone] || T.text.subtle;
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      {tag && (
+        <div style={{
+          fontSize: tagSize,
+          fontWeight: 700,
+          color: tagColor,
+          textTransform: 'uppercase',
+          letterSpacing: '0.14em',
+          fontFamily: T.font.mono,
+          lineHeight: 1.1,
+          marginBottom: 4,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {tag}
+        </div>
+      )}
+      <div style={{
+        fontSize: contentSize,
+        fontWeight: 600,
+        color: T.text.primary,
+        letterSpacing: '-0.012em',
+        lineHeight: 1.2,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}>
+        {content}
+      </div>
+    </div>
   );
 }
 

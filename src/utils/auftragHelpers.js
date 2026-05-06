@@ -35,7 +35,11 @@ export function getLevel(item) {
   // ship without that exact phrase but belong to the same physical class).
   if (/(wird (von .* )?produziert|tk\s+thermalking|sandsäcke|sandsack|sandsaecke)/.test(t)) return 4;
   if (/(klebeband|fragile|bruchgefahr)/.test(t)) return 3;          // Klebeband / Fragile
-  if (/(öko|phenolfrei|eco\s*rooll)/.test(t)) return 2;             // ÖKO Thermorollen
+  // L2 ÖKO Thermorollen — ONLY the genuine eco/phenol-free indicators.
+  // Brand names that contain "ECO" (e.g. "ECO ROOLLS®" — a vendor whose
+  // catalog is mostly regular Thermopapier) must NOT trigger L2 by
+  // themselves, otherwise plain thermal rolls get misclassified.
+  if (/(öko|phenolfrei)/.test(t)) return 2;
   return 1;                                                          // Thermorollen (default)
 }
 
@@ -154,21 +158,28 @@ const DEFAULT_KG_PER_CARTON = 0.55;            // fallback when no dimensions ro
 
 /* Per-ESKU-carton heuristic. Used only as ESKU fallback when dimensions
    missing. Returns approximate volume of ONE carton holding the item's
-   `packsPerCarton` Einheiten. */
+   `packsPerCarton` Einheiten.
+
+   ESKU pattern is "(N × M Rollen)" — the carton holds N consumer-style
+   inner packs, each with M rolls. So volume ≈ M_rolls × per-roll-box ×
+   N × packing-slack. We recompute the per-roll bounding-box volume
+   from dim when present (same physical reality as the Mixed heuristic),
+   and only fall back to coarse buckets when no dim is available. */
 function eskuCartonHeuristicCm3(it) {
   const lvl = getDisplayLevel(it);
+  const N = it.einzelneSku?.packsPerCarton ?? 10;
   if (lvl === 1 || lvl === 2) {
-    const r = it.rollen || 50;
-    if (r >= 60) return 4500;
-    if (r >= 40) return 3500;
-    if (r >= 20) return 2400;
-    return 1800;
+    const wCm = (it.dim?.w ?? 57) / 10;
+    const dCm = (it.dim?.normH ?? it.dim?.h ?? 35) / 10;
+    const perRollBox = Math.max(20, wCm * dCm * dCm);
+    const rollsPerInner = it.rollen || 5;
+    return perRollBox * rollsPerInner * N * ROLL_PACK_INV;
   }
-  if (lvl === 6) return 1200;                 // Tachorollen
-  if (lvl === 5) return 6000;                 // Kernöl bottle
-  if (lvl === 4) return 18000;                // Produktion (big bag etc.)
-  if (lvl === 3) return 4000;                 // Klebeband
-  return 8000;
+  if (lvl === 6) return 1500 * N;             // Tachorollen carton scaled by inner packs
+  if (lvl === 5) return 1100 * N;             // Kernöl bottle ≈1.1L outer
+  if (lvl === 4) return 1800 * N;             // Produktion
+  if (lvl === 3) return 350  * N;             // Klebeband
+  return 800 * N;
 }
 
 /* Sniff "500 g" / "1 Kg" / "1.5 kg" hints from item title and convert
@@ -190,23 +201,49 @@ function weightFromTitle(title) {
    rolls with `rollen` count, scales by roll count (a 40-roll Einheit
    is bulkier than a 5-roll one).
 
-   `item.dim.w` / `.h` are stored in MILLIMETERS by parseLagerauftrag
-   ("80mm × 12mm" → w=80, h=12), so we must convert to cm before
-   computing cm³. */
+   `item.dim.w` / `.h` are stored in MILLIMETERS by parseLagerauftrag.
+   For thermal rolls the title "57mm × 35mm × 12mm" yields dim.w=57
+   (axial width) and dim.h=35 (outer diameter). Some titles use roll
+   LENGTH instead of diameter ("57mm × 14m × 12mm"); parseLagerauftrag
+   maps those via the heights table to dim.normH (e.g. 14m → 35mm), so
+   we always prefer normH and only fall back to raw h.
+   ───────────────────────────────────────────────────────────────────
+   PHYSICAL MODEL
+   ──────────────
+   A thermal roll is a cylinder with axial width W and outer diameter D.
+   Its bounding box (the cube it occupies on a pallet) is W × D × D.
+   N rolls packed into the consumer Einheit-Karton don't tessellate
+   perfectly — square-grid cylinder packing leaves ~21% void; add
+   ~5% slack for the outer cardboard. Combined factor ≈ 1.30.
+
+   The previous formula (wCm × hCm × 1.0) was a flat cross-section
+   times a 1 cm rim — that's ~3.5× too small for a 35 mm-diameter
+   roll. With 350 Einheiten of 50-roll boxes, the under-estimate
+   showed a near-full pallet as ~22% filled. */
+const ROLL_PACK_INV = 1.30;       // cylinder→carton packing slack
+const PROD_PACK_INV = 1.10;       // produktion outer-carton slack
+const KLEBE_PACK_INV = 1.10;      // Klebeband outer-carton slack
+const TACHO_PACK_INV = 1.20;      // small spool packing
+
 function mixedItemHeuristicCm3(it) {
   const lvl = getDisplayLevel(it);
   if (lvl === 1 || lvl === 2) {
-    // Thermal roll: cross-section (cm²) × ~1cm rim, × `rollen` per Einheit
     const wCm = (it.dim?.w ?? 57) / 10;
-    const hCm = (it.dim?.h ?? 30) / 10;
-    const perRoll = Math.max(2, wCm * hCm * 1.0);
-    return perRoll * Math.max(1, it.rollen || 1);
+    const dCm = (it.dim?.normH ?? it.dim?.h ?? 35) / 10;
+    const perRollBox = Math.max(20, wCm * dCm * dCm);          // floor 20 cm³
+    return perRollBox * Math.max(1, it.rollen || 1) * ROLL_PACK_INV;
   }
-  if (lvl === 6) return 3 * Math.max(1, it.rollen || 1);    // Tachorollen Einheit
-  if (lvl === 5) return 800;                                  // Kernöl bottle
-  if (lvl === 4) return 250 * Math.max(1, it.rollen || 1);   // Produktion / Sandsäcke
-  if (lvl === 3) return 50 * Math.max(1, it.rollen || 1);    // Klebeband
-  return 200;
+  if (lvl === 6) {
+    // Tachorolle: small spool ~57×15×15 mm bounding-box → ~13 cm³ each
+    const wCm = (it.dim?.w ?? 57) / 10;
+    const dCm = (it.dim?.normH ?? it.dim?.h ?? 15) / 10;
+    const perRollBox = Math.max(8, wCm * dCm * dCm);
+    return perRollBox * Math.max(1, it.rollen || 1) * TACHO_PACK_INV;
+  }
+  if (lvl === 5) return 1000;                                    // 1L bottle + slack
+  if (lvl === 4) return 350 * Math.max(1, it.rollen || 1) * PROD_PACK_INV;
+  if (lvl === 3) return 80  * Math.max(1, it.rollen || 1) * KLEBE_PACK_INV;
+  return 250;
 }
 
 /* Per-Einheit weight heuristic for Mixed items. Prefers explicit kg/g

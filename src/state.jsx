@@ -56,6 +56,7 @@ function toLegacy(a) {
     currentPalletIdx: a.currentPalletIdx ?? 0,
     currentItemIdx:   a.currentItemIdx ?? 0,
     completedKeys:    a.completedKeys || {},
+    copiedKeys:       a.copiedKeys || {},
     palletTimings:    a.palletTimings || {},
 
     assignedToUserId:   a.assignedToUserId,
@@ -279,6 +280,18 @@ export function useAppState() {
     }
   }, [current, progressMut]);
 
+  /* Persist a "this position's Artikel-Code was copied" flag so reload
+     no longer wipes the green-chip state (CLAUDE.md Gotcha #9). Key
+     format mirrors the local Set used by Focus: `${palletIdx}|${itemIdx}`. */
+  const markCodeCopied = useCallback((palletIdx, itemIdx) => {
+    if (!current?.id) return;
+    const key = `${palletIdx}|${itemIdx}`;
+    const prev = current.copiedKeys || {};
+    if (prev[key]) return;  // already recorded — skip the round-trip
+    const copiedKeys = { ...prev, [key]: Date.now() };
+    progressMut.mutate({ id: current.id, payload: { copiedKeys } });
+  }, [current, progressMut]);
+
   /* Mark current article fertig + advance. Returns true when last article
      of the last pallet has been completed (UI uses this to auto-navigate).
 
@@ -359,14 +372,14 @@ export function useAppState() {
     queue, current, history,
     addFiles, removeFromQueue, reorderQueue: reorderQueueAction, clearQueue,
     startEntry, goToStep,
-    setCurrentPalletIdx, setCurrentItemIdx,
+    setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   }), [
     queue, current, history,
     addFiles, removeFromQueue, reorderQueueAction, clearQueue,
     startEntry, goToStep,
-    setCurrentPalletIdx, setCurrentItemIdx,
+    setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   ]);

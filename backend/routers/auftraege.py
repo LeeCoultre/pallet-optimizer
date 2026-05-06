@@ -271,6 +271,8 @@ async def update_progress(
         a.current_item_idx = payload.current_item_idx
     if payload.completed_keys is not None:
         a.completed_keys = payload.completed_keys
+    if payload.copied_keys is not None:
+        a.copied_keys = payload.copied_keys
     if payload.pallet_timings is not None:
         a.pallet_timings = payload.pallet_timings
 
@@ -334,6 +336,7 @@ async def cancel_auftrag(
     a.current_pallet_idx = None
     a.current_item_idx = None
     a.completed_keys = {}
+    a.copied_keys = {}
     a.pallet_timings = {}
 
     _audit(db, me.id, "cancel", auftrag_id=auftrag_id)

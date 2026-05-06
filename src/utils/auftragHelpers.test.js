@@ -67,9 +67,21 @@ describe('getLevel / getDisplayLevel', () => {
     expect(getLevel({ title: 'Fragile Aufkleber' })).toBe(3);
   });
 
-  it('ÖKO / phenolfrei / eco rolls → L2', () => {
+  it('ÖKO / phenolfrei → L2 (genuine eco indicators only)', () => {
     expect(getLevel({ title: 'ÖKO Thermorollen phenolfrei' })).toBe(2);
-    expect(getLevel({ title: 'ECO ROOLLS 57×40' })).toBe(2);
+    expect(getLevel({ title: 'Phenolfrei BPA-frei Thermorolle' })).toBe(2);
+  });
+
+  it('ECO ROOLLS brand alone is L1, not L2', () => {
+    // Brand prefix "ECO ROOLLS" (registered trademark) used to false-
+    // positive into L2. The vendor's catalog is mostly regular
+    // thermal paper — only count genuine öko/phenolfrei flags.
+    expect(getLevel({
+      title: 'ECO ROOLLS® EC Cash Rollen Thermopapier 57mm x 35mm x 12mm - Kassenrollen',
+    })).toBe(1);
+    expect(getLevel({ title: 'ECO ROOLLS 57×40' })).toBe(1);
+    // ECO ROOLLS that ARE explicitly öko still hit L2:
+    expect(getLevel({ title: 'ECO ROOLLS phenolfrei 80×80' })).toBe(2);
   });
 
   it('default falls through to L1 Thermorollen', () => {
@@ -265,5 +277,63 @@ describe('itemTotalVolumeCm3 + itemTotalWeightKg', () => {
     const it = mkEsku({ title: 'ESKU thermo 57×18', cartons: 5 });
     expect(itemTotalVolumeCm3(it)).toBeGreaterThan(0);
     expect(itemTotalWeightKg(it)).toBeGreaterThan(0);
+  });
+
+  it('thermal-roll volume uses 3D bounding-box (W × D × D), not flat cross-section', () => {
+    // 57mm × 35mm × 12mm roll — bounding box per roll is W × D × D.
+    // 50-roll Einheit must be roughly 50× that × packing slack ~1.30,
+    // i.e. several thousand cm³ — not under a thousand.
+    const it = mkMixed({
+      title: 'Thermorolle 57×35×12',
+      units: 1,
+      dim: { w: 57, h: 35, normW: 57, normH: 35 },
+      rollen: 50,
+    });
+    const v = itemTotalVolumeCm3(it);
+    // 5.7 × 3.5 × 3.5 × 50 × 1.30 ≈ 4534 cm³ ± slack tolerance
+    expect(v).toBeGreaterThan(3500);
+    expect(v).toBeLessThan(6000);
+  });
+
+  it('"57mm × 14m × 12mm" maps roll length to diameter via dim.normH', () => {
+    // Title encodes 14m roll-length; parser sets dim.h=14 (m) and
+    // dim.normH=35 (real diameter). Heuristic must use normH so this
+    // physical roll volume matches the 57×35 case.
+    const lengthForm = mkMixed({
+      title: 'Thermorolle 57×14m×12mm',
+      units: 1,
+      dim: { w: 57, h: 14, normW: 57, normH: 35 },
+      rollen: 50,
+    });
+    const diameterForm = mkMixed({
+      title: 'Thermorolle 57×35×12mm',
+      units: 1,
+      dim: { w: 57, h: 35, normW: 57, normH: 35 },
+      rollen: 50,
+    });
+    expect(itemTotalVolumeCm3(lengthForm)).toBeCloseTo(itemTotalVolumeCm3(diameterForm), 0);
+  });
+
+  it('heavy thermal-roll pallet (350 × 50-roll Einheiten) reaches near-full fill', () => {
+    // Mirrors P1-B3 from a real Lagerauftrag — two L1 articles totalling
+    // 350 Einheiten of 50-roll boxes. Previously rendered ~22% fill
+    // (heuristic bug). Should now read close to 1.0.
+    const PALLET_VOL_CM3 = 1.59 * 1e6;
+    const a = mkMixed({
+      title: 'THERMALKING 57×35×12 (50 Stk)',
+      units: 100,
+      dim: { w: 57, h: 35, normW: 57, normH: 35 },
+      rollen: 50,
+    });
+    const b = mkMixed({
+      title: 'ECO ROOLLS 57×35×12 (50 Stk)',
+      units: 250,
+      dim: { w: 57, h: 35, normW: 57, normH: 35 },
+      rollen: 50,
+    });
+    const totalVol = itemTotalVolumeCm3(a) + itemTotalVolumeCm3(b);
+    const fill = totalVol / PALLET_VOL_CM3;
+    expect(fill).toBeGreaterThan(0.85);    // realistic full-pallet read
+    expect(fill).toBeLessThan(1.20);       // not absurdly past capacity
   });
 });

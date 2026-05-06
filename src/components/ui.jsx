@@ -1,6 +1,7 @@
 /* Marathon · Design System v3 — переиспользуемые атомы.
    Spec: DESIGN.md. */
 
+import { useEffect, useState } from 'react';
 import { Wordmark } from './Logo.jsx';
 
 /* ─── Tokens ─────────────────────────────────────────────────────────── */
@@ -40,7 +41,7 @@ export const T = {
     mono: '"JetBrains Mono", ui-monospace, monospace',
   },
 
-  radius: { sm: 4, md: 8, lg: 12, full: 9999 },
+  radius: { sm: 4, md: 8, lg: 14, full: 9999 },
   shadow: {
     card:   '0 1px 2px rgba(0,0,0,0.03)',
     raised: '0 2px 8px rgba(0,0,0,0.06)',
@@ -66,7 +67,10 @@ export function Page({ children, style }) {
 }
 
 /* ─── Topbar ─────────────────────────────────────────────────────────── */
-/* Sticky breadcrumb topbar. crumbs: [{ label, muted? }, ...] */
+/* Sticky breadcrumb topbar.
+   crumbs: [{ label, muted?, onClick?, title? }, ...]
+   If a crumb has onClick → renders as clickable Crumb (hover lift,
+   accent on hover). The last crumb stays passive even if onClick set. */
 export function Topbar({ crumbs = [], right }) {
   return (
     <header style={{
@@ -85,13 +89,7 @@ export function Topbar({ crumbs = [], right }) {
     }}>
       {crumbs.map((c, i) => (
         <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span style={{
-            fontSize: 13,
-            color: c.muted ? T.text.subtle : T.text.primary,
-            fontWeight: 500,
-          }}>
-            {c.label}
-          </span>
+          <Crumb crumb={c} isLast={i === crumbs.length - 1} />
           {i < crumbs.length - 1 && <Sep />}
         </span>
       ))}
@@ -101,11 +99,71 @@ export function Topbar({ crumbs = [], right }) {
   );
 }
 
+function Crumb({ crumb, isLast }) {
+  const [hover, setHover] = useState(false);
+  const interactive = !!crumb.onClick && !isLast;
+  const baseColor = isLast
+    ? T.text.primary
+    : crumb.muted ? T.text.subtle : T.text.primary;
+  const color = interactive && hover ? T.accent.text : baseColor;
+
+  if (interactive) {
+    return (
+      <button
+        type="button"
+        onClick={crumb.onClick}
+        onMouseDown={(e) => e.preventDefault()}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        title={crumb.title || `Zu ${crumb.label}`}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '4px 8px',
+          margin: '0 -8px',
+          fontSize: 13,
+          fontWeight: 500,
+          fontFamily: 'inherit',
+          color,
+          background: hover ? T.accent.bg : 'transparent',
+          border: 'none',
+          borderRadius: T.radius.sm,
+          cursor: 'pointer',
+          transition: 'color 160ms ease, background 160ms ease',
+        }}
+      >
+        {crumb.label}
+      </button>
+    );
+  }
+
+  return (
+    <span style={{
+      fontSize: 13,
+      color: baseColor,
+      fontWeight: isLast ? 600 : 500,
+    }}>
+      {crumb.label}
+    </span>
+  );
+}
+
 export function Sep() {
   return <span style={{ color: T.border.strong, fontSize: 12, margin: '0 4px' }}>/</span>;
 }
 
-/* ─── Stepper ────────────────────────────────────────────────────────── */
+/* ─── Stepper (Live Progress Line) ───────────────────────────────────────
+   Single continuous line through all 4 circles (background grey + accent
+   fill that animates to the current step). Three circle states:
+     done    — accent-filled circle with check (fade-in), label primary
+     current — accent-filled circle with number + breathing pulse halo
+     todo    — outline circle with number, faded label
+
+   Mount-time stagger: circles fade-scale-in 60ms apart, then the
+   accent fill-line slides to its position. Designed to feel alive on
+   navigation, not just static.
+──────────────────────────────────────────────────────────────────────── */
 export const STEPS = [
   { n: 1, id: 'upload',    label: 'Upload',      sub: 'Datei laden' },
   { n: 2, id: 'pruefen',   label: 'Prüfen',      sub: 'Daten kontrollieren' },
@@ -113,67 +171,291 @@ export const STEPS = [
   { n: 4, id: 'abschluss', label: 'Abschluss',   sub: 'Zeit speichern' },
 ];
 
-export function StepperBar({ active, steps = STEPS }) {
+/* StepperBar — workflow tabs.
+
+   Pass `onNavigate(stepId)` to make tabs clickable. By default ANY step
+   that is not the current one is navigable (parent screen owns the
+   workflow rules); to override, pass `canNavigate(stepId) → boolean`.
+
+   When `onNavigate` is provided, also installs Alt+1..4 shortcuts at
+   document level so the worker can jump tabs without leaving the
+   keyboard. The shortcut handler is auto-cleaned on unmount. */
+export function StepperBar({ active, steps = STEPS, onNavigate, canNavigate }) {
+  // Alt+1..4 keyboard navigation — only when onNavigate is wired.
+  useEffect(() => {
+    if (!onNavigate) return undefined;
+    const onKey = (e) => {
+      if (!e.altKey) return;
+      const t = e.target;
+      if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return;
+      if (t?.isContentEditable) return;
+      const idx = parseInt(e.key, 10) - 1;
+      if (Number.isNaN(idx) || idx < 0 || idx >= steps.length) return;
+      const target = steps[idx];
+      if (!target || target.id === active) return;
+      const allowed = canNavigate ? canNavigate(target.id) : true;
+      if (!allowed) return;
+      e.preventDefault();
+      onNavigate(target.id);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [active, steps, onNavigate, canNavigate]);
+
   return (
     <div style={{
-      padding: '20px 32px',
-      background: T.bg.surface,
+      padding: '18px 32px 20px',
+      background: 'transparent',
       borderBottom: `1px solid ${T.border.primary}`,
     }}>
-      <Stepper active={active} steps={steps} />
+      <StepperKeyframes />
+      <Stepper
+        active={active}
+        steps={steps}
+        onNavigate={onNavigate}
+        canNavigate={canNavigate}
+      />
     </div>
   );
 }
 
-export function Stepper({ active, steps = STEPS }) {
-  const activeIdx = steps.findIndex((s) => s.id === active);
+/* Local keyframes scoped to this component family. Re-mounted with
+   StepperBar; keys are namespaced (mp-stp-*) so they can't clash. */
+function StepperKeyframes() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 0, maxWidth: 1180, margin: '0 auto' }}>
-      {steps.map((s, i) => {
-        const state = i < activeIdx ? 'done' : i === activeIdx ? 'current' : 'todo';
-        return (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 28, height: 28,
-                borderRadius: '50%',
-                background: state === 'current' ? T.accent.main
-                  : state === 'done' ? T.status.success.main
-                  : T.bg.surface3,
-                color: state === 'todo' ? T.text.faint : '#fff',
-                fontSize: 13,
-                fontWeight: 600,
-              }}>
-                {state === 'done' ? (
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path d="M3 7l3 3 5-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                ) : s.n}
-              </span>
-              <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-                <span style={{
-                  fontSize: 13.5,
-                  fontWeight: state === 'current' ? 600 : 500,
-                  color: state === 'todo' ? T.text.faint : T.text.primary,
-                }}>{s.label}</span>
-                <span style={{ fontSize: 11.5, color: T.text.subtle, marginTop: 2 }}>{s.sub}</span>
-              </div>
-            </div>
-            {i < steps.length - 1 && (
-              <span style={{
-                flex: 1,
-                height: 1,
-                margin: '0 16px',
-                background: state === 'done' ? T.status.success.main : T.border.primary,
-              }} />
-            )}
-          </div>
-        );
-      })}
+    <style>{`
+      @keyframes mp-stp-pop {
+        0%   { opacity: 0; transform: scale(0.85); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      @keyframes mp-stp-pulse {
+        0%   { box-shadow: 0 0 0 0   var(--accent, #FF5B1F); opacity: 0.55; }
+        70%  { box-shadow: 0 0 0 9px transparent; opacity: 0; }
+        100% { box-shadow: 0 0 0 0   transparent; opacity: 0; }
+      }
+      @keyframes mp-stp-check {
+        0%   { opacity: 0; transform: scale(0.6); }
+        60%  { opacity: 1; transform: scale(1.1); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+    `}</style>
+  );
+}
+
+export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }) {
+  const activeIdx = steps.findIndex((s) => s.id === active);
+  const n = steps.length;
+
+  /* Continuous progress line geometry — circle centers sit at
+     (i + 0.5) / n of the row width. The line stretches from the
+     first to the last center; the fill width is proportional to
+     activeIdx. */
+  const trackLeftPct = 50 / n;                    // left of background
+  const trackWidthPct = ((n - 1) / n) * 100;      // background full width
+  const fillWidthPct = (activeIdx / n) * 100;     // accent fill width
+
+  return (
+    <div style={{
+      maxWidth: 1080,
+      margin: '0 auto',
+      position: 'relative',
+    }}>
+      {/* Background track (full grey hairline through all circles) */}
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: `${trackLeftPct}%`,
+          width: `${trackWidthPct}%`,
+          top: 16,                                /* half of 32px circle */
+          height: 1,
+          background: T.border.primary,
+          zIndex: 0,
+        }}
+      />
+      {/* Accent fill — animates to current position */}
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: `${trackLeftPct}%`,
+          width: `${fillWidthPct}%`,
+          top: 16,
+          height: 1,
+          background: T.accent.main,
+          zIndex: 1,
+          transition: 'width 480ms cubic-bezier(0.16, 1, 0.3, 1)',
+        }}
+      />
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${n}, 1fr)`,
+        alignItems: 'flex-start',
+        position: 'relative',
+        zIndex: 2,
+      }}>
+        {steps.map((s, i) => {
+          const state = i < activeIdx ? 'done' : i === activeIdx ? 'current' : 'todo';
+          const isCurrent = state === 'current';
+          /* Clickable when onNavigate is wired and either canNavigate
+             allows it OR (default) it's any non-current step. */
+          let clickable = false;
+          if (onNavigate && !isCurrent) {
+            clickable = canNavigate ? !!canNavigate(s.id) : true;
+          }
+          const isBlocked = onNavigate && !isCurrent && !clickable;
+          return (
+            <StepCell
+              key={s.id}
+              step={s}
+              state={state}
+              mountDelayMs={i * 60}
+              clickable={clickable}
+              isBlocked={isBlocked}
+              shortcut={i + 1}
+              onClick={clickable ? () => onNavigate(s.id) : undefined}
+            />
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+function StepCell({
+  step, state, mountDelayMs = 0,
+  clickable = false, isBlocked = false, shortcut = null, onClick,
+}) {
+  const isDone = state === 'done';
+  const isCurrent = state === 'current';
+  const [hover, setHover] = useState(false);
+
+  const circleBg = isDone || isCurrent ? T.accent.main : T.bg.surface;
+  const circleColor = isDone || isCurrent ? '#fff' : T.text.faint;
+  const circleBorder = isDone || isCurrent ? T.accent.main : T.border.strong;
+
+  const labelColor = (isCurrent || isDone) ? T.text.primary : T.text.faint;
+  const labelWeight = isCurrent ? 600 : 500;
+  const subColor = (isCurrent || isDone) ? T.text.subtle : T.text.faint;
+
+  const Wrapper = clickable ? 'button' : 'div';
+  const wrapperProps = clickable ? {
+    type: 'button',
+    onClick,
+    onMouseDown: (e) => e.preventDefault(),
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => setHover(false),
+    title: `Zu ${step.label}` + (shortcut ? ` (Alt+${shortcut})` : ''),
+  } : {
+    title: isCurrent
+      ? `Aktueller Schritt: ${step.label}`
+      : isBlocked ? `${step.label} — noch nicht verfügbar`
+      : step.label,
+  };
+
+  return (
+    <Wrapper
+      {...wrapperProps}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 12,
+        position: 'relative',
+        animation: `mp-stp-pop 320ms cubic-bezier(0.16, 1, 0.3, 1) ${mountDelayMs}ms backwards`,
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        cursor: clickable ? 'pointer' : isBlocked ? 'not-allowed' : 'default',
+        opacity: isBlocked ? 0.55 : 1,
+        fontFamily: 'inherit',
+        textAlign: 'center',
+      }}>
+      {/* Circle row — must be first child so its center sits at top: 16px,
+          which is exactly where the progress line is drawn. */}
+      <div style={{
+        position: 'relative',
+        width: 32,
+        height: 32,
+        flexShrink: 0,
+      }}>
+        {isCurrent && (
+          <span
+            aria-hidden
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: '50%',
+              animation: 'mp-stp-pulse 2.4s ease-out infinite',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+        <span style={{
+          position: 'relative',
+          zIndex: 2,
+          width: 32,
+          height: 32,
+          borderRadius: '50%',
+          background: circleBg,
+          color: circleColor,
+          border: `1px solid ${clickable && hover ? T.accent.hover : circleBorder}`,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 14,
+          fontWeight: 600,
+          fontFamily: T.font.ui,
+          fontVariantNumeric: 'tabular-nums',
+          transition: 'all 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+          boxShadow: isCurrent
+            ? `0 0 0 5px ${T.accent.bg}`
+            : (clickable && hover) ? `0 0 0 5px ${T.accent.bg}` : 'none',
+          transform: clickable && hover ? 'translateY(-2px) scale(1.04)' : 'none',
+        }}>
+          {isDone ? (
+            <svg
+              key="check"
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              fill="none"
+              style={{ animation: 'mp-stp-check 280ms cubic-bezier(0.16, 1, 0.3, 1)' }}
+            >
+              <path d="M3 7l3 3 5-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : step.n}
+        </span>
+      </div>
+
+      {/* Label + sub stacked under circle, centered. Live-region for
+          screen readers can be added later if needed. */}
+      <div style={{
+        textAlign: 'center',
+        lineHeight: 1.2,
+      }}>
+        <div style={{
+          fontSize: 14,
+          fontWeight: labelWeight,
+          color: labelColor,
+          letterSpacing: '-0.005em',
+          transition: 'color 240ms',
+        }}>
+          {step.label}
+        </div>
+        <div style={{
+          marginTop: 4,
+          fontSize: 12,
+          color: subColor,
+          fontWeight: 400,
+          lineHeight: 1.3,
+          transition: 'color 240ms',
+        }}>
+          {step.sub}
+        </div>
+      </div>
+    </Wrapper>
   );
 }
 

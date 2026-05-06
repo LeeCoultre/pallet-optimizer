@@ -38,12 +38,14 @@ async def test_full_lifecycle(client, admin, as_user):
         "current_pallet_idx": 0,
         "current_item_idx": 1,
         "completed_keys": {"P1|0|A": 12345},
+        "copied_keys": {"0|0": 12300, "0|1": 12345},
     })
     assert r.status_code == 200
     p = r.json()
     assert p["step"] == "focus"
     assert p["current_item_idx"] == 1
     assert p["completed_keys"] == {"P1|0|A": 12345}
+    assert p["copied_keys"] == {"0|0": 12300, "0|1": 12345}
 
     # 5. Complete
     r = await client.post(f"/api/auftraege/{a['id']}/complete")
@@ -76,4 +78,5 @@ async def test_cancel_returns_to_queue(client, admin, as_user):
     assert body["status"] == "queued"
     assert body["assigned_to_user_id"] is None
     assert body["completed_keys"] == {}
+    assert body["copied_keys"] == {}
     assert body["pallet_timings"] == {}

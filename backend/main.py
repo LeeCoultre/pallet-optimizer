@@ -10,7 +10,18 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db
-from .routers import admin, auftraege, history, packing, sku_dimensions, users, xlsx_import
+from .routers import (
+    activity,
+    admin,
+    auftraege,
+    exports,
+    history,
+    packing,
+    search,
+    sku_dimensions,
+    users,
+    xlsx_import,
+)
 
 
 # ─── Production safety: refuse to start with ALLOW_ANONYMOUS on Railway ──
@@ -78,6 +89,9 @@ app.include_router(users.router)      # /api/users, /api/me
 app.include_router(history.router)    # /api/history
 app.include_router(admin.router)      # /api/admin/*
 app.include_router(sku_dimensions.router)  # /api/sku-dimensions/*, /api/admin/sku-dimensions/*
+app.include_router(search.router)     # /api/search
+app.include_router(activity.router)   # /api/activity/live, /api/activity/shift
+app.include_router(exports.router)    # /api/exports/auftraege.xlsx
 
 
 @app.get("/health")

@@ -147,12 +147,12 @@ function briefFocus(current, now) {
 
   const meta = LEVEL_META[derivePalletLevel(pallet)] || LEVEL_META[1];
 
-  // Code copy state — keyed by `${palletId}|${itemIdx}|${code}` in
-  // completedKeys. Treat the current row's presence as "copied" (the
-  // worker has finished it).
-  const code = item?.fnsku || item?.sku || `pos-${itemIdx}`;
-  const completedKey = `${pallet.id}|${itemIdx}|${code}`;
-  const codeDone = !!current.completedKeys?.[completedKey];
+  // Code copy state — keyed by `${palletIdx}|${itemIdx}` in copiedKeys
+  // (server-persisted as of the cinematic Focus rewrite). The Island
+  // signature flips on copy, not on fertig — this is what drives the
+  // ring-pulse micro-interaction tied to the copy gesture.
+  const copiedKey = `${palletIdx}|${itemIdx}`;
+  const codeDone = !!current.copiedKeys?.[copiedKey];
 
   // Next item preview — same pallet first, then first item of next pallet.
   const nextItem = items[itemIdx + 1] || pallets[palletIdx + 1]?.items?.[0] || null;

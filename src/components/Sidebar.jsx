@@ -1,27 +1,32 @@
-/* Sidebar — left navigation rail.
+/* Sidebar — Marathon navigation rail.
 
-   Five Sprint-3 polish features layered on top of the original v3 design:
-     1. Collapse toggle (icon-only mode), persisted in localStorage,
-        exposes width via --sidebar-width so floating bars in
-        Pruefen/Focus/Abschluss reposition automatically.
-     2. Active-workflow mini-progress block (stepper + counter).
-     3. Quick "Start" button on queue rows, visible on hover.
-     4. Native HTML5 drag-and-drop reordering of queue items.
-     5. "Heute" stats line aggregated from history. */
+   Design ethos: subdued accent. The orange accent is reserved for
+   STATUS (pulse dot) and ACTION (CTA buttons, accent rail). Active
+   nav items are intentionally neutral — a single 2px accent rail
+   slides between them like a Linear/Vercel cursor, the rest of the
+   item is a soft surface3 fill with normal-weight text. This keeps
+   the eye on the workspace, not the navigation.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+   Composition:
+     • WorkspaceHeader  — hairline status ring + operator badge + shift timer
+     • QuickSearchRail  — compact ⌘K affordance under the header
+     • NavBlock         — measured active rail that animates between groups
+     • CurrentProgress  — slot for the active workflow (only when current)
+     • SidebarFooter    — UserSwitcher + Today pulse + sparkline + ⌘K iconlet
+*/
+
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '../state.jsx';
 import { useMe } from '../hooks/useMe.js';
+import { useApiHealth } from '../hooks/useApiHealth.js';
+import { useMyShift } from '../hooks/useMyShift.js';
 import { Mark } from './Logo.jsx';
-import { T, Badge } from './ui.jsx';
+import { T } from './ui.jsx';
 import { UserSwitcher } from './UserSwitcher.jsx';
 
-/* ─── Sidebar width: legacy export retained but prefer var(--sidebar-width)
-   in screens. The CSS var is updated by useCollapsedSidebar() below. */
-export const SIDEBAR_WIDTH = 224;
+const SIZES = { expanded: 232, collapsed: 56 };
+export const SIDEBAR_WIDTH = SIZES.expanded;
 
-const W_EXPANDED  = 224;
-const W_COLLAPSED = 64;
 const COLLAPSED_KEY = 'marathon.sidebar.collapsed.v1';
 
 function useCollapsedSidebar() {
@@ -31,51 +36,74 @@ function useCollapsedSidebar() {
   useEffect(() => {
     try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch { /* ignore */ }
     document.documentElement.style.setProperty(
-      '--sidebar-width', `${collapsed ? W_COLLAPSED : W_EXPANDED}px`,
+      '--sidebar-width', `${collapsed ? SIZES.collapsed : SIZES.expanded}px`,
     );
   }, [collapsed]);
   return [collapsed, setCollapsed];
 }
 
-/* ════════════════════════════════════════════════════════════════════════ */
+/* ─── Groups ────────────────────────────────────────────────────────
+   Sub-text was removed — Linear-style nav lives by the label alone.
+   The hover-peek tooltip in collapsed mode shows the long form. */
+function buildGroups({ current, queue, history, me }) {
+  return [
+    {
+      id: 'work',
+      label: 'Work',
+      items: [
+        { id: 'workspace',     label: current ? 'Workflow' : 'Upload',
+          peek: current ? 'Aktiver Auftrag' : 'Datei laden',
+          icon: <IconWorkflow /> },
+        { id: 'warteschlange', label: 'Warteschlange',
+          peek: queue.length > 0 ? `${queue.length} bereit` : 'Reihenfolge',
+          counter: queue.length > 0 ? queue.length : null,
+          icon: <IconQueue /> },
+        { id: 'suche',         label: 'Suche',
+          peek: 'FNSKU · SKU · EAN · SN',
+          icon: <IconSearch /> },
+      ],
+    },
+    {
+      id: 'insight',
+      label: 'Insight',
+      items: [
+        { id: 'historie', label: 'Historie',
+          peek: 'Abgeschlossene Aufträge',
+          counter: history.length > 0 ? history.length : null,
+          icon: <IconHistory /> },
+        { id: 'live',     label: 'Live',
+          peek: 'Aktivität · Schichtfeed',
+          icon: <IconLive /> },
+        { id: 'berichte', label: 'Berichte',
+          peek: 'xlsx-Export',
+          icon: <IconReport /> },
+      ],
+    },
+    {
+      id: 'system',
+      label: 'System',
+      items: [
+        { id: 'einstellungen', label: 'Einstellungen',
+          peek: 'Akzent · Experimente',
+          icon: <IconSettings /> },
+        me?.role === 'admin' && {
+          id: 'admin', label: 'Admin',
+          peek: 'Übersicht & Benutzer',
+          icon: <IconAdmin /> },
+      ].filter(Boolean),
+    },
+  ];
+}
 
-export function Sidebar({ route, onRoute }) {
+export function Sidebar({ route, onRoute, onOpenCommand }) {
   const { queue, history, current } = useAppState();
   const me = useMe().data;
   const [collapsed, setCollapsed] = useCollapsedSidebar();
-
-  const items = [
-    {
-      id: 'workspace',
-      label: current ? 'Workflow' : 'Upload',
-      sub:   current ? 'Auftrag bearbeiten' : 'Datei laden',
-      counter: queue.length > 0 ? queue.length : null,
-      icon: <IconUpload />,
-    },
-    {
-      id: 'historie',
-      label: 'Historie',
-      sub: 'Abgeschlossene Aufträge',
-      counter: history.length > 0 ? history.length : null,
-      icon: <IconHistory />,
-    },
-    {
-      id: 'einstellungen',
-      label: 'Einstellungen',
-      sub: 'System & Defaults',
-      icon: <IconSettings />,
-    },
-    me?.role === 'admin' && {
-      id: 'admin',
-      label: 'Admin',
-      sub: 'Übersicht & Benutzer',
-      icon: <IconAdmin />,
-    },
-  ].filter(Boolean);
+  const groups = buildGroups({ current, queue, history, me });
 
   return (
     <aside style={{
-      width: collapsed ? W_COLLAPSED : W_EXPANDED,
+      width: collapsed ? SIZES.collapsed : SIZES.expanded,
       height: '100vh',
       position: 'sticky',
       top: 0,
@@ -86,235 +114,497 @@ export function Sidebar({ route, onRoute }) {
       flexShrink: 0,
       zIndex: 20,
       fontFamily: T.font.ui,
-      transition: 'width 220ms cubic-bezier(0.16, 1, 0.3, 1)',
+      transition: 'width 240ms cubic-bezier(0.16, 1, 0.3, 1)',
       overflow: 'hidden',
     }}>
-      <Brand collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      <SidebarStyles />
 
-      <nav style={{
-        padding: collapsed ? '12px 8px' : '12px 10px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
-      }}>
-        {items.map((it) => (
-          <NavItem
-            key={it.id}
-            item={it}
-            active={route === it.id}
-            onClick={() => onRoute(it.id)}
-            collapsed={collapsed}
-          />
-        ))}
-      </nav>
+      <WorkspaceHeader
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
+      />
 
-      {/* QueueSection has flex:1 internally — let it fill all remaining
-          space so long queues actually scroll inside their container.
-          When collapsed we render a plain spacer instead, otherwise
-          UserSwitcher would float to the top. */}
-      {!collapsed
-        ? <QueueSection />
-        : <div style={{ flex: 1, minHeight: 0 }} />}
-
-      {current && !collapsed && (
-        <CurrentProgress current={current} onClick={() => onRoute('workspace')} />
+      {!collapsed && onOpenCommand && (
+        <QuickSearchRail onOpen={onOpenCommand} />
       )}
 
-      <UserSwitcher collapsed={collapsed} />
+      <NavBlock
+        route={route}
+        onRoute={onRoute}
+        groups={groups}
+        collapsed={collapsed}
+      />
 
-      {!collapsed && <TodayStats history={history} />}
+      <div style={{ flex: 1, minHeight: 0 }} />
 
-      {!collapsed && (
-        <div style={{
-          padding: '4px 18px 14px',
-          fontSize: 10.5,
-          color: T.text.faint,
-        }}>
-          Marathon · v 2.1.0
-        </div>
+      {current && (
+        <CurrentProgress
+          current={current}
+          collapsed={collapsed}
+          onClick={() => onRoute('workspace')}
+        />
       )}
+
+      <SidebarFooter
+        collapsed={collapsed}
+        history={history}
+        onOpenCommand={onOpenCommand}
+      />
     </aside>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   BRAND + COLLAPSE TOGGLE
+   GLOBAL STYLES — scoped via class names. Hairline scrollbar,
+   keyframes, rail transitions.
    ════════════════════════════════════════════════════════════════════════ */
+function SidebarStyles() {
+  return (
+    <style>{`
+      .mp-sidebar-scroll::-webkit-scrollbar {
+        width: 4px;
+      }
+      .mp-sidebar-scroll::-webkit-scrollbar-thumb {
+        background: ${T.border.primary};
+        border-radius: 4px;
+      }
+      .mp-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+        background: ${T.border.strong};
+      }
+      .mp-sidebar-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: ${T.border.primary} transparent;
+      }
+      @keyframes mp-counter-pop {
+        0%   { transform: scale(1); }
+        45%  { transform: scale(1.18); }
+        100% { transform: scale(1); }
+      }
+      @keyframes mp-status-ring {
+        0%   { box-shadow: 0 0 0 0 var(--accent-main); opacity: 0.6; }
+        70%  { box-shadow: 0 0 0 5px transparent; opacity: 0; }
+        100% { box-shadow: 0 0 0 0 transparent; opacity: 0; }
+      }
+    `}</style>
+  );
+}
 
-function Brand({ collapsed, onToggle }) {
+/* ════════════════════════════════════════════════════════════════════════
+   WORKSPACE HEADER — hairline status ring around the logo, compact
+   operator badge under it. Status pulse: 1px ring colour change,
+   no thick double-rings.
+   ════════════════════════════════════════════════════════════════════════ */
+const STATUS_TONE = {
+  ok:       { dot: '#10B981', ring: '#A7F3D0', label: 'Online' },
+  degraded: { dot: '#F59E0B', ring: '#FDE68A', label: 'DB-Fehler' },
+  offline:  { dot: '#9CA3AF', ring: '#E5E7EB', label: 'Offline' },
+};
+
+function WorkspaceHeader({ collapsed, onToggle }) {
+  const me = useMe().data;
+  const healthQ = useApiHealth();
+  const shiftQ = useMyShift();
+  const [, forceTick] = useState(0);
+
+  useEffect(() => {
+    if (!shiftQ.data?.startedAt) return undefined;
+    const id = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [shiftQ.data?.startedAt]);
+
+  const status = healthQ.data?.status || 'offline';
+  const tone = STATUS_TONE[status] || STATUS_TONE.offline;
+  const elapsedMs = healthQ.data?.elapsedMs;
+  const statusTitle = status === 'ok'
+    ? `Online${elapsedMs != null ? ` · ${elapsedMs} ms` : ''}`
+    : status === 'degraded' ? 'API ok, DB nicht erreichbar'
+    : 'Backend nicht erreichbar';
+
+  const shiftSec = computeLiveShiftSec(shiftQ.data);
+  const shiftLabel = shiftSec != null ? formatHMS(shiftSec) : '—';
+  const initial = (me?.name || '·').trim().charAt(0).toUpperCase();
+
   return (
     <div style={{
-      padding: collapsed ? '20px 0' : '20px 18px',
+      padding: collapsed ? '18px 0 10px' : '18px 16px 14px',
       borderBottom: `1px solid ${T.border.primary}`,
       display: 'flex',
-      alignItems: 'center',
-      justifyContent: collapsed ? 'center' : 'flex-start',
-      gap: 10,
+      flexDirection: 'column',
+      alignItems: collapsed ? 'center' : 'stretch',
+      gap: collapsed ? 10 : 12,
       position: 'relative',
     }}>
-      <Mark size={collapsed ? 32 : 28} />
-      {!collapsed && (
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+        gap: 10,
+      }}>
+        <span
+          title={statusTitle}
+          style={{
+            position: 'relative',
+            display: 'inline-flex',
+            padding: 2,
+            borderRadius: 9,
+            border: `1px solid ${tone.ring}`,
+            transition: 'border-color 240ms',
+          }}
+        >
+          <Mark size={collapsed ? 28 : 24} />
           <span style={{
-            fontSize: 14,
+            position: 'absolute',
+            right: -2,
+            bottom: -2,
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: tone.dot,
+            border: `2px solid ${T.bg.surface}`,
+          }} />
+        </span>
+
+        {!collapsed && (
+          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15, minWidth: 0, flex: 1 }}>
+            <span style={{
+              fontSize: 13.5,
+              fontWeight: 500,
+              color: T.text.primary,
+              letterSpacing: '-0.012em',
+            }}>
+              Marathon
+            </span>
+            <span style={{
+              fontSize: 10,
+              color: T.text.faint,
+              fontWeight: 500,
+              fontFamily: T.font.mono,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              marginTop: 1,
+            }}>
+              {tone.label}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {!collapsed && me && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 9,
+          padding: '7px 10px',
+          background: T.bg.surface2,
+          border: `1px solid ${T.border.primary}`,
+          borderRadius: 8,
+        }}>
+          <span style={{
+            width: 20,
+            height: 20,
+            borderRadius: '50%',
+            background: T.accent.main,
+            color: '#fff',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 10,
             fontWeight: 600,
-            color: T.text.primary,
-            letterSpacing: '-0.01em',
+            flexShrink: 0,
+            letterSpacing: 0,
           }}>
-            Marathon
+            {initial}
           </span>
-          <span style={{
-            fontSize: 11.5,
-            color: T.text.subtle,
-            fontWeight: 500,
-          }}>
-            Lager
-          </span>
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.15 }}>
+            <div style={{
+              fontSize: 11.5,
+              fontWeight: 500,
+              color: T.text.primary,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {me.name}
+            </div>
+            <div style={{
+              fontSize: 9.5,
+              color: T.text.faint,
+              fontVariantNumeric: 'tabular-nums',
+              fontFamily: T.font.mono,
+              marginTop: 1,
+              letterSpacing: '0.04em',
+            }}>
+              {shiftLabel}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Collapse toggle — chevron rotates with state */}
-      <button
-        onClick={onToggle}
-        title={collapsed ? 'Sidebar ausklappen' : 'Sidebar einklappen'}
-        style={{
-          position: 'absolute',
-          right: collapsed ? 'auto' : 8,
-          left:  collapsed ? '50%' : 'auto',
-          bottom: collapsed ? -12 : 'auto',
-          top:    collapsed ? 'auto' : '50%',
-          transform: collapsed
-            ? 'translateX(-50%)'
-            : 'translateY(-50%)',
-          width: 22,
-          height: 22,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: T.bg.surface,
-          border: `1px solid ${T.border.strong}`,
-          borderRadius: '50%',
-          color: T.text.subtle,
-          cursor: 'pointer',
-          padding: 0,
-          transition: 'background 120ms, color 120ms',
-          zIndex: 1,
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = T.accent.bg;
-          e.currentTarget.style.color = T.accent.main;
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = T.bg.surface;
-          e.currentTarget.style.color = T.text.subtle;
-        }}
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10" style={{
-          transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)',
-          transition: 'transform 200ms',
+      <CollapseToggle collapsed={collapsed} onClick={onToggle} />
+    </div>
+  );
+}
+
+function CollapseToggle({ collapsed, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      title={collapsed ? 'Sidebar ausklappen' : 'Sidebar einklappen'}
+      style={{
+        /* Expanded: anchored to the bottom-right corner of the header
+           via absolute positioning. Collapsed: a centred flex-child so
+           the natural gap between header and nav appears below it. */
+        position: collapsed ? 'static' : 'absolute',
+        right: collapsed ? 'auto' : 6,
+        bottom: collapsed ? 'auto' : 6,
+        width: 18,
+        height: 18,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: T.bg.surface,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: '50%',
+        color: T.text.faint,
+        cursor: 'pointer',
+        padding: 0,
+        transition: 'all 160ms',
+        zIndex: 1,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = T.text.subtle;
+        e.currentTarget.style.color = T.text.secondary;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = T.border.primary;
+        e.currentTarget.style.color = T.text.faint;
+      }}
+    >
+      <svg width="8" height="8" viewBox="0 0 8 8" style={{
+        transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)',
+        transition: 'transform 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+      }}>
+        <path d="M3 1.5l2.5 2.5-2.5 2.5" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   QUICK-SEARCH RAIL — Cursor-style. A single non-input row, click
+   opens the CommandPalette. Cheaper than a real input + we don't
+   accidentally shadow the global ⌘K listener.
+   ════════════════════════════════════════════════════════════════════════ */
+function QuickSearchRail({ onOpen }) {
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
+  return (
+    <button
+      onClick={onOpen}
+      style={{
+        margin: '12px 12px 4px',
+        padding: '7px 10px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        background: T.bg.surface2,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: 8,
+        cursor: 'pointer',
+        fontFamily: T.font.ui,
+        transition: 'background 160ms, border-color 160ms',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = T.bg.surface3;
+        e.currentTarget.style.borderColor = T.border.strong;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = T.bg.surface2;
+        e.currentTarget.style.borderColor = T.border.primary;
+      }}
+    >
+      <span style={{ color: T.text.faint, display: 'inline-flex' }}>
+        <IconSearch />
+      </span>
+      <span style={{ flex: 1, textAlign: 'left', fontSize: 12, color: T.text.faint, fontWeight: 400 }}>
+        Suchen oder springen…
+      </span>
+      <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 22,
+        height: 16,
+        padding: '0 4px',
+        fontSize: 9.5,
+        fontWeight: 600,
+        color: T.text.faint,
+        background: T.bg.surface,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: 3,
+        fontFamily: T.font.mono,
+        letterSpacing: '0.04em',
+      }}>
+        {isMac ? '⌘K' : 'Ctrl K'}
+      </span>
+    </button>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   NAV BLOCK — measures the active item and renders a single accent
+   rail at its position. The rail moves between groups, not just
+   inside one. Layout-effect ensures we measure AFTER children paint.
+   ════════════════════════════════════════════════════════════════════════ */
+function NavBlock({ route, onRoute, groups, collapsed }) {
+  return (
+    <nav
+      className="mp-sidebar-scroll"
+      style={{
+        position: 'relative',
+        padding: collapsed ? '8px 8px 4px' : '12px 10px 4px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        overflowY: 'auto',
+        flexShrink: 0,
+        maxHeight: '60vh',
+      }}
+    >
+      {groups.map((group, gIdx) => (
+        <NavGroup
+          key={group.id}
+          label={group.label}
+          collapsed={collapsed}
+          isFirst={gIdx === 0}
+        >
+          {group.items.map((item) => (
+            <NavItem
+              key={item.id}
+              item={item}
+              active={route === item.id}
+              onClick={() => onRoute(item.id)}
+              collapsed={collapsed}
+            />
+          ))}
+        </NavGroup>
+      ))}
+    </nav>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   NAV GROUP — mono-caps section labels with generous whitespace.
+   ════════════════════════════════════════════════════════════════════════ */
+function NavGroup({ label, isFirst, collapsed, children }) {
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 1,
+      paddingTop: isFirst ? 0 : 14,
+    }}>
+      {!collapsed && (
+        <div style={{
+          padding: '2px 12px 6px',
+          fontSize: 9.5,
+          fontWeight: 500,
+          color: T.text.faint,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          fontFamily: T.font.mono,
         }}>
-          <path d="M3 2l3 3-3 3" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+          {label}
+        </div>
+      )}
+      {collapsed && !isFirst && (
+        <div style={{
+          height: 1,
+          margin: '8px 16px 8px',
+          background: T.border.primary,
+          opacity: 0.6,
+        }} />
+      )}
+      {children}
     </div>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   NAV ITEM (collapse-aware)
+   NAV ITEM — neutral active state, single-line label, optional
+   counter. Sub-text gone. In collapsed mode, hover surfaces a peek
+   tooltip with label + peek string.
    ════════════════════════════════════════════════════════════════════════ */
-
 function NavItem({ item, active, onClick, collapsed }) {
-  return (
+  const btnRef = useRef(null);
+  const [hover, setHover] = useState(false);
+
+  const setBoth = (el) => {
+    btnRef.current = el;
+  };
+
+  const button = (
     <button
+      ref={setBoth}
       onClick={onClick}
-      title={collapsed ? `${item.label} — ${item.sub}` : undefined}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: collapsed ? 'center' : 'flex-start',
-        gap: 10,
+        gap: 9,
         width: '100%',
-        padding: collapsed ? '10px 0' : '8px 10px',
-        background: active ? T.accent.bg : 'transparent',
+        padding: collapsed ? '9px 0' : '7px 10px 7px 14px',
+        background: active
+          ? T.bg.surface3
+          : (hover ? T.bg.surface2 : 'transparent'),
         border: 0,
-        borderRadius: T.radius.md,
+        borderRadius: 6,
         cursor: 'pointer',
         textAlign: 'left',
-        transition: 'background 150ms',
+        transition: 'background 140ms cubic-bezier(0.16, 1, 0.3, 1)',
         fontFamily: T.font.ui,
         position: 'relative',
-      }}
-      onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.background = T.bg.surface2;
-      }}
-      onMouseLeave={(e) => {
-        if (!active) e.currentTarget.style.background = 'transparent';
       }}
     >
       <span style={{
         display: 'inline-flex',
-        width: 18,
-        height: 18,
+        width: 16,
+        height: 16,
         flexShrink: 0,
-        color: active ? T.accent.main : T.text.subtle,
+        color: active ? T.text.primary : T.text.subtle,
+        transition: 'color 140ms',
       }}>
         {item.icon}
       </span>
 
       {!collapsed && (
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 13.5,
-            fontWeight: active ? 600 : 500,
-            color: active ? T.accent.text : T.text.primary,
-            letterSpacing: '-0.005em',
-            lineHeight: 1.2,
-          }}>
-            {item.label}
-          </div>
-          <div style={{
-            fontSize: 11.5,
-            color: T.text.subtle,
-            marginTop: 2,
-            lineHeight: 1.2,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            {item.sub}
-          </div>
-        </div>
-      )}
-
-      {item.counter != null && !collapsed && (
         <span style={{
-          minWidth: 20,
-          height: 20,
-          padding: '0 6px',
-          background: active ? T.accent.main : T.bg.surface3,
-          color: active ? '#fff' : T.text.secondary,
-          fontSize: 11,
-          fontWeight: 600,
-          fontVariantNumeric: 'tabular-nums',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: T.radius.full,
-          letterSpacing: '0.01em',
+          flex: 1,
+          minWidth: 0,
+          fontSize: 12.5,
+          fontWeight: active ? 500 : 400,
+          color: active ? T.text.primary : T.text.secondary,
+          letterSpacing: '-0.005em',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
         }}>
-          {item.counter}
+          {item.label}
         </span>
       )}
 
-      {/* Collapsed mode: tiny dot replaces full counter */}
+      {item.counter != null && !collapsed && (
+        <Counter value={item.counter} active={active} />
+      )}
+
       {item.counter != null && collapsed && (
         <span style={{
           position: 'absolute',
           top: 6,
           right: 8,
-          width: 8,
-          height: 8,
+          width: 6,
+          height: 6,
           borderRadius: '50%',
           background: T.accent.main,
           border: `1.5px solid ${T.bg.surface}`,
@@ -322,308 +612,143 @@ function NavItem({ item, active, onClick, collapsed }) {
       )}
     </button>
   );
-}
 
-/* ════════════════════════════════════════════════════════════════════════
-   QUEUE SECTION (drop zone + DnD list + quick start)
-   ════════════════════════════════════════════════════════════════════════ */
-
-function QueueSection() {
-  const { queue, current, addFiles, removeFromQueue, startEntry, reorderQueue } = useAppState();
-  const [over, setOver] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [dragIdx, setDragIdx] = useState(null);
-  const [dropIdx, setDropIdx] = useState(null);
-  const inputRef = useRef(null);
-
-  const handleFiles = async (files) => {
-    const arr = Array.from(files || []).filter((f) => /\.docx$/i.test(f.name));
-    if (!arr.length) return;
-    setBusy(true);
-    try {
-      const built = await addFiles(arr);
-      if (!current && built[0]?.status === 'ready') {
-        setTimeout(() => startEntry(built[0].id), 80);
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onDropRow = (toIdx) => {
-    if (dragIdx == null || dragIdx === toIdx) {
-      setDragIdx(null); setDropIdx(null);
-      return;
-    }
-    reorderQueue(dragIdx, toIdx);
-    setDragIdx(null); setDropIdx(null);
-  };
+  if (!collapsed || !hover) return button;
 
   return (
-    <div style={{
-      flex: 1,
-      minHeight: 0,
-      borderTop: `1px solid ${T.border.primary}`,
-      padding: '12px 12px 8px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8,
-    }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '0 4px',
-      }}>
-        <span style={{
-          fontSize: 11,
-          fontWeight: 500,
-          color: T.text.subtle,
-          textTransform: 'uppercase',
-          letterSpacing: '0.04em',
-        }}>
-          Warteschlange
-        </span>
-        <span style={{ flex: 1 }} />
-        <span style={{
-          fontSize: 11,
-          color: queue.length > 0 ? T.text.secondary : T.text.faint,
-          fontWeight: 500,
-          fontVariantNumeric: 'tabular-nums',
-        }}>
-          {queue.length}
-        </span>
-      </div>
-
-      {/* Drop / pick */}
-      <button
-        onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); handleFiles(e.dataTransfer.files); }}
-        disabled={busy}
-        style={{
-          padding: '10px 8px',
-          background: over ? T.accent.bg : T.bg.surface2,
-          border: `1px dashed ${over ? T.accent.main : T.border.strong}`,
-          borderRadius: T.radius.md,
-          cursor: busy ? 'wait' : 'pointer',
-          transition: 'background 150ms, border-color 150ms',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 3,
-          fontFamily: T.font.ui,
-        }}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".docx"
-          multiple
-          style={{ display: 'none' }}
-          onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }}
-        />
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M8 3v10M3 8h10" stroke={over ? T.accent.main : T.text.subtle} strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-        <span style={{
-          fontSize: 12,
-          fontWeight: 500,
-          color: over ? T.accent.text : T.text.secondary,
-        }}>
-          {busy ? 'Wird verarbeitet…' : 'Datei hinzufügen'}
-        </span>
-        <span style={{ fontSize: 10.5, color: T.text.faint }}>
-          .docx · klick oder drop
-        </span>
-      </button>
-
-      {/* List */}
-      {queue.length > 0 && (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 4,
-          overflowY: 'auto',
-          minHeight: 0,
-          marginRight: -4,
-          paddingRight: 4,
-        }}>
-          {queue.map((entry, i) => (
-            <QueueRow
-              key={entry.id}
-              entry={entry}
-              idx={i}
-              isFirst={i === 0 && !current}
-              hasCurrent={!!current}
-              isDragging={dragIdx === i}
-              isDropTarget={dropIdx === i && dragIdx !== i}
-              onRemove={() => removeFromQueue(entry.id)}
-              onStart={() => startEntry(entry.id)}
-              onDragStart={() => setDragIdx(i)}
-              onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
-              onDragOver={(e) => {
-                if (dragIdx == null) return;
-                e.preventDefault();
-                if (dropIdx !== i) setDropIdx(i);
-              }}
-              onDrop={() => onDropRow(i)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+    <>
+      {button}
+      <HoverPeek anchor={btnRef.current} label={item.label} sub={item.peek} counter={item.counter} />
+    </>
   );
 }
 
-function QueueRow({
-  entry, idx, isFirst, hasCurrent,
-  isDragging, isDropTarget,
-  onRemove, onStart,
-  onDragStart, onDragEnd, onDragOver, onDrop,
-}) {
-  const [hover, setHover] = useState(false);
-  const fba = entry.parsed?.meta?.sendungsnummer || entry.parsed?.meta?.fbaCode || entry.fileName;
-  const isError = entry.status === 'error';
-  const palletCount = entry.parsed?.pallets?.length || 0;
-  const articleCount = (entry.parsed?.pallets || []).reduce((s, p) => s + p.items.length, 0);
-
-  const baseBg = isError ? T.status.danger.bg
-    : isFirst ? T.accent.bg
-    : T.bg.surface2;
-  const baseBorder = isError ? T.status.danger.border
-    : isFirst ? T.accent.border
-    : T.border.primary;
+/* Counter chip — micro-animation when value changes. */
+function Counter({ value, active }) {
+  const prev = useRef(value);
+  const [animKey, setAnimKey] = useState(0);
+  useEffect(() => {
+    if (prev.current !== value) {
+      prev.current = value;
+      setAnimKey((k) => k + 1);
+    }
+  }, [value]);
 
   return (
-    <div
-      draggable={!isError}
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', String(idx));
-        onDragStart();
-      }}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+    <span
+      key={animKey}
       style={{
-        display: 'flex',
+        minWidth: 18,
+        height: 17,
+        padding: '0 5px',
+        background: active ? T.text.primary : T.bg.surface3,
+        color: active ? T.bg.surface : T.text.subtle,
+        fontSize: 10,
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
-        padding: '6px 8px',
-        background: isDropTarget ? T.accent.bg : baseBg,
-        border: `1px solid ${isDropTarget ? T.accent.main : baseBorder}`,
-        borderRadius: T.radius.sm,
-        minWidth: 0,
-        cursor: isError ? 'default' : 'grab',
-        opacity: isDragging ? 0.4 : 1,
-        transition: 'background 120ms, border-color 120ms, opacity 120ms',
-        position: 'relative',
+        justifyContent: 'center',
+        borderRadius: 4,
+        letterSpacing: '0.01em',
+        animation: 'mp-counter-pop 320ms cubic-bezier(0.16, 1, 0.3, 1)',
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontFamily: T.font.mono,
-          fontSize: 11.5,
-          fontWeight: 500,
-          color: isError ? T.status.danger.text : T.text.primary,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }} title={fba}>
-          {fba}
-        </div>
-        <div style={{
-          fontSize: 10.5,
+      {value}
+    </span>
+  );
+}
+
+/* Hover peek — fixed-positioned floating tooltip for collapsed mode.
+   Anchored to the button via getBoundingClientRect. Re-measures
+   whenever the anchor changes (different item, scroll). */
+function HoverPeek({ anchor, label, sub, counter }) {
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  useLayoutEffect(() => {
+    if (!anchor) return undefined;
+    const update = () => {
+      const r = anchor.getBoundingClientRect();
+      setPos({ top: r.top + r.height / 2, left: r.right + 8 });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    return () => window.removeEventListener('scroll', update, true);
+  }, [anchor]);
+
+  if (!anchor) return null;
+  return (
+    <div style={{
+      position: 'fixed',
+      top: pos.top,
+      left: pos.left,
+      transform: 'translateY(-50%)',
+      padding: '6px 10px',
+      background: T.text.primary,
+      color: T.bg.surface,
+      borderRadius: 6,
+      fontSize: 11.5,
+      fontWeight: 500,
+      fontFamily: T.font.ui,
+      letterSpacing: '-0.005em',
+      zIndex: 100,
+      pointerEvents: 'none',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+      whiteSpace: 'nowrap',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+    }}>
+      <span>{label}</span>
+      {sub && (
+        <span style={{
+          fontSize: 10,
           color: T.text.faint,
-          fontVariantNumeric: 'tabular-nums',
-          marginTop: 1,
+          fontWeight: 400,
+          letterSpacing: '0.02em',
         }}>
-          {isError ? 'Parse-Fehler' : `${palletCount} Pal · ${articleCount} Art`}
-        </div>
-      </div>
-
-      {/* Quick start (hover, only when nothing is in progress for me) */}
-      {!isError && hover && !hasCurrent && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onStart(); }}
-          title="Starten"
-          style={{
-            width: 22, height: 22,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: T.accent.main,
-            border: 0,
-            borderRadius: T.radius.sm,
-            color: '#fff',
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-            <path d="M2 1.5v7l6.5-3.5z" />
-          </svg>
-        </button>
+          {sub}
+        </span>
       )}
-
-      {/* Remove */}
-      <button
-        onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        title="Aus Warteschlange entfernen"
-        style={{
-          width: 20, height: 20,
+      {counter != null && (
+        <span style={{
+          padding: '0 5px',
+          height: 14,
+          fontSize: 9.5,
+          fontWeight: 600,
+          color: T.text.primary,
+          background: T.bg.surface,
+          borderRadius: 3,
           display: 'inline-flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          background: 'transparent',
-          border: 0,
-          borderRadius: T.radius.sm,
-          color: T.text.faint,
-          cursor: 'pointer',
-          flexShrink: 0,
-          transition: 'background 150ms, color 150ms',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = T.status.danger.bg;
-          e.currentTarget.style.color = T.status.danger.main;
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'transparent';
-          e.currentTarget.style.color = T.text.faint;
-        }}
-      >
-        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-          <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      </button>
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {counter}
+        </span>
+      )}
     </div>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   CURRENT WORKFLOW MINI-PROGRESS
+   CURRENT WORKFLOW MINI-PROGRESS — kept logic, refined visuals.
+   No more orange-fill background; just a hairline accent border + dots.
    ════════════════════════════════════════════════════════════════════════ */
+const STEPS = ['upload', 'pruefen', 'focus', 'abschluss'];
+const STEP_LABEL = {
+  upload: 'Upload', pruefen: 'Prüfen', focus: 'Focus', abschluss: 'Abschluss',
+};
 
-const STEPS = ['pruefen', 'focus', 'abschluss'];
-const STEP_LABEL = { pruefen: 'Prüfen', focus: 'Focus', abschluss: 'Abschluss' };
-
-function CurrentProgress({ current, onClick }) {
+function CurrentProgress({ current, collapsed, onClick }) {
   const totals = useMemo(() => {
     const pallets = current?.parsed?.pallets || [];
     const totalArticles = pallets.reduce((s, p) => s + p.items.length, 0);
     let doneArticles = 0;
-    for (let i = 0; i < current.currentPalletIdx; i++) {
+    for (let i = 0; i < (current.currentPalletIdx ?? 0); i++) {
       doneArticles += pallets[i]?.items?.length || 0;
     }
     doneArticles += current.currentItemIdx ?? 0;
     return {
-      totalArticles,
-      doneArticles,
+      totalArticles, doneArticles,
       palletCount: pallets.length,
       currentPallet: (current.currentPalletIdx ?? 0) + 1,
     };
@@ -631,6 +756,48 @@ function CurrentProgress({ current, onClick }) {
 
   const stepIdx = STEPS.indexOf(current.step || 'pruefen');
   const fba = current.fbaCode || current.fileName;
+  const progress = totals.totalArticles > 0
+    ? Math.min(1, totals.doneArticles / totals.totalArticles)
+    : 0;
+
+  if (collapsed) {
+    return (
+      <button
+        onClick={onClick}
+        title={`Aktiv: ${fba}`}
+        style={{
+          margin: '0 auto 8px',
+          width: 32, height: 32,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: T.bg.surface2,
+          border: `1px solid ${T.accent.border}`,
+          borderRadius: '50%',
+          cursor: 'pointer',
+          padding: 0,
+          color: T.accent.main,
+          position: 'relative',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 18 18">
+          {/* Progress ring */}
+          <circle cx="9" cy="9" r="6.5" stroke={T.border.primary} strokeWidth="1.5" fill="none" />
+          <circle
+            cx="9" cy="9" r="6.5"
+            stroke={T.accent.main}
+            strokeWidth="1.5"
+            fill="none"
+            strokeDasharray={`${2 * Math.PI * 6.5}`}
+            strokeDashoffset={`${2 * Math.PI * 6.5 * (1 - progress)}`}
+            strokeLinecap="round"
+            transform="rotate(-90 9 9)"
+            style={{ transition: 'stroke-dashoffset 320ms cubic-bezier(0.16,1,0.3,1)' }}
+          />
+        </svg>
+      </button>
+    );
+  }
 
   return (
     <button
@@ -639,46 +806,43 @@ function CurrentProgress({ current, onClick }) {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 6,
+        gap: 8,
         padding: '10px 12px',
         margin: '0 12px 8px',
         background: T.bg.surface2,
-        border: `1px solid ${T.accent.border}`,
-        borderRadius: T.radius.md,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: 8,
         cursor: 'pointer',
         textAlign: 'left',
         fontFamily: T.font.ui,
-        transition: 'background 120ms, border-color 120ms',
+        transition: 'all 160ms',
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = T.accent.bg;
-        e.currentTarget.style.borderColor = T.accent.main;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = T.bg.surface2;
-        e.currentTarget.style.borderColor = T.accent.border;
-      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.accent.border; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.primary; }}
     >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{
-          fontSize: 10.5,
-          fontWeight: 500,
-          color: T.accent.text,
+          width: 6, height: 6,
+          borderRadius: '50%',
+          background: T.accent.main,
+          boxShadow: `0 0 0 0 ${T.accent.main}`,
+        }} />
+        <span style={{
+          fontSize: 9.5,
+          fontWeight: 600,
+          color: T.text.subtle,
           textTransform: 'uppercase',
-          letterSpacing: '0.04em',
+          letterSpacing: '0.08em',
+          fontFamily: T.font.mono,
         }}>
           Aktiv
         </span>
         <span style={{ flex: 1 }} />
         <span style={{
           fontFamily: T.font.mono,
-          fontSize: 10.5,
-          color: T.text.subtle,
-          maxWidth: 110,
+          fontSize: 10,
+          color: T.text.faint,
+          maxWidth: 100,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -687,35 +851,22 @@ function CurrentProgress({ current, onClick }) {
         </span>
       </div>
 
-      {/* Stepper */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        {STEPS.map((s, i) => {
-          const isActive = i === stepIdx;
-          const isDone = i < stepIdx;
-          const dot = (
-            <span style={{
-              width: isActive ? 9 : 6,
-              height: isActive ? 9 : 6,
-              borderRadius: '50%',
-              background: (isActive || isDone) ? T.accent.main : T.bg.surface3,
-              border: isActive ? `2px solid ${T.accent.bg}` : 'none',
-              boxShadow: isActive ? `0 0 0 2px ${T.accent.main}` : 'none',
-              transition: 'all 200ms',
-            }} />
-          );
-          return (
-            <span key={s} style={{ display: 'flex', alignItems: 'center', gap: 4, flex: i < STEPS.length - 1 ? 1 : 0 }}>
-              {dot}
-              {i < STEPS.length - 1 && (
-                <span style={{
-                  flex: 1,
-                  height: 1,
-                  background: isDone ? T.accent.main : T.border.strong,
-                }} />
-              )}
-            </span>
-          );
-        })}
+      {/* Progress bar */}
+      <div style={{
+        position: 'relative',
+        height: 3,
+        background: T.bg.surface3,
+        borderRadius: 2,
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          position: 'absolute',
+          left: 0, top: 0, bottom: 0,
+          width: `${progress * 100}%`,
+          background: T.accent.main,
+          borderRadius: 2,
+          transition: 'width 320ms cubic-bezier(0.16, 1, 0.3, 1)',
+        }} />
       </div>
 
       <div style={{
@@ -725,125 +876,306 @@ function CurrentProgress({ current, onClick }) {
         gap: 6,
       }}>
         <span style={{
-          fontSize: 12,
-          fontWeight: 600,
+          fontSize: 11.5,
+          fontWeight: 500,
           color: T.text.primary,
           letterSpacing: '-0.005em',
         }}>
           {STEP_LABEL[current.step] || 'Prüfen'}
         </span>
         <span style={{
-          fontSize: 11,
+          fontSize: 10.5,
           color: T.text.subtle,
           fontVariantNumeric: 'tabular-nums',
+          fontFamily: T.font.mono,
         }}>
-          {totals.doneArticles}/{totals.totalArticles} Art · Pal {totals.currentPallet}/{totals.palletCount}
+          {totals.doneArticles}/{totals.totalArticles} · P {totals.currentPallet}/{totals.palletCount}
         </span>
+      </div>
+
+      {/* Step dots */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        {STEPS.map((s, i) => {
+          const isActive = i === stepIdx;
+          const isDone = i < stepIdx;
+          return (
+            <span key={s} style={{
+              width: isActive ? 6 : 4,
+              height: isActive ? 6 : 4,
+              borderRadius: '50%',
+              background: (isActive || isDone) ? T.accent.main : T.bg.surface3,
+              transition: 'all 200ms',
+            }} />
+          );
+        })}
       </div>
     </button>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   TODAY STATS
+   FOOTER — UserSwitcher row + Today pulse + ⌘K iconlet.
    ════════════════════════════════════════════════════════════════════════ */
-
-function TodayStats({ history }) {
-  const stats = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const startMs = +start;
-    let count = 0;
-    let totalSec = 0;
-    for (const h of history) {
-      if (h.finishedAt && h.finishedAt >= startMs) {
-        count += 1;
-        totalSec += h.durationSec || 0;
-      }
-    }
-    return { count, totalSec };
-  }, [history]);
-
+function SidebarFooter({ collapsed, history, onOpenCommand }) {
   return (
-    <div style={{
-      padding: '6px 18px 4px',
-      display: 'flex',
-      alignItems: 'baseline',
-      gap: 6,
-      fontFamily: T.font.ui,
-    }}>
-      <span style={{
-        fontSize: 10.5,
-        fontWeight: 500,
-        color: T.text.subtle,
-        textTransform: 'uppercase',
-        letterSpacing: '0.04em',
-      }}>
-        Heute
-      </span>
-      <span style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: stats.count > 0 ? T.text.primary : T.text.faint,
-        fontVariantNumeric: 'tabular-nums',
-      }}>
-        {stats.count} fertig
-      </span>
-      {stats.totalSec > 0 && (
-        <>
-          <span style={{ fontSize: 11, color: T.text.faint }}>·</span>
-          <span style={{
-            fontSize: 11,
-            color: T.text.subtle,
-            fontVariantNumeric: 'tabular-nums',
-          }}>
-            {formatHM(stats.totalSec)}
-          </span>
-        </>
+    <div>
+      {!collapsed && <TodayPulse history={history} />}
+      <UserSwitcher collapsed={collapsed} />
+      {!collapsed && onOpenCommand && (
+        <CommandLauncher onClick={onOpenCommand} />
       )}
     </div>
   );
 }
 
-function formatHM(sec) {
-  const m = Math.floor(sec / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+function CommandLauncher({ onClick }) {
+  const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        width: 'calc(100% - 24px)',
+        margin: '0 12px 12px',
+        padding: '6px 8px',
+        background: 'transparent',
+        border: 0,
+        borderRadius: 6,
+        cursor: 'pointer',
+        color: T.text.faint,
+        fontFamily: T.font.ui,
+        fontSize: 11,
+        transition: 'all 140ms',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = T.bg.surface2;
+        e.currentTarget.style.color = T.text.subtle;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.color = T.text.faint;
+      }}
+    >
+      <span style={{ display: 'inline-flex' }}><IconCommand /></span>
+      <span style={{ flex: 1, textAlign: 'left' }}>Befehlspalette</span>
+      <span style={{
+        padding: '0 4px',
+        fontSize: 9.5,
+        fontWeight: 600,
+        fontFamily: T.font.mono,
+        color: T.text.faint,
+        background: T.bg.surface2,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: 3,
+        letterSpacing: '0.04em',
+      }}>
+        {isMac ? '⌘K' : 'Ctrl K'}
+      </span>
+    </button>
+  );
 }
 
-/* ─── Icons (outline · stroke 1.6 · currentColor) ────────────────────── */
-function IconUpload() {
+/* ════════════════════════════════════════════════════════════════════════
+   TODAY PULSE — replaces the verbose "Heute X fertig · Yh Zm" line.
+   Single-line: dot + count + sparkline of the last 7 calendar days.
+   The sparkline is built from local history (cheap, accurate enough
+   for an at-a-glance footer; admin/stats has the canonical chart).
+   ════════════════════════════════════════════════════════════════════════ */
+function TodayPulse({ history }) {
+  const days = useMemo(() => buildDailyCounts(history, 7), [history]);
+  const todayCount = days[days.length - 1]?.count ?? 0;
+  const max = Math.max(1, ...days.map((d) => d.count));
+
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <path d="M15 11v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M12 6L9 3 6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M9 3v9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+    <div style={{
+      padding: '10px 14px 8px',
+      borderTop: `1px solid ${T.border.primary}`,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      fontFamily: T.font.ui,
+    }}>
+      <span style={{
+        width: 5, height: 5,
+        borderRadius: '50%',
+        background: todayCount > 0 ? T.accent.main : T.text.faint,
+        flexShrink: 0,
+      }} />
+      <span style={{
+        fontSize: 10,
+        fontWeight: 500,
+        color: T.text.faint,
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        fontFamily: T.font.mono,
+      }}>
+        Heute
+      </span>
+      <span style={{
+        fontSize: 12,
+        fontWeight: 500,
+        color: todayCount > 0 ? T.text.primary : T.text.faint,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {todayCount}
+      </span>
+      <span style={{ flex: 1 }} />
+      <Sparkline7 days={days} max={max} />
+    </div>
+  );
+}
+
+function Sparkline7({ days, max }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'flex-end', gap: 2, height: 14 }}>
+      {days.map((d, i) => {
+        const ratio = d.count / max;
+        const isToday = i === days.length - 1;
+        return (
+          <span
+            key={i}
+            title={`${d.label}: ${d.count} ${d.count === 1 ? 'Auftrag' : 'Aufträge'}`}
+            style={{
+              display: 'inline-block',
+              width: 3,
+              height: Math.max(2, Math.round(ratio * 14)),
+              background: isToday ? T.accent.main : (d.count > 0 ? T.text.subtle : T.border.primary),
+              borderRadius: 1,
+              transition: 'background 200ms',
+            }}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+/* ─── helpers ──────────────────────────────────────────────────────── */
+function buildDailyCounts(history, n) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const buckets = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    buckets.push({
+      key: d.getTime(),
+      label: d.toLocaleDateString('de-DE', { weekday: 'short' }),
+      count: 0,
+    });
+  }
+  const byKey = new Map(buckets.map((b) => [b.key, b]));
+  for (const h of history) {
+    if (!h.finishedAt) continue;
+    const d = new Date(h.finishedAt);
+    d.setHours(0, 0, 0, 0);
+    const b = byKey.get(d.getTime());
+    if (b) b.count += 1;
+  }
+  return buckets;
+}
+
+function computeLiveShiftSec(shift) {
+  if (!shift?.startedAt) return null;
+  const startMs = new Date(shift.startedAt).getTime();
+  if (Number.isNaN(startMs)) return null;
+  return Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+}
+
+function formatHMS(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ICONS — uniform set: viewBox 16, stroke 1.3, no fill, currentColor.
+   Each glyph is reduced to its essential shape — abstract more than
+   literal.
+   ════════════════════════════════════════════════════════════════════════ */
+
+function IconWorkflow() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M3 12V4M3 4l2 2M3 4l-2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M8 12V8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+      <path d="M13 12V6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
     </svg>
   );
 }
+
+function IconQueue() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M3 4h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="1"/>
+      <path d="M3 8h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.7"/>
+      <path d="M3 12h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.4"/>
+    </svg>
+  );
+}
+
+function IconSearch() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M10.5 10.5L13 13" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 function IconHistory() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <path d="M3 9a6 6 0 1 0 1.6-4.1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M3 3v3h3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M9 5v4l2.5 1.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M8 5v3l2 1.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
+
+function IconLive() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M2 8h2.5L6 4l3 8 1.5-4H14" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+function IconReport() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M4 2h6l2.5 2.5V14H4z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+      <path d="M9.5 2v3H12.5" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+      <path d="M6.5 11v-2M8 11V8M9.5 11v-1.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 function IconSettings() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <circle cx="9" cy="9" r="2.2" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M9 1.5v2M9 14.5v2M3.5 3.5l1.4 1.4M13.1 13.1l1.4 1.4M1.5 9h2M14.5 9h2M3.5 14.5l1.4-1.4M13.1 4.9l1.4-1.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3"/>
+      <path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5L3.4 3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
     </svg>
   );
 }
+
 function IconAdmin() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <path d="M9 2L3 4.5v3.7c0 3.4 2.5 6.7 6 7.8 3.5-1.1 6-4.4 6-7.8V4.5L9 2z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/>
-      <path d="M6.5 9l1.7 1.7L12 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M8 2L3 4v3.5C3 10.5 5.2 13 8 14c2.8-1 5-3.5 5-6.5V4L8 2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+      <path d="M5.8 8.2l1.6 1.6L10.4 6.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
+function IconCommand() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path d="M4.5 2.5a1.5 1.5 0 1 0 0 3h5a1.5 1.5 0 1 0 0-3v9a1.5 1.5 0 1 0 0-3h-5a1.5 1.5 0 1 0 0 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
     </svg>
   );
 }

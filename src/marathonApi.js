@@ -21,6 +21,7 @@ const BASE = envUrl ?? '';
 const OPAQUE = new Set([
   'parsed', 'validation',
   'completed_keys', 'completedKeys',
+  'copied_keys', 'copiedKeys',
   'pallet_timings', 'palletTimings',
   'meta',
 ]);
@@ -143,6 +144,52 @@ export const adminListAudit = (params = {}) =>
 
 export const adminGetStats = () =>
   call('GET', '/api/admin/stats');
+
+/* ─── Search / Activity / Exports (Phase 1) ───────────────────────── */
+
+/* params: { q, from, to, limit, offset } */
+export const searchAuftraege = (params = {}) => {
+  const snake = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === '') continue;
+    snake[k.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase())] = v;
+  }
+  return call('GET', `/api/search${qs(snake)}`);
+};
+
+export const getActivityLive = (limit = 50) =>
+  call('GET', `/api/activity/live?limit=${limit}`);
+
+export const getMyShift = () =>
+  call('GET', '/api/activity/shift');
+
+/* xlsx download — bypasses JSON wrapper, mirrors adminExportSkuDimensions. */
+export const downloadAuftraegeXlsx = async ({ from, to } = {}) => {
+  const params = {};
+  if (from) params.from = from;
+  if (to) params.to = to;
+  const headers = {};
+  const token = await getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/api/exports/auftraege.xlsx${qs(params)}`, { headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new ApiError(res.status, err?.detail ?? 'Export fehlgeschlagen');
+  }
+  const rowCount = parseInt(res.headers.get('X-Row-Count') || '0', 10);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="?([^";]+)"?/);
+  a.download = m ? m[1] : 'marathon-auftraege.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return { ok: true, rowCount };
+};
 
 /* ─── SKU Dimensions (lookup is auth, admin endpoints require role) ─── */
 

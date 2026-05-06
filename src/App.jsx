@@ -14,6 +14,11 @@ import AbschlussScreen from './screens/Abschluss.jsx';
 import HistorieScreen from './screens/Historie.jsx';
 import EinstellungenScreen from './screens/Einstellungen.jsx';
 import AdminScreen from './screens/Admin.jsx';
+import SucheScreen from './screens/Suche.jsx';
+import LiveAktivitaetScreen from './screens/LiveAktivitaet.jsx';
+import BerichteScreen from './screens/Berichte.jsx';
+import WarteschlangeScreen from './screens/Warteschlange.jsx';
+import { CommandPalette } from './components/CommandPalette.jsx';
 
 /* Legacy localStorage keys from the pre-backend era. Stale data left
    in old browsers; harmless but pollutes devtools. One-shot cleanup. */
@@ -42,6 +47,8 @@ export default function App() {
 function Router() {
   const { current } = useAppState();
   const [route, setRoute] = useState('workspace');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sucheInitialQuery, setSucheInitialQuery] = useState('');
 
   /* When a new Auftrag becomes current, jump back to Workspace so the user
      sees Pruefen / Focus / Abschluss instead of staying on Historie. */
@@ -49,20 +56,64 @@ function Router() {
     if (current) setRoute('workspace');
   }, [current?.id, current?.step]);
 
+  /* Global Cmd/Ctrl+K → Command Palette. Keep the listener on document
+     so it fires regardless of which child has focus, except when typing
+     in an input/textarea/contenteditable (those keep their own ⌘K). */
+  useEffect(() => {
+    const handler = (e) => {
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      const meta  = isMac ? e.metaKey : e.ctrlKey;
+      if (meta && e.key.toLowerCase() === 'k') {
+        const t = e.target;
+        const tag = t?.tagName;
+        const editable = t?.isContentEditable;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || editable) return;
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (e.key === 'Escape' && paletteOpen) {
+        setPaletteOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [paletteOpen]);
+
   return (
-    <AppShell route={route} onRoute={setRoute}>
-      {route === 'workspace'     && <Workspace />}
-      {route === 'historie'      && <HistorieScreen />}
-      {route === 'einstellungen' && <EinstellungenScreen />}
-      {route === 'admin'         && <AdminScreen />}
-    </AppShell>
+    <>
+      <AppShell
+        route={route}
+        onRoute={setRoute}
+        onOpenCommand={() => setPaletteOpen(true)}
+      >
+        {route === 'workspace'     && <Workspace onRoute={setRoute} />}
+        {route === 'warteschlange' && <WarteschlangeScreen onRoute={setRoute} />}
+        {route === 'suche'         && <SucheScreen initialQuery={sucheInitialQuery} />}
+        {route === 'historie'      && <HistorieScreen />}
+        {route === 'live'          && <LiveAktivitaetScreen />}
+        {route === 'berichte'      && <BerichteScreen />}
+        {route === 'einstellungen' && <EinstellungenScreen />}
+        {route === 'admin'         && <AdminScreen />}
+      </AppShell>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onRoute={(r, opts) => {
+          if (r === 'suche' && opts?.query) {
+            setSucheInitialQuery(opts.query);
+          }
+          setRoute(r);
+          setPaletteOpen(false);
+        }}
+      />
+    </>
   );
 }
 
-function Workspace() {
+function Workspace({ onRoute }) {
   const { current } = useAppState();
-  if (!current) return <UploadScreen />;
+  if (!current) return <UploadScreen onRoute={onRoute} />;
   switch (current.step) {
+    case 'upload':    return <UploadScreen onRoute={onRoute} />;
     case 'pruefen':   return <PruefenScreen />;
     case 'focus':     return <FocusScreen />;
     case 'abschluss': return <AbschlussScreen />;

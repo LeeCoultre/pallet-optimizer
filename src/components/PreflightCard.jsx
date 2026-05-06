@@ -12,7 +12,7 @@
        action; the parent decides what those do via callbacks.
    ───────────────────────────────────────────────────────────────────────── */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { T } from './ui.jsx';
 
 const KIND_LABELS = {
@@ -29,10 +29,36 @@ const SEVERITY_PALETTE = {
   info:  { main: T.text.subtle, bg: T.bg.surface3, text: T.text.secondary, border: T.border.primary },
 };
 
-export default function PreflightCard({ briefing, onJumpToPallet, onAction }) {
+/* Always-visible check strip — derived from briefing.flags grouped by
+   kind. Each group shows the worst severity it carries; "ok" pills
+   give the operator a positive "yes, this was checked" signal. */
+const CHECK_GROUPS = [
+  { kind: 'parsing',      label: 'Format' },
+  { kind: 'capacity',     label: 'Auslastung' },
+  { kind: 'distribution', label: 'Verteilung' },
+  { kind: 'structural',   label: 'Paletten' },
+  { kind: 'coverage',     label: 'ESKU' },
+];
+
+export default function PreflightCard({ briefing, onJumpToPallet, onAction, defaultOpen = false }) {
   // Collapsed by default — header tone (red/amber/green) already conveys
   // status at a glance; user clicks to drill into specific flags.
-  const [open, setOpen] = useState(false);
+  // Pruefen passes defaultOpen=true when there are flags so the operator
+  // sees the issues without an extra click.
+  const [open, setOpen] = useState(defaultOpen);
+
+  /* Derived check-strip — one pill per kind. Always visible, gives the
+     operator a positive "yes, this was checked" signal even when ok. */
+  const checks = useMemo(() => {
+    const flags = briefing?.flags || [];
+    return CHECK_GROUPS.map((g) => {
+      const matching = flags.filter((f) => f.kind === g.kind);
+      const errs = matching.filter((f) => f.severity === 'error').length;
+      const wrns = matching.filter((f) => f.severity === 'warn').length;
+      const status = errs > 0 ? 'error' : wrns > 0 ? 'warn' : 'ok';
+      return { ...g, status, count: errs + wrns };
+    });
+  }, [briefing]);
 
   if (!briefing) return null;
 
@@ -120,11 +146,25 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction }) {
         )}
       </button>
 
-      {/* Body */}
+      {/* Always-visible check strip — sits between header and (optional)
+          flag-detail body. Each kind reduced to a single tone'd pill. */}
+      <div style={{
+        background: T.bg.surface,
+        borderTop: `1px solid ${palette.border}`,
+        padding: '10px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        flexWrap: 'wrap',
+      }}>
+        {checks.map((c) => <CheckPill key={c.kind} check={c} />)}
+      </div>
+
+      {/* Body — flag details, only when expanded AND there are flags */}
       {open && briefing.flags.length > 0 && (
         <div style={{
           background: T.bg.surface,
-          borderTop: `1px solid ${palette.border}`,
+          borderTop: `1px solid ${T.border.primary}`,
           padding: '16px 20px',
         }}>
           {errors.length > 0 && (
@@ -297,6 +337,73 @@ function WarnIcon() {
       <path d="M12 8v5m0 3.5h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"
             stroke="currentColor" strokeWidth="2"
             strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/* Compact derived-status pill for the always-visible check strip. */
+function CheckPill({ check }) {
+  const palette = check.status === 'error' ? T.status.danger
+    : check.status === 'warn'  ? T.status.warn
+    : T.status.success;
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      fontSize: 12,
+      fontWeight: 500,
+      color: T.text.primary,
+      letterSpacing: '-0.005em',
+    }}>
+      <span style={{
+        width: 16, height: 16,
+        borderRadius: '50%',
+        background: palette.bg,
+        color: palette.main,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}>
+        {check.status === 'error' ? <PillCross />
+          : check.status === 'warn' ? <PillBang />
+          : <PillCheck />}
+      </span>
+      <span>{check.label}</span>
+      {check.count > 0 && (
+        <span style={{
+          fontSize: 10.5,
+          color: palette.text,
+          fontWeight: 600,
+          fontFamily: T.font.mono,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {check.count}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function PillCheck() {
+  return (
+    <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+      <path d="M2 6.5l2.5 2.5L10 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function PillCross() {
+  return (
+    <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
+      <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+function PillBang() {
+  return (
+    <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+      <path d="M6 3.5v3M6 9v.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }

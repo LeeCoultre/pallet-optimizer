@@ -52,6 +52,7 @@ class AuftragStatus(str, enum.Enum):
 
 
 class WorkflowStep(str, enum.Enum):
+    upload = "upload"
     pruefen = "pruefen"
     focus = "focus"
     abschluss = "abschluss"
@@ -137,6 +138,9 @@ class Auftrag(Base):
     current_pallet_idx: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current_item_idx: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     completed_keys: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    copied_keys: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     pallet_timings: Mapped[dict[str, Any]] = mapped_column(

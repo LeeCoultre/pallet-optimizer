@@ -1,9 +1,12 @@
 /* PalletStackViz — minimal glass-morphism side view of one EUR pallet.
    Bottom = Level 1 (Thermorollen), Top = Level 6 (Tachorollen).
 
-   Two sizes:
-     "row"  — compact 36×72 inline cell, no labels (used in pallet table)
-     "card" — full card with frame + KPI rail (in the expanded view)
+   Sizes:
+     "row"     — 36×72 inline cell, no labels (used in pallet table)
+     "card"    — full card with frame + KPI rail (expanded review view)
+     "story"   — 100×200 ambient sidebar viz for Focus mode
+                 (mini labels, no KPI rail, optional `pulseLevel` glow)
+     "compact" — 22×30 micro icon
 */
 
 import { useState, useId } from 'react';
@@ -13,7 +16,7 @@ import { T } from './ui.jsx';
 const PALLET_VOL_M3   = 1.59;
 const PALLET_WEIGHT_KG = 700;
 
-export default function PalletStackViz({ palletState, size = 'row', onClick }) {
+export default function PalletStackViz({ palletState, size = 'row', onClick, pulseLevel = null }) {
   const isCard = size === 'card';
   const isCompact = size === 'compact';
   const isStory = size === 'story';
@@ -66,9 +69,11 @@ export default function PalletStackViz({ palletState, size = 'row', onClick }) {
         volByLevel={volByLevel}
         totalUsedHeight={totalUsedHeight}
         W={W} H={H}
-        showLabels={false}
+        showLabels={isStory}
         flagged={flagged}
         onClick={onClick}
+        pulseLevel={pulseLevel}
+        compactLabels={isStory}
       />
     );
   }
@@ -117,6 +122,7 @@ export default function PalletStackViz({ palletState, size = 'row', onClick }) {
 function PalletFrame({
   palletState, levelHeights, volByLevel, totalUsedHeight,
   W, H, showLabels, flagged, onClick,
+  pulseLevel = null, compactLabels = false,
 }) {
   const [hover, setHover] = useState(null);
   const patternId = useId().replace(/:/g, '');
@@ -182,6 +188,7 @@ function PalletFrame({
           {layers.map(({ lvl, y, h }) => {
             const meta = LEVEL_META[lvl];
             const isHover = hover === lvl;
+            const isPulse = pulseLevel === lvl;
             const items = palletState.byLevel?.[lvl] || [];
             const eskuCount = items.filter((x) => x.source === 'esku').length;
             const lvlPct = (volByLevel[lvl] / (PALLET_VOL_M3 * 1e6)) * 100;
@@ -206,6 +213,21 @@ function PalletFrame({
                     transformOrigin: '0 100%',
                   }}
                 />
+                {/* Pulse overlay for the current artikel's level */}
+                {isPulse && (
+                  <rect
+                    x={0}
+                    y={y}
+                    width={W}
+                    height={h}
+                    fill="#FFFFFF"
+                    style={{
+                      animation: 'pviz-pulse 2.4s ease-in-out infinite',
+                      mixBlendMode: 'overlay',
+                      pointerEvents: 'none',
+                    }}
+                  />
+                )}
                 {/* Top edge highlight — light line for "depth" */}
                 <line
                   x1={0} x2={W}
@@ -214,12 +236,12 @@ function PalletFrame({
                   strokeOpacity="0.45"
                   strokeWidth="1"
                 />
-                {showLabels && h >= 22 && (
+                {showLabels && h >= (compactLabels ? 14 : 22) && (
                   <>
                     <text
-                      x={12}
+                      x={compactLabels ? 8 : 12}
                       y={y + h / 2 + 4}
-                      fontSize={11}
+                      fontSize={compactLabels ? 9.5 : 11}
                       fontFamily={T.font.ui}
                       fill="#FFFFFF"
                       fontWeight={600}
@@ -227,18 +249,20 @@ function PalletFrame({
                     >
                       L{lvl}
                     </text>
-                    <text
-                      x={W - 12}
-                      y={y + h / 2 + 4}
-                      fontSize={10.5}
-                      fontFamily={T.font.ui}
-                      fill="#FFFFFF"
-                      fillOpacity="0.85"
-                      fontWeight={500}
-                      textAnchor="end"
-                    >
-                      {Math.round(lvlPct)}%
-                    </text>
+                    {!compactLabels && (
+                      <text
+                        x={W - 12}
+                        y={y + h / 2 + 4}
+                        fontSize={10.5}
+                        fontFamily={T.font.ui}
+                        fill="#FFFFFF"
+                        fillOpacity="0.85"
+                        fontWeight={500}
+                        textAnchor="end"
+                      >
+                        {Math.round(lvlPct)}%
+                      </text>
+                    )}
                   </>
                 )}
                 {eskuCount > 0 && showLabels && h >= 16 && (
@@ -288,6 +312,13 @@ function PalletFrame({
         @keyframes pviz-rise {
           from { transform: scaleY(0); }
           to   { transform: scaleY(1); }
+        }
+        @keyframes pviz-pulse {
+          0%, 100% { opacity: 0; }
+          50%      { opacity: 0.32; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          @keyframes pviz-pulse { 0%, 100% { opacity: 0.18; } 50% { opacity: 0.18; } }
         }
       `}</style>
     </div>

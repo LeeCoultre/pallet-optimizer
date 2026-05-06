@@ -1,21 +1,37 @@
-/* Pruefen — Schritt 02. Daten kontrollieren.
-   Design System v3 (siehe DESIGN.md).
+/* Pruefen — Schritt 02. "Priority-driven hierarchy" redesign.
 
-   v2 — SOP v1.1: 6-level hierarchy, PalletStackViz, OVERLOAD flags. */
+   Operator priorities, in order:
+     1. FBA-Code  — primary anchor of the page
+     2. Preflight — only if there are flags (auto-expanded)
+     3. Paletten  — main content (story-cards or mini-grid)
+
+   Supporting metrics (Übersicht, Auslastung, Levels) are demoted to
+   a single compact monoline + a collapsible Levels disclosure. They
+   never compete with FBA / Preflight / Paletten for attention.
+
+   Visual decisions:
+     • FBA mono 64-80px is the page's hero — nothing visually competes
+       with it on the same row except a small status pill.
+     • Status + duration + auto-insights live as one mono caption line
+       under FBA.
+     • Fingerprint row (12 colored squares) gives the operator a
+       one-glance understanding of "shape" of this Auftrag.
+     • Pallets section gets a STICKY toolbar at scroll — filter/toggle
+       always one click away, even mid-list.
+     • Page background is a subtle dot-grid for "blueprint" feel.
+*/
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
 import {
   pruefenView, distributeEinzelneSku, enrichItemDims,
-  levelDistribution, sortItemsForPallet,
+  levelDistribution, sortItemsForPallet, LEVEL_META,
+  itemTotalWeightKg,
 } from '../utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '../marathonApi.js';
 import {
-  Page, Topbar, StepperBar,
-  Card, SectionHeader, Eyebrow, PageH1, Lead,
-  Label, Badge, Button, Meta, Kpi,
-  T,
+  Page, Topbar, StepperBar, Button, T,
 } from '../components/ui.jsx';
 import PreflightCard from '../components/PreflightCard.jsx';
 import PalletStoryCard from '../components/PalletStoryCard.jsx';
@@ -23,13 +39,15 @@ import PalletMiniCard from '../components/PalletMiniCard.jsx';
 import { analyzeAuftrag } from '../utils/preflightAnalyzer.js';
 import { buildPalletStory, rankPallets } from '../utils/palletStory.js';
 
+const AUTO_OVERVIEW_THRESHOLD = 15;
+
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function PruefenScreen() {
   const { current, goToStep, cancelCurrent } = useAppState();
   const rawPallets = current?.parsed?.pallets || [];
   const eskuItems  = current?.parsed?.einzelneSkuItems || [];
 
-  // Async dim/weight enrichment (cached forever per Auftrag — these don't change)
+  /* ── data: enrichment + distribution ─────────────────────────── */
   const allItems = useMemo(() => [
     ...rawPallets.flatMap((p) => p.items || []),
     ...eskuItems,
@@ -42,13 +60,6 @@ export default function PruefenScreen() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Build pallets/esku with enriched items overlaid by POSITION, not by
-  // FNSKU. The same FNSKU can appear on multiple pallets with different
-  // `units` / `useItem` / etc. — keying enrichment by FNSKU caused one
-  // pallet's row to silently overwrite the other's quantity (the
-  // FBA15LKWFFTR bug where X0011CI9FH on P1-B2 inherited the units
-  // value from P1-B1). enrichItemDims preserves input order, so we walk
-  // the same sequence we passed in (allItems = pallets flat → ESKU).
   const enrichedPallets = useMemo(() => {
     const enriched = dimsQ.data || null;
     let cursor = 0;
@@ -69,7 +80,10 @@ export default function PruefenScreen() {
     return eskuItems.map((it, i) => dimsQ.data[palletItemsCount + i] || it);
   }, [eskuItems, rawPallets, dimsQ.data]);
 
-  const view = useMemo(() => pruefenView({ ...current?.parsed, pallets: enrichedPallets }), [current?.parsed, enrichedPallets]);
+  const view = useMemo(
+    () => pruefenView({ ...current?.parsed, pallets: enrichedPallets }),
+    [current?.parsed, enrichedPallets],
+  );
   const distribution = useMemo(
     () => distributeEinzelneSku(enrichedPallets, enrichedEsku),
     [enrichedPallets, enrichedEsku],
@@ -83,13 +97,7 @@ export default function PruefenScreen() {
     errors: validation.errorCount || 0,
     warnings: validation.warningCount || 0,
   };
-  const onStartFocus = () => {
-    if (validView.errors === 0) goToStep('focus');
-  };
 
-  // Pre-flight briefing — single source of truth for "is this Auftrag ready?".
-  // Aggregates parsing/structural/capacity/coverage flags into one card above
-  // the pallet list. Pure function; recomputes only when its inputs change.
   const briefing = useMemo(
     () => analyzeAuftrag({
       parsed: current?.parsed,
@@ -100,23 +108,29 @@ export default function PruefenScreen() {
     }),
     [current?.parsed, validation, distribution, enrichedPallets, enrichedEsku],
   );
+  const hasPreflightFlags = briefing && briefing.worst !== 'ok' && briefing.flags?.length > 0;
 
-  // View-mode for the pallet section: 'story' (full hero cards, default)
-  // or 'overview' (compact 3-up grid for fast scan). Stored in localStorage
-  // so the operator's choice survives refresh.
+  /* ── pallet auto-insights for the meta line under FBA ─────── */
+  const insights = useMemo(
+    () => buildAuftragInsights(view?.pallets || [], enrichedPallets, palletStates, eskuDist),
+    [view?.pallets, enrichedPallets, palletStates, eskuDist],
+  );
+
+  /* ── pallet view-mode + filter ─────────────────────────────── */
   const [viewMode, setViewMode] = useState(() => {
     if (typeof window === 'undefined') return 'story';
-    return localStorage.getItem('pruefen.palletViewMode') === 'overview'
-      ? 'overview' : 'story';
+    const stored = localStorage.getItem('pruefen.palletViewMode');
+    if (stored === 'overview' || stored === 'story') return stored;
+    return rawPallets.length >= AUTO_OVERVIEW_THRESHOLD ? 'overview' : 'story';
   });
   const switchViewMode = (mode) => {
     setViewMode(mode);
-    try { localStorage.setItem('pruefen.palletViewMode', mode); } catch { /* ignore quota */ }
+    try { localStorage.setItem('pruefen.palletViewMode', mode); } catch { /* ignore */ }
   };
 
+  const [problemOnly, setProblemOnly] = useState(false);
+
   const handleJumpToPallet = (palletId) => {
-    // From PreflightCard or MiniCard click — always land on the full Story
-    // Card so the operator gets context, not just a thumbnail.
     if (viewMode !== 'story') switchViewMode('story');
     setTimeout(() => {
       const el = document.getElementById(`pallet-row-${palletId}`);
@@ -124,12 +138,57 @@ export default function PruefenScreen() {
     }, 80);
   };
 
-  // One-shot superlative ranking ("Größte Palette" etc.) — pure function,
-  // recomputes only when pallets/states change.
   const ranking = useMemo(
     () => rankPallets(view?.pallets || [], palletStates),
     [view?.pallets, palletStates],
   );
+
+  const visiblePallets = useMemo(() => {
+    if (!problemOnly) return view?.pallets || [];
+    return (view?.pallets || []).filter((p) => {
+      const st = palletStates[p.id];
+      return st && Array.isArray(st.flags) && st.flags.length > 0;
+    });
+  }, [view?.pallets, palletStates, problemOnly]);
+
+  const hiddenByFilter = (view?.pallets?.length || 0) - visiblePallets.length;
+
+  /* ── Levels disclosure (collapsed by default — secondary info) */
+  const [levelsOpen, setLevelsOpen] = useState(true);
+
+  /* ── Sticky pallets toolbar — IntersectionObserver on header ── */
+  const palletsHeaderRef = useRef(null);
+  const [stickyToolbar, setStickyToolbar] = useState(false);
+  useEffect(() => {
+    const el = palletsHeaderRef.current;
+    if (!el) return undefined;
+    const obs = new IntersectionObserver(
+      ([entry]) => setStickyToolbar(!entry.isIntersecting && entry.boundingClientRect.top < 0),
+      { threshold: 0, rootMargin: '-60px 0px 0px 0px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visiblePallets.length]);
+
+  /* ── Keyboard F → Focus ─────────────────────────────────────── */
+  const onStartFocus = () => {
+    if (validView.errors === 0) goToStep('focus');
+  };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'f' && e.key !== 'F') return;
+      const t = e.target;
+      const tag = t?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (validView.errors === 0) {
+        e.preventDefault();
+        goToStep('focus');
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [validView.errors, goToStep]);
 
   if (!view) {
     return (
@@ -144,11 +203,10 @@ export default function PruefenScreen() {
 
   return (
     <Page>
+      <PruefenStyles />
       <Topbar
         crumbs={[
-          { label: 'Workspace', muted: true },
-          { label: 'Workflow',  muted: true },
-          { label: 'Auftrag prüfen' },
+          { label: 'Prüfen' },
         ]}
         right={
           <Button variant="ghost" size="sm" onClick={cancelCurrent} title="Auftrag abbrechen, zurück zur Warteschlange">
@@ -159,163 +217,78 @@ export default function PruefenScreen() {
 
       <StepperBar active="pruefen" />
 
-      <main style={{ maxWidth: 1180, margin: '0 auto', padding: '40px 32px 120px' }}>
+      {/* Sticky toolbar — only renders when section header scrolls out */}
+      <StickyPalletsToolbar
+        visible={stickyToolbar}
+        count={view.pallets.length}
+        visibleCount={visiblePallets.length}
+        problemOnly={problemOnly}
+        onToggleProblem={() => setProblemOnly((v) => !v)}
+        viewMode={viewMode}
+        onChangeViewMode={switchViewMode}
+      />
 
-        {/* Page intro */}
-        <section style={{ marginBottom: 32 }}>
-          <Eyebrow>Schritt 02 von 04</Eyebrow>
-          <PageH1>Auftrag prüfen</PageH1>
-          <Lead>
-            Hier siehst du den kompletten Überblick deines Lagerauftrags.
-            Stimmen die Zahlen und die Validierung, kannst du mit dem Focus-Modus beginnen.
-          </Lead>
-        </section>
-
-        {/* Identity card */}
-        <IdentityCard view={view} />
-
-        {/* Pre-flight briefing — replaces parsing-validation + OVERLOAD banners
-            with one unified card that aggregates everything the operator
-            needs to know BEFORE diving into the pallet list. */}
-        <div style={{ marginTop: 16, marginBottom: 32 }}>
-          <PreflightCard briefing={briefing} onJumpToPallet={handleJumpToPallet} />
-        </div>
-
-        {/* KPI grid */}
-        <section style={{ marginBottom: 32 }}>
-          <SectionHeader title="Übersicht" sub="Wichtige Kennzahlen auf einen Blick." />
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(5, 1fr)',
-            gap: 12,
-          }}>
-            <Kpi label="Paletten" value={view.stats.palletCount} sub="physisch" />
-            <Kpi label="Artikel" value={view.stats.articles} sub="verschieden" />
-            <Kpi label="Kartons" value={view.stats.cartons.toLocaleString('de-DE')} sub="gesamt" />
-            <Kpi label="Gewicht"
-                 value={view.stats.weightKg.toLocaleString('de-DE')}
-                 sub="kg geschätzt" />
-            <Kpi label="Geschätzte Dauer"
-                 value={formatDur(view.stats.durationSec)}
-                 sub="bis Abschluss" />
-          </div>
-        </section>
-
-        {/* Auslastung + Levels */}
-        <section style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)',
-          gap: 12,
-          marginBottom: 32,
+      <div className="mp-prf-canvas" style={{ minHeight: 'calc(100vh - 200px)' }}>
+        <main style={{
+          maxWidth: 1080,
+          margin: '0 auto',
+          padding: '40px 32px 140px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 32,
         }}>
-          <AuslastungCard pct={view.stats.fillPct} />
-          <LevelsCard pallets={enrichedPallets} />
-        </section>
 
-        {/* Validation checklist */}
-        <section style={{ marginBottom: 32 }}>
-          <SectionHeader
-            title="Prüfungen"
-            sub="Vier automatische Prüfungen wurden ausgeführt."
+          {/* PRIMARY 1: FBA Hero */}
+          <HeroFBA
+            view={view}
+            stats={view.stats}
+            validView={validView}
+            insights={insights}
+            ranking={ranking}
+            palletStates={palletStates}
+            onJumpToPallet={handleJumpToPallet}
           />
-          <Card style={{ padding: '20px 24px' }}>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: '12px 32px',
-            }}>
-              <CheckRow ok label="Format erkannt"      detail="Standard- oder Schilder-Layout" />
-              <CheckRow ok label="Paletten konsistent" detail="Alle IDs eindeutig zugeordnet" />
-              <CheckRow ok label="Codes vorhanden"     detail="FNSKU/SKU für jeden Artikel" />
-              <CheckRow ok label="Mengen plausibel"    detail="Einheiten innerhalb des Erwarteten" />
-            </div>
-          </Card>
-        </section>
 
-        {/* Pallets — Story Cards (default) or Übersicht grid for quick scan. */}
-        <section style={{ marginBottom: 40 }}>
-          <SectionHeader
-            title={`Paletten (${view.pallets.length})`}
-            sub={
-              viewMode === 'overview'
-                ? 'Übersicht — alle Paletten als Mini-Karten für schnellen Vergleich. Klick öffnet die volle Story.'
-                : (eskuItems.length > 0
-                    ? `Story-Karten — Headline, Auslastung und Top-Artikel pro Palette. ${eskuItems.length} ESKU-Kartons sind verteilt.`
-                    : 'Story-Karten — Headline, Auslastung und Top-Artikel pro Palette.')
-            }
-            right={
-              <ViewModeToggle
-                value={viewMode}
-                onChange={switchViewMode}
-              />
-            }
+          {/* PRIMARY 2: Preflight — always rendered, collapsed by default.
+              Header tone + check-strip already convey status at a
+              glance; the operator clicks to drill into specific flags. */}
+          <div style={{ animation: 'mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) 100ms backwards' }}>
+            <PreflightCard
+              briefing={briefing}
+              onJumpToPallet={handleJumpToPallet}
+            />
+          </div>
+
+          {/* SECONDARY: collapsible Levels disclosure */}
+          <div style={{ animation: `mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) ${hasPreflightFlags ? 180 : 140}ms backwards` }}>
+            <LevelsDisclosure
+              pallets={enrichedPallets}
+              open={levelsOpen}
+              onToggle={() => setLevelsOpen((v) => !v)}
+            />
+          </div>
+
+          {/* PRIMARY 3: Paletten */}
+          <PalletsSection
+            headerRef={palletsHeaderRef}
+            pallets={view.pallets}
+            visiblePallets={visiblePallets}
+            enrichedPallets={enrichedPallets}
+            eskuDist={eskuDist}
+            eskuItems={eskuItems}
+            palletStates={palletStates}
+            ranking={ranking}
+            viewMode={viewMode}
+            onChangeViewMode={switchViewMode}
+            problemOnly={problemOnly}
+            onTogglProblemOnly={() => setProblemOnly((v) => !v)}
+            hiddenByFilter={hiddenByFilter}
+            onJumpToPallet={handleJumpToPallet}
+            mountDelay={hasPreflightFlags ? 260 : 180}
           />
-          {viewMode === 'overview' ? (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: 12,
-            }}>
-              {view.pallets.map((p, i) => {
-                const raw = enrichedPallets.find((r) => r.id === p.id);
-                const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
-                const palletState = palletStates[p.id];
-                const story = buildPalletStory({
-                  pallet: p,
-                  items: raw?.items || [],
-                  eskuAssigned,
-                  palletState,
-                  ranking,
-                });
-                return (
-                  <PalletMiniCard
-                    key={p.id}
-                    pallet={p}
-                    index={i}
-                    eskuAssigned={eskuAssigned}
-                    palletState={palletState}
-                    story={story}
-                    onClick={() => handleJumpToPallet(p.id)}
-                  />
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 14,
-            }}>
-              {view.pallets.map((p, i) => {
-                const raw = enrichedPallets.find((r) => r.id === p.id);
-                const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
-                const palletState = palletStates[p.id];
-                const story = buildPalletStory({
-                  pallet: p,
-                  items: raw?.items || [],
-                  eskuAssigned,
-                  palletState,
-                  ranking,
-                });
-                return (
-                  <PalletStoryCard
-                    key={p.id}
-                    pallet={p}
-                    index={i}
-                    items={raw?.items || []}
-                    eskuAssigned={eskuAssigned}
-                    palletState={palletState}
-                    story={story}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </section>
+        </main>
+      </div>
 
-      </main>
-
-      {/* Sticky action bar */}
       <StickyBar
         validated={validView.ok}
         stats={view.stats}
@@ -328,335 +301,818 @@ export default function PruefenScreen() {
 }
 
 /* ════════════════════════════════════════════════════════════════════════ */
-function IdentityCard({ view }) {
+function PruefenStyles() {
   return (
-    <Card style={{ padding: '24px 28px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-        <Label>Auftrag-Nummer (FBA)</Label>
-        <Badge tone="success">Erkannt</Badge>
-      </div>
-      <div style={{
-        fontFamily: T.font.mono,
-        fontSize: 32,
-        fontWeight: 500,
-        color: T.text.primary,
-        letterSpacing: '-0.02em',
-        lineHeight: 1.1,
-        wordBreak: 'break-all',
-      }}>
-        {view.fba}
-      </div>
-      <div style={{
-        marginTop: 20,
-        paddingTop: 18,
-        borderTop: `1px solid ${T.border.primary}`,
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, auto) 1fr',
-        gap: 32,
-        alignItems: 'flex-start',
-      }}>
-        <Meta label="Ziellager"   value={view.destination} mono />
-        <Meta label="Format"      value={`${view.format}-Format`} />
-        <Meta label="Erstellt am" value={view.createdDate ? `${view.createdDate} · ${view.createdTime}` : '—'} mono />
-      </div>
-    </Card>
+    <style>{`
+      .mp-prf-canvas {
+        background-color: ${T.bg.page};
+        background-image: radial-gradient(${T.border.primary} 1px, transparent 1px);
+        background-size: 24px 24px;
+        background-position: -1px -1px;
+      }
+      @keyframes mp-prf-rise {
+        0%   { opacity: 0; transform: translateY(8px); }
+        100% { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes mp-prf-hero {
+        0%   { opacity: 0; transform: scale(0.97); }
+        100% { opacity: 1; transform: scale(1); }
+      }
+      @keyframes mp-prf-fp-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 transparent; }
+        50%      { box-shadow: 0 0 0 3px var(--accent, #FF5B1F)55; }
+      }
+    `}</style>
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════ */
-function AuslastungCard({ pct }) {
-  const animated = useAnimatedNumber(pct, 1100);
-  const value = Math.round(animated * 100);
-  const stroke = 12;
-  const radius = 56;
-  const circ = 2 * Math.PI * radius;
-  const dash = animated * circ;
-
-  const color = pct > 1 ? T.status.danger.main
-    : pct >= 0.92 ? T.status.warn.main
-    : T.accent.main;
-  const tone = pct > 1 ? 'danger' : pct >= 0.92 ? 'warn' : 'accent';
-
+/* ════════════════════════════════════════════════════════════════════════
+   HERO FBA — primary anchor. Mega FBA mono + meta line + auto-insights
+   + fingerprint row. Single elevated card on the page.
+   ════════════════════════════════════════════════════════════════════════ */
+function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJumpToPallet }) {
   return (
-    <Card style={{ padding: '20px 24px' }}>
-      <SectionHeader
-        title="Auslastung"
-        sub="Volumen relativ zur EU-Palette."
-        right={<Badge tone={tone}>
-          {pct > 1 ? 'Überfüllt' : pct >= 0.92 ? 'Knapp' : pct >= 0.5 ? 'Optimal' : 'Niedrig'}
-        </Badge>}
-      />
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '160px 1fr',
-        gap: 24,
-        alignItems: 'center',
-        marginTop: 8,
-      }}>
-        <div style={{ position: 'relative', width: 160, height: 160 }}>
-          <svg width="160" height="160" viewBox="0 0 160 160" style={{ transform: 'rotate(-90deg)' }}>
-            <circle cx="80" cy="80" r={radius} stroke={T.bg.surface3} strokeWidth={stroke} fill="none" />
-            <circle
-              cx="80" cy="80" r={radius}
-              stroke={color}
-              strokeWidth={stroke}
-              strokeLinecap="round"
-              strokeDasharray={`${dash} ${circ - dash}`}
-              fill="none"
-              style={{ transition: 'stroke-dasharray 600ms cubic-bezier(0.16, 1, 0.3, 1)' }}
-            />
-          </svg>
+    <div style={{
+      position: 'relative',
+      padding: '28px 32px',
+      background: T.bg.surface,
+      border: `1px solid ${T.border.primary}`,
+      borderRadius: 20,
+      boxShadow: '0 1px 3px rgba(17,24,39,0.03), 0 16px 40px -22px rgba(17,24,39,0.08)',
+      overflow: 'hidden',
+      animation: 'mp-prf-hero 540ms cubic-bezier(0.16, 1, 0.3, 1) backwards',
+    }}>
+      {/* Soft accent radial halo top-right */}
+      <div aria-hidden style={{
+        position: 'absolute',
+        top: -100,
+        right: -100,
+        width: 260,
+        height: 260,
+        background: `radial-gradient(circle, ${T.accent.main}0E 0%, transparent 65%)`,
+        pointerEvents: 'none',
+      }} />
+
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 18 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* FBA — compact but still hero */}
           <div style={{
-            position: 'absolute', inset: 0,
-            display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center',
+            fontFamily: T.font.mono,
+            fontSize: 'clamp(28px, 3.8vw, 44px)',
+            fontWeight: 500,
+            color: T.text.primary,
+            letterSpacing: '-0.03em',
+            lineHeight: 1,
+            wordBreak: 'break-all',
           }}>
-            <div style={{
-              fontSize: 32,
-              fontWeight: 600,
-              color: T.text.primary,
-              letterSpacing: '-0.025em',
-              lineHeight: 1,
-              fontVariantNumeric: 'tabular-nums',
-            }}>
-              {value}<span style={{ fontSize: 18, color: T.text.subtle, marginLeft: 1 }}>%</span>
-            </div>
+            {view.fba}
           </div>
+
+          {/* Meta line + insights merged into one tight stack */}
+          <div style={{
+            marginTop: 10,
+            fontSize: 12.5,
+            color: T.text.subtle,
+            display: 'flex',
+            gap: 10,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+          }}>
+            <span style={{ fontFamily: T.font.mono }}>{view.destination}</span>
+            <Dot />
+            <span>{view.format}-Format</span>
+            {view.createdDate && (
+              <>
+                <Dot />
+                <span style={{ fontFamily: T.font.mono }}>
+                  {view.createdDate}{view.createdTime ? ' ' + view.createdTime : ''}
+                </span>
+              </>
+            )}
+          </div>
+
+          {insights.length > 0 && (
+            <div style={{
+              marginTop: 6,
+              display: 'flex',
+              gap: 12,
+              flexWrap: 'wrap',
+              fontSize: 11,
+              color: T.text.faint,
+              fontFamily: T.font.mono,
+            }}>
+              {insights.map((ins, i) => (
+                <span key={ins.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ color: T.text.subtle, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                    {ins.label}
+                  </span>
+                  <span style={{ color: T.text.secondary, fontWeight: 500 }}>
+                    {ins.value}
+                  </span>
+                  {i < insights.length - 1 && <span style={{ color: T.border.strong }}>·</span>}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Meta label="Ø Volumen / Palette" value={`${(pct * 1.59).toFixed(2)} m³`} mono />
-          <Meta label="Soft-Limit"          value="1,59 m³" mono />
-          <Meta label="Gewicht-Limit"       value="700 kg (soft)" mono />
-        </div>
+
+        <ReadyPill validView={validView} stats={stats} />
       </div>
-    </Card>
+
+      {/* Fingerprint row */}
+      <FingerprintRow
+        pallets={view.pallets}
+        ranking={ranking}
+        palletStates={palletStates}
+        onClick={onJumpToPallet}
+      />
+
+      {/* Übersicht monoline — primary stats inside the hero card,
+          separated by a hairline. Shares space with FBA and fingerprint
+          so the operator sees identity + facts in one elevated block. */}
+      <div style={{
+        marginTop: 18,
+        paddingTop: 16,
+        borderTop: `1px solid ${T.border.primary}`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0,
+        flexWrap: 'wrap',
+      }}>
+        <Metric value={stats.palletCount} label="Paletten" />
+        <MetricSep />
+        <Metric value={stats.articles} label="Artikel" />
+        <MetricSep />
+        <Metric value={stats.cartons.toLocaleString('de-DE')} label="Kartons" />
+        <MetricSep />
+        <Metric value={stats.weightKg.toLocaleString('de-DE')} label="kg" />
+        <MetricSep />
+        <FillMetric pct={stats.fillPct} />
+      </div>
+    </div>
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════ */
-function LevelsCard({ pallets }) {
-  const distribution = useMemo(() => levelDistribution(pallets), [pallets]);
-  const grand = distribution.reduce((s, d) => s + d.units, 0);
+function Dot() {
+  return <span style={{
+    width: 3, height: 3,
+    borderRadius: '50%',
+    background: T.text.faint,
+    flexShrink: 0,
+  }} />;
+}
+
+function ReadyPill({ validView, stats }) {
+  const tone = validView.errors > 0 ? 'danger'
+    : validView.warnings > 0 ? 'warn'
+    : 'success';
+  const palette = T.status[tone];
+  const label = validView.errors > 0 ? `${validView.errors} Fehler`
+    : validView.warnings > 0 ? `${validView.warnings} Warnung${validView.warnings === 1 ? '' : 'en'}`
+    : 'Bereit';
+  const okPulse = tone === 'success';
 
   return (
-    <Card style={{ padding: '20px 24px' }}>
-      <SectionHeader
-        title="Levels"
-        sub={`Verteilung über ${grand.toLocaleString('de-DE')} Einheiten · Stapelreihenfolge unten → oben.`}
-      />
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'flex-end',
+      gap: 8,
+      flexShrink: 0,
+    }}>
+      <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '6px 12px',
+        borderRadius: 999,
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
+        fontSize: 12,
+        fontWeight: 500,
+        color: palette.text,
+        position: 'relative',
+      }}>
+        <span style={{
+          width: 6, height: 6,
+          borderRadius: '50%',
+          background: palette.main,
+          boxShadow: okPulse ? `0 0 0 3px ${palette.main}22` : 'none',
+        }} />
+        {label}
+      </span>
+      <span style={{
+        fontSize: 11,
+        fontFamily: T.font.mono,
+        color: T.text.faint,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '0.02em',
+      }}>
+        ~ {formatDur(stats.durationSec)}
+      </span>
+    </div>
+  );
+}
 
-      {/* Stacked bar */}
+/* ════════════════════════════════════════════════════════════════════════
+   FINGERPRINT — 12 mini-squares, color = dominant level, top-right
+   flag-dot if pallet has issues. Click → jump to pallet.
+   ════════════════════════════════════════════════════════════════════════ */
+function FingerprintRow({ pallets, ranking, palletStates, onClick }) {
+  if (!pallets || pallets.length === 0) return null;
+  return (
+    <div style={{
+      marginTop: 18,
+      paddingTop: 16,
+      borderTop: `1px solid ${T.border.primary}`,
+      position: 'relative',
+    }}>
       <div style={{
         display: 'flex',
-        height: 14,
-        background: T.bg.surface3,
-        borderRadius: T.radius.full,
-        overflow: 'hidden',
-        marginTop: 4,
-        marginBottom: 16,
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 10,
       }}>
-        {distribution.map((s, i) => (
-          <div
-            key={s.level}
-            title={`L${s.level} ${s.meta.name}: ${s.units.toLocaleString('de-DE')} (${Math.round(s.pct * 100)}%)`}
-            style={{
-              width: `${s.pct * 100}%`,
-              background: s.meta.color,
-              borderRight: i < distribution.length - 1 ? `2px solid ${T.bg.surface}` : 'none',
-              transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
-            }}
+        <span style={{
+          fontSize: 10,
+          fontWeight: 600,
+          color: T.text.faint,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          fontFamily: T.font.mono,
+        }}>
+          Fingerprint
+        </span>
+        <span style={{
+          fontSize: 11,
+          color: T.text.faint,
+          fontFamily: T.font.mono,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {pallets.length} {pallets.length === 1 ? 'Palette' : 'Paletten'}
+        </span>
+      </div>
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 4,
+      }}>
+        {pallets.map((p) => (
+          <FingerprintCell
+            key={p.id}
+            pallet={p}
+            state={palletStates?.[p.id]}
+            onClick={() => onClick(p.id)}
           />
         ))}
       </div>
-
-      {/* Legend — 2 columns of pills */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(2, 1fr)',
-        gap: 8,
-      }}>
-        {distribution.map((s) => (
-          <div key={s.level} style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            padding: '8px 10px',
-            background: T.bg.surface2,
-            border: `1px solid ${T.border.primary}`,
-            borderRadius: T.radius.md,
-          }}>
-            <span style={{
-              width: 22, height: 22,
-              background: s.meta.color,
-              borderRadius: T.radius.sm,
-              flexShrink: 0,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              fontSize: 11,
-              fontWeight: 700,
-            }}>
-              {s.level}
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 12.5,
-                fontWeight: 600,
-                color: T.text.primary,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}>
-                {s.meta.name}
-              </div>
-              <div style={{ fontSize: 11, color: T.text.subtle, marginTop: 1 }}>
-                Level {s.level}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: T.text.primary,
-                fontVariantNumeric: 'tabular-nums',
-              }}>
-                {s.units.toLocaleString('de-DE')}
-              </div>
-              <div style={{
-                fontSize: 11,
-                color: s.meta.color,
-                fontWeight: 600,
-                marginTop: 1,
-                fontVariantNumeric: 'tabular-nums',
-              }}>
-                {Math.round(s.pct * 100)}%
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════════════════ */
-function CheckRow({ ok, label, detail }) {
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: 10,
-    }}>
-      <span style={{
-        width: 18, height: 18,
-        borderRadius: '50%',
-        background: ok ? T.status.success.bg : T.bg.surface3,
-        color: ok ? T.status.success.main : T.text.faint,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-        marginTop: 1,
-      }}>
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-          <path d="M2.5 6.5l2 2 5-5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </span>
-      <div>
-        <div style={{ fontSize: 13.5, fontWeight: 500, color: T.text.primary }}>
-          {label}
-        </div>
-        {detail && (
-          <div style={{ fontSize: 12, color: T.text.subtle, marginTop: 1 }}>
-            {detail}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════ */
-function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus }) {
-  const hasFlags = overloadCount > 0 || noValidCount > 0;
+function FingerprintCell({ pallet, state, onClick }) {
+  const [hover, setHover] = useState(false);
+
+  /* `pallet.level` is already pre-computed by pruefenView()
+     (= primaryLevel(items) inside the view-builder), so we can use
+     it directly. Earlier code tried to re-derive it from pallet.items
+     which the view doesn't expose — leaving cells grey. */
+  const lvl = pallet.level;
+  const meta = lvl != null ? LEVEL_META[lvl] : null;
+  const baseColor = meta?.color || T.bg.surface3;
+  const hasFlag = state && Array.isArray(state.flags) && state.flags.length > 0;
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={`${pallet.id} · ${meta?.name || 'Unbekannt'}${hasFlag ? ' · ' + state.flags.length + ' Hinweis(e)' : ''}`}
+      style={{
+        position: 'relative',
+        width: 24,
+        height: 24,
+        background: baseColor,
+        border: `1px solid ${hover ? T.text.primary : 'transparent'}`,
+        borderRadius: 4,
+        cursor: 'pointer',
+        padding: 0,
+        flexShrink: 0,
+        transition: 'all 160ms cubic-bezier(0.16, 1, 0.3, 1)',
+        transform: hover ? 'scale(1.12)' : 'scale(1)',
+        opacity: hasFlag ? 1 : 0.85,
+      }}
+    >
+      {hasFlag && (
+        <span style={{
+          position: 'absolute',
+          top: 2,
+          right: 2,
+          width: 5, height: 5,
+          borderRadius: '50%',
+          background: T.status.warn.main,
+          border: `1.5px solid ${T.bg.surface}`,
+        }} />
+      )}
+    </button>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ÜBERSICHT METRICS — atoms used inside the HeroFBA card. Visually
+   share space with FBA + Fingerprint to consolidate "this Auftrag's
+   identity + facts" into one elevated block.
+   ════════════════════════════════════════════════════════════════════════ */
+
+function Metric({ value, label }) {
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'baseline',
+      gap: 6,
+      padding: '0 4px',
+    }}>
+      <span style={{
+        fontSize: 16,
+        fontWeight: 600,
+        color: T.text.primary,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '-0.012em',
+      }}>
+        {value}
+      </span>
+      <span style={{
+        fontSize: 11,
+        color: T.text.faint,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        fontFamily: T.font.mono,
+      }}>
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function MetricSep() {
+  return (
+    <span style={{
+      width: 1,
+      height: 18,
+      background: T.border.primary,
+      margin: '0 14px',
+    }} />
+  );
+}
+
+function FillMetric({ pct }) {
+  const pctValue = Math.round(pct * 100);
+  const color = pct > 1 ? T.status.danger.main
+    : pct >= 0.92 ? T.status.warn.main
+    : T.accent.main;
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '0 4px',
+    }}>
+      <span style={{
+        fontSize: 16,
+        fontWeight: 600,
+        color: T.text.primary,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '-0.012em',
+      }}>
+        {pctValue}%
+      </span>
+      <span style={{
+        position: 'relative',
+        width: 60,
+        height: 3,
+        background: T.bg.surface3,
+        borderRadius: 999,
+        overflow: 'hidden',
+      }}>
+        <span style={{
+          position: 'absolute',
+          left: 0, top: 0, bottom: 0,
+          width: `${Math.min(100, pctValue)}%`,
+          background: color,
+          borderRadius: 999,
+          transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
+        }} />
+      </span>
+      <span style={{
+        fontSize: 11,
+        color: T.text.faint,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        fontFamily: T.font.mono,
+      }}>
+        Auslastung
+      </span>
+    </span>
+  );
+}
+
+function LevelsDisclosure({ pallets, open, onToggle }) {
+  const distribution = useMemo(() => levelDistribution(pallets), [pallets]);
+  const grand = distribution.reduce((s, d) => s + d.units, 0);
+  if (grand === 0) return null;
+  const filled = distribution.filter((d) => d.units > 0).length;
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '4px 10px 4px 4px',
+          background: 'transparent',
+          border: 0,
+          cursor: 'pointer',
+          fontSize: 11.5,
+          color: T.text.subtle,
+          fontFamily: T.font.mono,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          fontWeight: 500,
+          borderRadius: 4,
+          transition: 'color 160ms',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = T.text.primary; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = T.text.subtle; }}
+      >
+        <span style={{
+          display: 'inline-flex',
+          width: 16, height: 16,
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'transform 200ms',
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+        }}>
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M2 1l4 3.5-4 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        Levels-Verteilung · {filled} von 6 belegt
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: 12,
+          padding: '18px 20px',
+          background: T.bg.surface,
+          border: `1px solid ${T.border.primary}`,
+          borderRadius: 14,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          animation: 'mp-prf-rise 320ms cubic-bezier(0.16,1,0.3,1)',
+        }}>
+          <div style={{
+            display: 'flex',
+            height: 12,
+            background: T.bg.surface3,
+            borderRadius: 999,
+            overflow: 'hidden',
+          }}>
+            {distribution.map((s, i) => (
+              <div
+                key={s.level}
+                title={`L${s.level} ${s.meta.name}: ${s.units.toLocaleString('de-DE')} (${Math.round(s.pct * 100)}%)`}
+                style={{
+                  width: `${s.pct * 100}%`,
+                  background: s.meta.color,
+                  borderRight: i < distribution.length - 1 ? `2px solid ${T.bg.surface}` : 'none',
+                }}
+              />
+            ))}
+          </div>
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 14,
+          }}>
+            {distribution.map((s) => (
+              <span
+                key={s.level}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 12,
+                }}
+              >
+                <span style={{
+                  width: 16, height: 16,
+                  background: s.meta.color,
+                  borderRadius: 3,
+                  color: '#fff',
+                  fontSize: 9,
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontFamily: T.font.mono,
+                  opacity: s.units > 0 ? 1 : 0.3,
+                }}>
+                  {s.level}
+                </span>
+                <span style={{ color: T.text.primary, fontWeight: 500 }}>{s.meta.name}</span>
+                <span style={{
+                  color: T.text.faint,
+                  fontVariantNumeric: 'tabular-nums',
+                  fontFamily: T.font.mono,
+                }}>
+                  {Math.round(s.pct * 100)}%
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PALLETS SECTION — primary content. Section header + body.
+   Header gets a ref so an IntersectionObserver upstream knows when
+   to render the sticky toolbar.
+   ════════════════════════════════════════════════════════════════════════ */
+function PalletsSection({
+  headerRef,
+  pallets, visiblePallets, enrichedPallets, eskuDist, eskuItems,
+  palletStates, ranking, viewMode, onChangeViewMode,
+  problemOnly, onTogglProblemOnly, hiddenByFilter, onJumpToPallet,
+  mountDelay = 0,
+}) {
+  const total = pallets.length;
+  const subtitle = useMemo(() => {
+    if (problemOnly) {
+      return hiddenByFilter > 0
+        ? `${visiblePallets.length} mit Hinweisen · ${hiddenByFilter} ausgeblendet`
+        : 'Keine problematischen Paletten';
+    }
+    if (eskuItems.length > 0) {
+      return viewMode === 'overview'
+        ? `Übersicht · ${eskuItems.length} ESKU-Kartons verteilt`
+        : `Story · ${eskuItems.length} ESKU-Kartons verteilt`;
+    }
+    return viewMode === 'overview'
+      ? 'Übersicht — Mini-Karten für schnellen Vergleich'
+      : 'Story — Headline, Auslastung und Top-Artikel pro Palette';
+  }, [viewMode, eskuItems.length, problemOnly, visiblePallets.length, hiddenByFilter]);
+
+  return (
+    <section style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 16,
+      animation: `mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) ${mountDelay}ms backwards`,
+    }}>
+      {/* Section header */}
+      <div ref={headerRef} style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        flexWrap: 'wrap',
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{
+              fontSize: 22,
+              fontWeight: 500,
+              color: T.text.primary,
+              letterSpacing: '-0.02em',
+            }}>
+              Paletten
+            </span>
+            <span style={{
+              fontSize: 14,
+              color: T.text.faint,
+              fontVariantNumeric: 'tabular-nums',
+              fontFamily: T.font.mono,
+            }}>
+              {total}
+            </span>
+          </div>
+          <div style={{
+            marginTop: 4,
+            fontSize: 12.5,
+            color: T.text.subtle,
+          }}>
+            {subtitle}
+          </div>
+        </div>
+        <span style={{ flex: 1 }} />
+        <FilterChip active={problemOnly} onClick={onTogglProblemOnly} />
+        <ViewModeToggle value={viewMode} onChange={onChangeViewMode} />
+      </div>
+
+      {/* Body */}
+      <PalletsBody
+        visiblePallets={visiblePallets}
+        enrichedPallets={enrichedPallets}
+        eskuDist={eskuDist}
+        palletStates={palletStates}
+        ranking={ranking}
+        viewMode={viewMode}
+        problemOnly={problemOnly}
+        hiddenByFilter={hiddenByFilter}
+        onJumpToPallet={onJumpToPallet}
+      />
+    </section>
+  );
+}
+
+function PalletsBody({
+  visiblePallets, enrichedPallets, eskuDist,
+  palletStates, ranking, viewMode, problemOnly, hiddenByFilter,
+  onJumpToPallet,
+}) {
+  if (visiblePallets.length === 0 && problemOnly) {
+    return (
+      <div style={{
+        padding: '24px 20px',
+        textAlign: 'center',
+        fontSize: 13,
+        color: T.status.success.text,
+        background: T.status.success.bg,
+        border: `1px solid ${T.status.success.border}`,
+        borderRadius: 14,
+      }}>
+        ✓ Keine problematischen Paletten · {hiddenByFilter} ausgeblendet
+      </div>
+    );
+  }
+
+  if (viewMode === 'overview') {
+    return (
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+        gap: 12,
+      }}>
+        {visiblePallets.map((p, i) => {
+          const raw = enrichedPallets.find((r) => r.id === p.id);
+          const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
+          const palletState = palletStates[p.id];
+          const story = buildPalletStory({
+            pallet: p,
+            items: raw?.items || [],
+            eskuAssigned,
+            palletState,
+            ranking,
+          });
+          return (
+            <PalletMiniCard
+              key={p.id}
+              pallet={p}
+              index={i}
+              eskuAssigned={eskuAssigned}
+              palletState={palletState}
+              story={story}
+              onClick={() => onJumpToPallet(p.id)}
+            />
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {visiblePallets.map((p, i) => {
+        const raw = enrichedPallets.find((r) => r.id === p.id);
+        const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
+        const palletState = palletStates[p.id];
+        const story = buildPalletStory({
+          pallet: p,
+          items: raw?.items || [],
+          eskuAssigned,
+          palletState,
+          ranking,
+        });
+        return (
+          <PalletStoryCard
+            key={p.id}
+            pallet={p}
+            index={i}
+            items={raw?.items || []}
+            eskuAssigned={eskuAssigned}
+            palletState={palletState}
+            story={story}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STICKY PALLETS TOOLBAR — appears when section header scrolls past.
+   ════════════════════════════════════════════════════════════════════════ */
+function StickyPalletsToolbar({ visible, count, visibleCount, problemOnly, onToggleProblem, viewMode, onChangeViewMode }) {
   return (
     <div style={{
       position: 'fixed',
-      bottom: 0,
-      left: 0,
+      top: visible ? 0 : -56,
+      left: 'var(--sidebar-width)',
       right: 0,
-      zIndex: 50,
-      padding: '14px 32px',
-      background: 'rgba(255, 255, 255, 0.92)',
+      zIndex: 30,
+      padding: '10px 32px',
+      background: 'rgba(255,255,255,0.92)',
       backdropFilter: 'blur(14px)',
       WebkitBackdropFilter: 'blur(14px)',
-      borderTop: `1px solid ${T.border.primary}`,
-      display: 'flex',
-      marginLeft: 'var(--sidebar-width)',
+      borderBottom: `1px solid ${T.border.primary}`,
+      transition: 'top 280ms cubic-bezier(0.16, 1, 0.3, 1)',
+      pointerEvents: visible ? 'auto' : 'none',
     }}>
       <div style={{
+        maxWidth: 1080,
+        margin: '0 auto',
         display: 'flex',
         alignItems: 'center',
-        gap: 16,
-        maxWidth: 1180,
-        margin: '0 auto',
-        width: '100%',
+        gap: 12,
       }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <span className="mr-pulse" style={{
-            width: 8, height: 8, borderRadius: '50%',
-            background: validated ? T.status.success.main : T.status.warn.main,
-            boxShadow: `0 0 0 4px ${validated ? T.status.success.main + '30' : T.status.warn.main + '30'}`,
-          }} />
-          <span style={{ fontSize: 13, color: T.text.secondary, fontWeight: 500 }}>
-            {validated
-              ? `Auftrag bereit — ${stats.palletCount} Paletten, ${stats.articles} Artikel`
-              : 'Validierung erforderlich'}
-          </span>
+        <span style={{
+          fontSize: 12.5,
+          fontWeight: 500,
+          color: T.text.primary,
+          letterSpacing: '-0.005em',
+        }}>
+          Paletten
         </span>
-        {hasFlags && (
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            fontSize: 12,
-            color: T.status.warn.text,
-            fontWeight: 600,
-            padding: '4px 10px',
-            background: T.status.warn.bg,
-            borderRadius: T.radius.sm,
-            border: `1px solid ${T.status.warn.border}`,
-          }}>
-            ⚠ {overloadCount > 0 && `${overloadCount} OVERLOAD`}
-            {overloadCount > 0 && noValidCount > 0 && ' · '}
-            {noValidCount > 0 && `${noValidCount} NO_VALID`}
-          </span>
-        )}
+        <span style={{
+          fontSize: 11.5,
+          color: T.text.faint,
+          fontFamily: T.font.mono,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {visibleCount === count ? count : `${visibleCount} / ${count}`}
+        </span>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 12.5, color: T.text.subtle }}>
-          Geschätzt {formatDur(stats.durationSec)}
-        </span>
-        <Button
-          variant="primary"
-          onClick={onStartFocus}
-          disabled={!validated}
-        >
-          Focus-Modus starten
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M3 7h8m0 0L7.5 3.5M11 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </Button>
+        <FilterChip active={problemOnly} onClick={onToggleProblem} />
+        <ViewModeToggle value={viewMode} onChange={onChangeViewMode} />
       </div>
     </div>
   );
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   FILTER CHIP + VIEW TOGGLE
+   ════════════════════════════════════════════════════════════════════════ */
+function FilterChip({ active, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '5px 11px',
+        fontSize: 12,
+        fontWeight: 500,
+        color: active ? T.status.warn.text : T.text.subtle,
+        background: active ? T.status.warn.bg : 'transparent',
+        border: `1px solid ${active ? T.status.warn.border : T.border.primary}`,
+        borderRadius: 999,
+        cursor: 'pointer',
+        fontFamily: T.font.ui,
+        transition: 'all 160ms',
+      }}
+      onMouseEnter={(e) => {
+        if (!active) {
+          e.currentTarget.style.borderColor = T.text.subtle;
+          e.currentTarget.style.color = T.text.secondary;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!active) {
+          e.currentTarget.style.borderColor = T.border.primary;
+          e.currentTarget.style.color = T.text.subtle;
+        }
+      }}
+    >
+      <span style={{
+        width: 5, height: 5,
+        borderRadius: '50%',
+        background: active ? T.status.warn.main : T.text.faint,
+      }} />
+      Nur problematische
+    </button>
+  );
+}
 
-/* ════════════════════════════════════════════════════════════════════════ */
-/* Segmented toggle for the Paletten section view-mode. Two pill buttons,
-   the active one filled with surface, the other ghosted — matches the
-   density-toggle pattern used elsewhere in the design system. */
 function ViewModeToggle({ value, onChange }) {
   const options = [
     { id: 'story',    label: 'Story',     icon: <StoryIcon /> },
@@ -669,7 +1125,7 @@ function ViewModeToggle({ value, onChange }) {
       padding: 2,
       background: T.bg.surface3,
       border: `1px solid ${T.border.primary}`,
-      borderRadius: T.radius.md,
+      borderRadius: 6,
     }}>
       {options.map((opt) => {
         const active = value === opt.id;
@@ -683,13 +1139,13 @@ function ViewModeToggle({ value, onChange }) {
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
-              padding: '5px 10px',
+              padding: '4px 10px',
               fontSize: 12,
-              fontWeight: 500,
+              fontWeight: active ? 600 : 500,
               color: active ? T.text.primary : T.text.subtle,
               background: active ? T.bg.surface : 'transparent',
               border: 0,
-              borderRadius: T.radius.sm,
+              borderRadius: 4,
               cursor: 'pointer',
               fontFamily: T.font.ui,
               boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
@@ -707,7 +1163,7 @@ function ViewModeToggle({ value, onChange }) {
 
 function StoryIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
       <rect x="2" y="3" width="12" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
       <rect x="2" y="9" width="12" height="3" rx="1" stroke="currentColor" strokeWidth="1.4" />
     </svg>
@@ -715,13 +1171,204 @@ function StoryIcon() {
 }
 function GridIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
       <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
       <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
       <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
       <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STICKY BAR (bottom)
+   ════════════════════════════════════════════════════════════════════════ */
+function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus }) {
+  const hasFlags = overloadCount > 0 || noValidCount > 0;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      zIndex: 50,
+      padding: '12px 32px',
+      background: 'rgba(255, 255, 255, 0.94)',
+      backdropFilter: 'blur(14px)',
+      WebkitBackdropFilter: 'blur(14px)',
+      borderTop: `1px solid ${T.border.primary}`,
+      display: 'flex',
+      marginLeft: 'var(--sidebar-width)',
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        maxWidth: 1080,
+        margin: '0 auto',
+        width: '100%',
+      }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span style={{
+            width: 7, height: 7, borderRadius: '50%',
+            background: validated ? T.status.success.main : T.status.warn.main,
+            boxShadow: `0 0 0 3px ${(validated ? T.status.success.main : T.status.warn.main) + '22'}`,
+          }} />
+          <span style={{
+            fontSize: 12.5,
+            color: T.text.primary,
+            fontWeight: 500,
+            letterSpacing: '-0.005em',
+          }}>
+            {validated ? 'Bereit' : 'Validierung erforderlich'}
+          </span>
+          <span style={{
+            fontSize: 12,
+            color: T.text.faint,
+            fontFamily: T.font.mono,
+            fontVariantNumeric: 'tabular-nums',
+            marginLeft: 4,
+          }}>
+            {stats.palletCount} Pal · {stats.articles} Art
+          </span>
+        </span>
+
+        {hasFlags && (
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: 11.5,
+            color: T.status.warn.text,
+            fontWeight: 500,
+            padding: '3px 9px',
+            background: T.status.warn.bg,
+            borderRadius: 999,
+            border: `1px solid ${T.status.warn.border}`,
+          }}>
+            <span style={{
+              width: 5, height: 5,
+              borderRadius: '50%',
+              background: T.status.warn.main,
+            }} />
+            {overloadCount > 0 && `${overloadCount} OVERLOAD`}
+            {overloadCount > 0 && noValidCount > 0 && ' · '}
+            {noValidCount > 0 && `${noValidCount} NO_VALID`}
+          </span>
+        )}
+
+        <span style={{ flex: 1 }} />
+
+        <span style={{
+          fontSize: 11.5,
+          color: T.text.faint,
+          fontFamily: T.font.mono,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          ~ {formatDur(stats.durationSec)}
+        </span>
+
+        <Button
+          variant="primary"
+          onClick={onStartFocus}
+          disabled={!validated}
+          title={validated ? 'Focus-Modus starten (F)' : 'Validierungsfehler beheben'}
+        >
+          Focus-Modus
+          <Kbd>F</Kbd>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function Kbd({ children }) {
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 18,
+      height: 18,
+      padding: '0 5px',
+      fontSize: 10,
+      fontWeight: 600,
+      color: '#fff',
+      background: 'rgba(255,255,255,0.18)',
+      border: '1px solid rgba(255,255,255,0.28)',
+      borderRadius: 3,
+      fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+      marginLeft: 2,
+    }}>
+      {children}
+    </span>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   AUTO-INSIGHTS — derive presentation-quality facts from the pallet list.
+   Each insight: { id, label, value }. Returned in order of importance:
+     • Schwerste Palette (kg)
+     • Vielfalt (most distinct articles on one pallet)
+     • Knappste Palette (highest fillPct)
+   We cap at 3 to keep the line visually clean.
+   ════════════════════════════════════════════════════════════════════════ */
+function buildAuftragInsights(pallets, enrichedPallets, palletStates, eskuDist) {
+  if (!pallets || pallets.length === 0) return [];
+  const out = [];
+
+  /* Schwerste — by computed weightKg. We use enrichedPallets items
+     because they carry real dim/weight data. */
+  let heaviest = null;
+  let mostVariety = null;
+  let tightest = null;
+
+  for (const p of pallets) {
+    const raw = enrichedPallets.find((r) => r.id === p.id);
+    const items = raw?.items || [];
+    const eskuAssigned = eskuDist[p.id] || [];
+    const allItems = [...items, ...eskuAssigned];
+
+    const weightKg = allItems.reduce((s, it) => s + (itemTotalWeightKg(it) || 0), 0);
+    const distinctArticles = items.length;
+    const state = palletStates[p.id];
+    const fill = state?.capacityFraction ?? state?.fillPct ?? 0;
+
+    if (weightKg > 0 && (!heaviest || weightKg > heaviest.weightKg)) {
+      heaviest = { id: p.id, weightKg };
+    }
+    if (distinctArticles > 0 && (!mostVariety || distinctArticles > mostVariety.distinctArticles)) {
+      mostVariety = { id: p.id, distinctArticles };
+    }
+    if (fill > 0 && (!tightest || fill > tightest.fill)) {
+      tightest = { id: p.id, fill };
+    }
+  }
+
+  if (heaviest && heaviest.weightKg >= 1) {
+    out.push({
+      id: 'heaviest',
+      label: 'Schwerste',
+      value: `${heaviest.id} · ${Math.round(heaviest.weightKg)} kg`,
+    });
+  }
+  if (mostVariety && mostVariety.distinctArticles >= 2) {
+    out.push({
+      id: 'variety',
+      label: 'Vielfalt',
+      value: `${mostVariety.id} · ${mostVariety.distinctArticles} Art.`,
+    });
+  }
+  if (tightest && tightest.fill > 0.7) {
+    out.push({
+      id: 'tightest',
+      label: 'Knappste',
+      value: `${tightest.id} · ${Math.round(tightest.fill * 100)}%`,
+    });
+  }
+
+  return out.slice(0, 3);
 }
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -731,28 +1378,4 @@ function formatDur(sec) {
   if (h === 0) return `${m} min`;
   if (m === 0) return `${h} h`;
   return `${h} h ${m} min`;
-}
-
-function useAnimatedNumber(target, duration = 800) {
-  const [value, setValue] = useState(0);
-  const start = useRef(null);
-  const from = useRef(0);
-
-  useEffect(() => {
-    from.current = value;
-    start.current = null;
-    let raf;
-    const step = (ts) => {
-      if (start.current == null) start.current = ts;
-      const t = Math.min(1, (ts - start.current) / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-      setValue(from.current + (target - from.current) * eased);
-      if (t < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, duration]);
-
-  return value;
 }

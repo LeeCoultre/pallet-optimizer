@@ -47,38 +47,74 @@ export function UserSwitcher({ collapsed = false }) {
     <FooterShell collapsed={collapsed}>
       <SignedOut>
         <SignInButton mode="modal">
-          <button
-            title={collapsed ? 'Anmelden' : undefined}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              padding: collapsed ? 0 : '8px 10px',
-              width: collapsed ? 36 : 'auto',
-              height: collapsed ? 36 : 'auto',
-              background: T.accent.main,
-              color: '#fff',
-              border: 0,
-              borderRadius: collapsed ? '50%' : T.radius.md,
-              cursor: 'pointer',
-              fontFamily: T.font.ui,
-              fontSize: 13,
-              fontWeight: 600,
-              transition: 'background 120ms',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = T.accent.hover; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = T.accent.main; }}
-          >
-            {collapsed ? (
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M5 3l3 4-3 4M3 7h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+          {collapsed ? (
+            <button
+              title="Anmelden"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 28,
+                height: 28,
+                background: 'transparent',
+                color: T.text.subtle,
+                border: `1px solid ${T.border.primary}`,
+                borderRadius: '50%',
+                cursor: 'pointer',
+                padding: 0,
+                transition: 'all 160ms',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = T.accent.main;
+                e.currentTarget.style.color = T.accent.main;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = T.border.primary;
+                e.currentTarget.style.color = T.text.subtle;
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                <path d="M5 3l3 4-3 4M3 7h7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-            ) : 'Anmelden'}
-          </button>
+            </button>
+          ) : (
+            <button
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6,
+                padding: '6px 10px',
+                background: 'transparent',
+                color: T.text.secondary,
+                border: `1px solid ${T.border.strong}`,
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontFamily: T.font.ui,
+                fontSize: 12.5,
+                fontWeight: 500,
+                transition: 'all 160ms',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = T.accent.main;
+                e.currentTarget.style.color = T.accent.main;
+                e.currentTarget.style.background = T.accent.bg;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = T.border.strong;
+                e.currentTarget.style.color = T.text.secondary;
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                <path d="M5 3l3 4-3 4M3 7h7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Anmelden
+            </button>
+          )}
         </SignInButton>
         {!collapsed && (
-          <span style={{ fontSize: 11, color: T.text.faint, textAlign: 'center' }}>
+          <span style={{ fontSize: 10, color: T.text.faint, textAlign: 'center', letterSpacing: '0.04em' }}>
             Email · Magic Link
           </span>
         )}

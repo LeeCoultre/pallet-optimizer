@@ -128,6 +128,7 @@ class WorkflowProgress(BaseModel):
     current_pallet_idx: Optional[int] = None
     current_item_idx: Optional[int] = None
     completed_keys: Optional[dict[str, Any]] = None
+    copied_keys: Optional[dict[str, Any]] = None
     pallet_timings: Optional[dict[str, Any]] = None
 
 
@@ -259,6 +260,83 @@ class SkuDimensionImportResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+# ─── Search (Phase 1 — globale Suche) ────────────────────────────────
+
+class SearchHit(APIModel):
+    """One row in /api/search results.
+
+    `matched_field` and `matched_value` describe WHERE the query hit so
+    the UI can highlight context. Computed in Python after the SQL pull
+    because PostgreSQL ILIKE %query% returns rows but doesn't tell you
+    which field of the JSONB matched.
+    """
+    id: UUID
+    file_name: str
+    fba_code: Optional[str] = None
+    status: AuftragStatus
+    pallet_count: int = 0
+    article_count: int = 0
+    created_at: datetime
+    finished_at: Optional[datetime] = None
+    duration_sec: Optional[int] = None
+    assigned_to_user_name: Optional[str] = None
+    matched_field: Optional[str] = None  # 'fnsku' | 'sku' | 'ean' | 'sendungsnummer' | 'file_name'
+    matched_value: Optional[str] = None
+
+
+class SearchResults(BaseModel):
+    items: list[SearchHit]
+    total: int
+    limit: int
+    offset: int
+    query: str
+
+
+# ─── Activity feed (Phase 1 — Live-Aktivität) ────────────────────────
+
+class ActiveWorker(BaseModel):
+    """Operator who currently has an in_progress Auftrag."""
+    user_id: UUID
+    user_name: str
+    auftrag_id: UUID
+    file_name: str
+    fba_code: Optional[str] = None
+    step: Optional[WorkflowStep] = None
+    started_at: Optional[datetime] = None
+    current_pallet_idx: Optional[int] = None
+    pallet_count: int = 0
+
+
+class ActivityEvent(BaseModel):
+    """One audit_log row, joined with user + (optional) Auftrag file name."""
+    id: UUID
+    action: str
+    created_at: datetime
+    user_id: UUID
+    user_name: Optional[str] = None
+    auftrag_id: Optional[UUID] = None
+    auftrag_file_name: Optional[str] = None
+    fba_code: Optional[str] = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActivityFeed(BaseModel):
+    active_workers: list[ActiveWorker] = Field(default_factory=list)
+    events: list[ActivityEvent] = Field(default_factory=list)
+    server_time: datetime  # UI computes "ago" against this for clock-skew safety
+
+
+class ShiftInfo(BaseModel):
+    """Working-day window for a single user, derived from audit_log.
+
+    started_at is the first audit row of the local calendar day for that
+    user; null means the operator hasn't done anything today yet.
+    """
+    started_at: Optional[datetime] = None
+    duration_sec: int = 0
+    completed_today: int = 0
+
+
 # ─── Auftraege — full detail ─────────────────────────────────────────
 
 class AuftragDetail(AuftragSummary):
@@ -270,6 +348,7 @@ class AuftragDetail(AuftragSummary):
     current_pallet_idx: Optional[int] = None
     current_item_idx: Optional[int] = None
     completed_keys: dict[str, Any] = Field(default_factory=dict)
+    copied_keys: dict[str, Any] = Field(default_factory=dict)
     pallet_timings: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
@@ -288,4 +367,5 @@ class AuftragDetail(AuftragSummary):
             current_pallet_idx=row.current_pallet_idx,
             current_item_idx=row.current_item_idx,
             completed_keys=row.completed_keys or {},
+            copied_keys=row.copied_keys or {},
         )
