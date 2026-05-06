@@ -88,12 +88,12 @@ jobs:
           --health-retries 5
 
     env:
-      # Both DATABASE_URL and TEST_DATABASE_URL point at the ephemeral
-      # CI Postgres. The repo-root conftest.py refuses to run if these
-      # are missing or look prod-shaped — the explicit values here
-      # satisfy the safety check.
+      # CI runs against the ephemeral Postgres above. We set ONLY
+      # DATABASE_URL (alembic upgrade reads it). conftest.py treats
+      # localhost as safe via _looks_local() and skips the isolation
+      # check. Setting both vars to the same URL would trip the
+      # belt-and-braces guard — they must differ when both are set.
       DATABASE_URL: postgresql://test:test@localhost:5432/marathon_test
-      TEST_DATABASE_URL: postgresql://test:test@localhost:5432/marathon_test
       # Dummy Clerk values — the auth dependency is overridden in tests
       # via app.dependency_overrides[get_current_user], so real Clerk
       # JWKS verification never runs in pytest.
