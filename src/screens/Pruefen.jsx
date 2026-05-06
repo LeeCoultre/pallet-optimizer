@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
 import {
   pruefenView, distributeEinzelneSku, enrichItemDims,
-  levelDistribution, sortItemsForPallet, formatItemTitle, LEVEL_META,
+  levelDistribution, sortItemsForPallet,
 } from '../utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '../marathonApi.js';
 import {
@@ -17,9 +17,10 @@ import {
   Label, Badge, Button, Meta, Kpi,
   T,
 } from '../components/ui.jsx';
-import PalletStackViz from '../components/PalletStackViz.jsx';
 import PreflightCard from '../components/PreflightCard.jsx';
+import PalletStoryCard from '../components/PalletStoryCard.jsx';
 import { analyzeAuftrag } from '../utils/preflightAnalyzer.js';
+import { buildPalletStory, rankPallets } from '../utils/palletStory.js';
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function PruefenScreen() {
@@ -85,8 +86,6 @@ export default function PruefenScreen() {
     if (validView.errors === 0) goToStep('focus');
   };
 
-  const [expandedId, setExpandedId] = useState(null);
-
   // Pre-flight briefing — single source of truth for "is this Auftrag ready?".
   // Aggregates parsing/structural/capacity/coverage flags into one card above
   // the pallet list. Pure function; recomputes only when its inputs change.
@@ -102,14 +101,19 @@ export default function PruefenScreen() {
   );
 
   const handleJumpToPallet = (palletId) => {
-    setExpandedId(palletId);
-    // Defer to next tick so the row has finished rendering its expanded state
-    // before we scroll. Centred so the operator sees it without hunting.
+    // Story cards are always-open — no expansion needed, just scroll.
     setTimeout(() => {
       const el = document.getElementById(`pallet-row-${palletId}`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 60);
   };
+
+  // One-shot superlative ranking ("Größte Palette" etc.) — pure function,
+  // recomputes only when pallets/states change.
+  const ranking = useMemo(
+    () => rankPallets(view?.pallets || [], palletStates),
+    [view?.pallets, palletStates],
+  );
 
   if (!view) {
     return (
@@ -212,46 +216,48 @@ export default function PruefenScreen() {
           </Card>
         </section>
 
-        {/* Pallets table — with PalletStackViz */}
+        {/* Pallets — Story Cards. Each pallet gets a system-generated headline
+            ("Größte Palette", "Single-SKU · 4-Seiten", "Mixed-Pyramide"...)
+            and a hero card with all info open by default. */}
         <section style={{ marginBottom: 40 }}>
           <SectionHeader
             title={`Paletten (${view.pallets.length})`}
             sub={
               eskuItems.length > 0
-                ? `Stack-Pyramide zeigt die physische Ladung pro Palette (Level 1 unten → 6 oben). Klick öffnet Details inkl. ${eskuItems.length} verteilte ESKU-Kartons.`
-                : 'Stack-Pyramide zeigt die physische Ladung pro Palette (Level 1 unten → 6 oben). Klick öffnet Artikel-Liste.'
+                ? `Story-Karten — jede Palette mit Headline, Auslastung und Top-Artikeln auf einen Blick. ${eskuItems.length} ESKU-Kartons sind verteilt.`
+                : 'Story-Karten — jede Palette mit Headline, Auslastung und Top-Artikeln auf einen Blick.'
             }
           />
-          <Card style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={tableHeader}>
-              <span style={{ width: 40 }}>#</span>
-              <span style={{ flex: '0 0 90px' }}>Pallet-ID</span>
-              <span style={{ flex: '0 0 70px' }}>Stack</span>
-              <span style={{ flex: '0 0 100px' }}>Top-Level</span>
-              <span style={{ flex: '0 0 80px' }}>Artikel</span>
-              <span style={{ flex: '0 0 90px' }}>Einheiten</span>
-              <span style={{ flex: 1 }}>Formate</span>
-              <span style={{ flex: '0 0 24px' }} />
-            </div>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+          }}>
             {view.pallets.map((p, i) => {
               const raw = enrichedPallets.find((r) => r.id === p.id);
               const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
               const palletState = palletStates[p.id];
+              const story = buildPalletStory({
+                pallet: p,
+                items: raw?.items || [],
+                eskuAssigned,
+                palletState,
+                ranking,
+              });
               return (
-                <PalletRow
+                <PalletStoryCard
                   key={p.id}
                   pallet={p}
                   index={i}
                   items={raw?.items || []}
                   eskuAssigned={eskuAssigned}
                   palletState={palletState}
-                  isExpanded={expandedId === p.id}
-                  onToggle={() => setExpandedId(expandedId === p.id ? null : p.id)}
-                  isLast={i === view.pallets.length - 1}
+                  story={story}
+                  onStartFocus={onStartFocus}
                 />
               );
             })}
-          </Card>
+          </div>
         </section>
 
       </main>
@@ -519,424 +525,6 @@ function CheckRow({ ok, label, detail }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════ */
-function PalletRow({ pallet, index, items, eskuAssigned, palletState, isExpanded, onToggle, isLast }) {
-  const meta = LEVEL_META[pallet.level] || LEVEL_META[1];
-  return (
-    <>
-      <div
-        id={`pallet-row-${pallet.id}`}
-        onClick={onToggle}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          padding: '10px 20px',
-          borderBottom: !isLast && !isExpanded ? `1px solid ${T.border.subtle}` : 'none',
-          background: isExpanded ? T.bg.surface2 : T.bg.surface,
-          cursor: 'pointer',
-          transition: 'background 150ms',
-          gap: 0,
-          scrollMarginTop: 80,
-        }}
-        onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = T.bg.surface2; }}
-        onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = T.bg.surface; }}
-      >
-        <span style={{ width: 40, fontSize: 12, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
-          {String(index + 1).padStart(2, '0')}
-        </span>
-        <span style={{
-          flex: '0 0 90px',
-          fontFamily: T.font.mono,
-          fontSize: 13,
-          fontWeight: 500,
-          color: T.text.primary,
-        }}>
-          {pallet.id}
-        </span>
-
-        {/* Mini stack-pyramid */}
-        <span style={{ flex: '0 0 70px', display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
-          <PalletStackViz palletState={palletState} size="row" />
-        </span>
-
-        {/* Top-level badge */}
-        <span style={{ flex: '0 0 100px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Badge color={meta.color} bg={meta.bg} text={meta.text}>
-            L{pallet.level} {meta.shortName}
-          </Badge>
-          {pallet.isSingleSku && (
-            <Badge tone="warn">Single</Badge>
-          )}
-          {eskuAssigned.length > 0 && (
-            <Badge tone="accent">+{eskuAssigned.length}</Badge>
-          )}
-        </span>
-
-        <span style={{ flex: '0 0 80px', fontSize: 13.5, color: T.text.secondary, fontVariantNumeric: 'tabular-nums' }}>
-          {pallet.articles}
-        </span>
-        <span style={{ flex: '0 0 90px', fontSize: 13.5, color: T.text.secondary, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-          {pallet.units.toLocaleString('de-DE')}
-        </span>
-        <span style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {pallet.formats.slice(0, 3).map((f) => (
-            <span key={f} style={fmtTag}>{f}</span>
-          ))}
-          {pallet.formats.length > 3 && (
-            <span style={fmtTag}>+{pallet.formats.length - 3}</span>
-          )}
-        </span>
-        <span style={{
-          flex: '0 0 24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          color: T.text.faint,
-          transition: 'transform 200ms',
-          transform: isExpanded ? 'rotate(180deg)' : 'rotate(0)',
-        }}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </span>
-      </div>
-
-      {isExpanded && (
-        <ExpandedPallet
-          items={items}
-          eskuAssigned={eskuAssigned}
-          palletState={palletState}
-          isLast={isLast}
-        />
-      )}
-    </>
-  );
-}
-
-function ExpandedPallet({ items, eskuAssigned, palletState, isLast }) {
-  return (
-    <div
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        padding: '24px 20px 28px 60px',
-        background: T.bg.surface2,
-        borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
-        cursor: 'default',
-        display: 'grid',
-        gridTemplateColumns: '360px 1fr',
-        gap: 32,
-        alignItems: 'flex-start',
-      }}
-    >
-      <PalletStackViz palletState={palletState} size="card" />
-
-      <div>
-        <ItemTable items={items} title="Mixed-Inhalt (Phase 1)" />
-        {eskuAssigned.length > 0 && (
-          <div style={{ marginTop: 18 }}>
-            <div style={{
-              fontSize: 11.5,
-              fontWeight: 600,
-              color: T.accent.main,
-              marginBottom: 8,
-              textTransform: 'uppercase',
-              letterSpacing: '0.06em',
-            }}>
-              Einzelne SKU · {eskuAssigned.length} zugewiesen (Phase 2)
-            </div>
-            <ItemTable items={eskuAssigned} accent showLevel showFlags />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ItemTable({ items, accent, showLevel, showFlags, title }) {
-  return (
-    <div>
-      {title && (
-        <div style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: T.text.secondary,
-          marginBottom: 12,
-          letterSpacing: '-0.005em',
-        }}>
-          {title}
-          <span style={{
-            color: T.text.faint,
-            fontWeight: 500,
-            marginLeft: 8,
-            fontSize: 12,
-            fontVariantNumeric: 'tabular-nums',
-          }}>
-            · {items.length}
-          </span>
-        </div>
-      )}
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-      }}>
-        {items.map((it, i) => {
-          const lvl = (it.placementMeta || showLevel) ? (it.level || 1) : null;
-          const meta = lvl ? LEVEL_META[lvl] : null;
-          const flags = it.placementMeta?.flags || [];
-          const menge = it.placementMeta
-            ? (it.placementMeta.cartonsHere ?? it.einzelneSku?.cartonsCount ?? '—')
-            : (it.units ?? '—');
-          const mengeUnit = it.placementMeta ? (menge === 1 ? 'Karton' : 'Kartons') : 'Stk';
-          const code = it.fnsku || it.sku || '—';
-          const useItem = it.useItem || null;
-          return (
-            <ItemRow
-              key={i}
-              index={i + 1}
-              title={formatItemTitle(it.title)}
-              fullTitle={it.title}
-              code={code}
-              useItem={useItem}
-              menge={menge}
-              mengeUnit={mengeUnit}
-              levelMeta={meta}
-              levelNumber={lvl}
-              flags={flags}
-              accent={accent}
-              placementMeta={it.placementMeta}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ItemRow({ index, title, fullTitle, code, useItem, menge, mengeUnit, levelMeta, levelNumber, flags, accent, placementMeta }) {
-  const danger = flags.includes('NO_VALID_PLACEMENT');
-  const warn = flags.some((f) => f.startsWith('OVERLOAD-'));
-  return (
-    <div
-      title={fullTitle}
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'auto 1fr auto',
-        alignItems: 'flex-start',
-        gap: 14,
-        padding: '14px 16px',
-        background: accent ? T.accent.bg : T.bg.surface,
-        border: `1px solid ${accent ? T.accent.border : T.border.primary}`,
-        borderRadius: T.radius.lg,
-        boxShadow: T.shadow.card,
-        transition: 'border-color 160ms ease, box-shadow 160ms ease',
-        position: 'relative',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = accent ? T.accent.main : T.border.strong;
-        e.currentTarget.style.boxShadow = T.shadow.raised;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = accent ? T.accent.border : T.border.primary;
-        e.currentTarget.style.boxShadow = T.shadow.card;
-      }}
-    >
-      {/* Index + level badge */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 56, paddingTop: 2 }}>
-        <span style={{
-          fontFamily: T.font.mono,
-          fontSize: 11,
-          color: T.text.faint,
-          fontVariantNumeric: 'tabular-nums',
-          fontWeight: 500,
-        }}>
-          {String(index).padStart(2, '0')}
-        </span>
-        {levelMeta && (
-          <span title={`L${levelNumber} · ${levelMeta.name}`} style={{
-            display: 'inline-flex',
-            width: 26, height: 26,
-            borderRadius: T.radius.sm,
-            background: levelMeta.color,
-            color: '#fff',
-            fontSize: 11,
-            fontWeight: 700,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            L{levelNumber}
-          </span>
-        )}
-      </div>
-
-      {/* Title block */}
-      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{
-          color: T.text.primary,
-          fontSize: 14,
-          fontWeight: 500,
-          letterSpacing: '-0.005em',
-          lineHeight: 1.4,
-          wordBreak: 'break-word',
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 6,
-          flexWrap: 'wrap',
-        }}>
-          <span>{title}</span>
-          {placementMeta && (
-            <ScoreBreakdown breakdown={placementMeta.breakdown} score={placementMeta.score} />
-          )}
-        </div>
-        <div style={{
-          display: 'flex',
-          gap: 10,
-          alignItems: 'center',
-          fontSize: 11.5,
-          color: T.text.faint,
-          fontFamily: T.font.mono,
-          letterSpacing: '0.005em',
-          flexWrap: 'wrap',
-        }}>
-          <span style={{ fontWeight: 500, color: T.text.muted }}>{code}</span>
-          {useItem && (
-            <>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240 }}>
-                {useItem}
-              </span>
-            </>
-          )}
-          {flags.length > 0 && (
-            <>
-              <span style={{ opacity: 0.4 }}>·</span>
-              {flags.map((f, j) => (
-                <span key={j} title={f} style={{
-                  fontFamily: T.font.ui,
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  padding: '2px 7px',
-                  borderRadius: 999,
-                  background: danger && f === 'NO_VALID_PLACEMENT'
-                    ? 'rgba(239,68,68,0.12)'
-                    : 'rgba(245,158,11,0.12)',
-                  color: danger && f === 'NO_VALID_PLACEMENT'
-                    ? T.status.danger.text
-                    : T.status.warn.text,
-                  letterSpacing: '0.01em',
-                }}>
-                  {f.replace('OVERLOAD-', '').replace('NO_VALID_PLACEMENT', 'No fit')}
-                </span>
-              ))}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Menge — large on the right */}
-      <div style={{ textAlign: 'right' }}>
-        <div style={{
-          fontFamily: 'Montserrat, Inter, system-ui, sans-serif',
-          fontSize: 22,
-          fontWeight: 700,
-          letterSpacing: '-0.025em',
-          color: danger ? T.status.danger.text : warn ? T.status.warn.text : T.text.primary,
-          fontVariantNumeric: 'tabular-nums',
-          lineHeight: 1,
-        }}>
-          {typeof menge === 'number' ? menge.toLocaleString('de-DE') : menge}
-        </div>
-        <div style={{
-          marginTop: 2,
-          fontSize: 11,
-          color: T.text.faint,
-          fontWeight: 500,
-        }}>
-          {mengeUnit}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ScoreBreakdown({ breakdown, score }) {
-  const [open, setOpen] = useState(false);
-  const reasons = [];
-  if (breakdown.useItemMatch)        reasons.push(['useItem-Match', '+50000']);
-  if (breakdown.formatMatch)         reasons.push(['Format-Match', '+10000']);
-  if (breakdown.brandMatch)          reasons.push(['Brand-Match', '+3000']);
-  if (breakdown.fnskuMatch)          reasons.push(['Same FNSKU on pallet', '+1000']);
-  if (breakdown.levelMatch)          reasons.push(['Same Level on pallet', '+500']);
-  if (breakdown.monoLevelConflict)   reasons.push(['Mono-Level conflict', '−10000']);
-  if (breakdown.multiLevelMismatch)  reasons.push(['Multi-Level mismatch', '−200']);
-  if (breakdown.fillScore)           reasons.push([`Sweet-Spot 85% (fill score)`, `+${breakdown.fillScore}`]);
-
-  return (
-    <span style={{ position: 'relative', display: 'inline-block' }}>
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        style={{
-          width: 14, height: 14,
-          borderRadius: '50%',
-          background: T.bg.surface3,
-          border: 'none',
-          color: T.text.subtle,
-          fontSize: 9,
-          cursor: 'help',
-          padding: 0,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-        }}
-        title="Score breakdown"
-      >
-        ℹ
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute',
-          left: 18, top: -6,
-          zIndex: 60,
-          background: T.bg.surface,
-          border: `1px solid ${T.border.strong}`,
-          borderRadius: T.radius.sm,
-          boxShadow: T.shadow.raised,
-          padding: '8px 10px',
-          fontSize: 11,
-          minWidth: 220,
-          color: T.text.primary,
-          fontFamily: T.font.ui,
-          pointerEvents: 'none',
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            Score: {score === -Infinity ? '−∞ (kein Match)' : score}
-          </div>
-          {reasons.length === 0 && (
-            <div style={{ color: T.text.subtle }}>Nur Geometrie (Sweet-Spot).</div>
-          )}
-          {reasons.map(([label, val], i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-              <span style={{ color: val.startsWith('−') ? T.status.danger.text : T.text.secondary }}>
-                {label}
-              </span>
-              <span style={{
-                fontVariantNumeric: 'tabular-nums',
-                fontWeight: 600,
-                color: val.startsWith('−') ? T.status.danger.text : T.text.primary,
-              }}>
-                {val}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </span>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════════════════ */
 function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus }) {
   const hasFlags = overloadCount > 0 || noValidCount > 0;
   return (
@@ -1011,28 +599,6 @@ function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════ */
-const tableHeader = {
-  display: 'flex',
-  alignItems: 'center',
-  padding: '10px 20px',
-  background: T.bg.surface2,
-  borderBottom: `1px solid ${T.border.primary}`,
-  fontSize: 11,
-  fontWeight: 500,
-  color: T.text.subtle,
-  letterSpacing: '0.02em',
-  gap: 0,
-};
-
-const fmtTag = {
-  fontFamily: T.font.mono,
-  fontSize: 11,
-  padding: '2px 6px',
-  background: T.bg.surface3,
-  color: T.text.muted,
-  borderRadius: T.radius.sm,
-};
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
 function formatDur(sec) {

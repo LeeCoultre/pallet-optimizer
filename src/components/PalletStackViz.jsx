@@ -15,8 +15,10 @@ const PALLET_WEIGHT_KG = 700;
 
 export default function PalletStackViz({ palletState, size = 'row', onClick }) {
   const isCard = size === 'card';
-  const W = isCard ? 168 : 36;
-  const H = isCard ? 320 : 72;
+  const isCompact = size === 'compact';
+  const isStory = size === 'story';
+  const W = isCard ? 168 : isStory ? 100 : isCompact ? 22 : 36;
+  const H = isCard ? 320 : isStory ? 200 : isCompact ? 30 : 72;
 
   if (!palletState) {
     return (
