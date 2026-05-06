@@ -18,7 +18,6 @@
 import { useState } from 'react';
 import {
   formatItemTitle, getDisplayLevel, LEVEL_META,
-  itemTotalVolumeCm3,
 } from '../utils/auftragHelpers.js';
 import PalletStackViz from './PalletStackViz.jsx';
 import { Badge, T } from './ui.jsx';
@@ -45,16 +44,14 @@ export default function PalletStoryCard({
   const palette = TONE_PALETTE[story.tone] || TONE_PALETTE.neutral;
   const accentMeta = LEVEL_META[pallet.level] || LEVEL_META[1];
 
-  // Combined items list — Mixed first (sorted by volume DESC, the "anchor"
-  // items the operator sees first), then ESKU. We want the chips to show
-  // the most informative articles, not just the first parser order.
-  const allItems = [
+  // Combined items list — preserves the order set by sortItemsForPallet
+  // upstream (level → format-cluster → volume DESC). Re-sorting here by
+  // volume alone would break same-W×H adjacency, which the operator
+  // counts on for picking efficiency. Mixed first, then ESKU appended.
+  const ranked = [
     ...items.map((it) => ({ source: 'mixed', item: it })),
     ...eskuAssigned.map((it) => ({ source: 'esku', item: it })),
   ];
-  const ranked = allItems
-    .map((row) => ({ ...row, vol: itemTotalVolumeCm3(row.item) }))
-    .sort((a, b) => b.vol - a.vol);
   const visibleItems = showAllItems ? ranked : ranked.slice(0, TOP_ITEMS_VISIBLE);
   const hiddenCount = ranked.length - visibleItems.length;
 

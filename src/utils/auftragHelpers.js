@@ -356,7 +356,7 @@ function sizeBucket(it) {
    The worker stacks the pallet bottom-up, so the order they tackle
    items determines what physically lands first on the base.
 
-   Rule (set with the user 2026-05-03 / refined 2026-05-04):
+   Rule (set 2026-05-03 / refined 2026-05-04 / 2026-05-06):
      1. Group items by physical level (1..6).
      2. Levels 5 (Kürbiskernöl) and 6 (Tachorollen) are the fragile cap
         of the pallet — they ALWAYS come last. Inside that tail, L5
@@ -364,16 +364,30 @@ function sizeBucket(it) {
      3. All other groups (L1..L4) are ordered by total units DESC —
         the bigger batch first so the worker clears the bulk of work
         before chasing small remainders.
-     4. Within each group:
-        a. total volume DESC (the bigger format anchors the layer);
-        b. if the volume gap is < 10% of the larger one (formats
-           occupy roughly the same footprint), fall back to units
-           DESC so the more numerous batch is handled first;
-        c. stable by original .docx index.
+     4. Within each level group, items are clustered by W×H format —
+        SAME dimensions stay adjacent regardless of rollen-per-Einheit
+        count (so a 57×18 with 75 rolls and a 57×18 with 15 rolls land
+        next to each other, not interleaved with 57×14 between them).
+     5. Order clusters by sum-volume DESC (10% threshold dampens noise),
+        ties broken by sum-units DESC then anchor origIdx.
+     6. Within a cluster: volume DESC, then units DESC, then origIdx.
+     7. ESKU items get unique cluster keys (FNSKU/SKU based) so they
+        DO NOT cluster — each ESKU keeps its own placement narrative.
 
-   Works for both Mixed (Phase 1) and ESKU (Phase 2) — for ESKU the
-   "units" axis is the carton count. */
+   Works for both Mixed (Phase 1) and ESKU (Phase 2). */
 const VOL_TIE_BREAK_THRESHOLD = 0.10;
+
+/* Cluster key — same W×H stays adjacent. Falls back to 'xxx' when dims
+   are missing (still groups all dim-less items together). ESKU items
+   each get a unique key so they don't cluster (rule 7). */
+function formatClusterKey(it) {
+  if (it.isEinzelneSku) {
+    return `esku:${it.fnsku || it.sku || it.title || ''}`;
+  }
+  const w = it.dim?.normW ?? it.dim?.w ?? 'x';
+  const h = it.dim?.normH ?? it.dim?.h ?? 'x';
+  return `dim:${w}x${h}`;
+}
 
 export function sortItemsForPallet(items) {
   if (!items?.length) return items || [];
@@ -387,6 +401,7 @@ export function sortItemsForPallet(items) {
       ? (it.einzelneSku?.cartonsCount ?? it.placementMeta?.cartonsHere ?? 1)
       : (it.units || 0),
     totalVol: itemTotalVolumeCm3(it),
+    fmtKey: formatClusterKey(it),
   }));
 
   const groups = new Map();
@@ -409,20 +424,44 @@ export function sortItemsForPallet(items) {
     })
     .map(([, g]) => g);
 
+  // Within each level: cluster by W×H, order clusters by sum-volume,
+  // then sort items inside each cluster.
   for (const g of orderedGroups) {
-    g.sort((a, b) => {
-      // Primary: total volume DESC, but only if the gap is meaningful
-      const vMax = Math.max(a.totalVol, b.totalVol);
-      const vDiff = Math.abs(a.totalVol - b.totalVol);
-      if (vMax > 0 && vDiff / vMax > VOL_TIE_BREAK_THRESHOLD) {
-        return b.totalVol - a.totalVol;
+    const buckets = new Map();
+    for (const e of g) {
+      if (!buckets.has(e.fmtKey)) buckets.set(e.fmtKey, []);
+      buckets.get(e.fmtKey).push(e);
+    }
+
+    // Within each bucket: volume DESC, units DESC, origIdx (stable).
+    for (const bucket of buckets.values()) {
+      bucket.sort((a, b) => {
+        if (a.totalVol !== b.totalVol) return b.totalVol - a.totalVol;
+        if (a.units    !== b.units)    return b.units    - a.units;
+        return a.origIdx - b.origIdx;
+      });
+    }
+
+    // Order buckets: sum-volume DESC (10% threshold), sum-units DESC,
+    // anchor origIdx for stability.
+    const orderedBuckets = [...buckets.values()].sort((bA, bB) => {
+      const volA = bA.reduce((s, e) => s + e.totalVol, 0);
+      const volB = bB.reduce((s, e) => s + e.totalVol, 0);
+      const vMax = Math.max(volA, volB);
+      if (vMax > 0 && Math.abs(volA - volB) / vMax > VOL_TIE_BREAK_THRESHOLD) {
+        return volB - volA;
       }
-      // Tied volume → larger batch wins
-      if (a.units !== b.units) return b.units - a.units;
-      // Stable by original .docx position
-      return a.origIdx - b.origIdx;
+      const unA = bA.reduce((s, e) => s + e.units, 0);
+      const unB = bB.reduce((s, e) => s + e.units, 0);
+      if (unA !== unB) return unB - unA;
+      return bA[0].origIdx - bB[0].origIdx;
     });
+
+    // Flatten back into the level group, preserving cluster adjacency.
+    g.length = 0;
+    for (const bucket of orderedBuckets) g.push(...bucket);
   }
+
   return orderedGroups.flatMap((g) => g.map((e) => e.item));
 }
 
