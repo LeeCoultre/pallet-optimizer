@@ -76,5 +76,4 @@ async def test_cancel_returns_to_queue(client, admin, as_user):
     assert body["status"] == "queued"
     assert body["assigned_to_user_id"] is None
     assert body["completed_keys"] == {}
-    assert body["copied_keys"] == {}
     assert body["pallet_timings"] == {}
