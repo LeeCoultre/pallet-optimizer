@@ -253,11 +253,18 @@ export default function FocusScreen() {
     });
   }, []);
 
-  /* Reset transient flash markers on every item change. */
+  /* Reset only flashUse on item change — copiedCode is now derived from
+     persistent copiedKeys (localStorage) below, so it survives navigation
+     and returns to previously-copied articles still read as "kopiert". */
   useEffect(() => {
-    setCopiedCode(null);
     setFlashUse(null);
   }, [palletIdx, itemIdx]);
+
+  /* Persistent copy-state for the Artikel-Code card on the hero — true
+     whenever this position's chip is also green. Falls back to the
+     transient setCopiedCode for the immediate copy-click flash. */
+  const codeCopied = copiedKeys.has(`${palletIdx}|${itemIdx}`)
+    || (copiedCode != null && copiedCode === item?.code);
 
   /* Wiederholt auto-dismiss */
   useEffect(() => {
@@ -404,7 +411,7 @@ export default function FocusScreen() {
           palletId={pallet.id}
           itemIdx={itemIdx}
           itemCount={pallet.items.length}
-          copiedCode={copiedCode}
+          copiedCode={codeCopied ? item?.code : null}
           flashUse={flashUse}
           onCopyCode={onCopyArtikelCode}
           onCopyUse={onCopyUseItem}

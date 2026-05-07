@@ -128,7 +128,6 @@ class WorkflowProgress(BaseModel):
     current_pallet_idx: Optional[int] = None
     current_item_idx: Optional[int] = None
     completed_keys: Optional[dict[str, Any]] = None
-    copied_keys: Optional[dict[str, Any]] = None
     pallet_timings: Optional[dict[str, Any]] = None
 
 
@@ -348,7 +347,6 @@ class AuftragDetail(AuftragSummary):
     current_pallet_idx: Optional[int] = None
     current_item_idx: Optional[int] = None
     completed_keys: dict[str, Any] = Field(default_factory=dict)
-    copied_keys: dict[str, Any] = Field(default_factory=dict)
     pallet_timings: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
@@ -367,5 +365,4 @@ class AuftragDetail(AuftragSummary):
             current_pallet_idx=row.current_pallet_idx,
             current_item_idx=row.current_item_idx,
             completed_keys=row.completed_keys or {},
-            copied_keys=row.copied_keys or {},
         )

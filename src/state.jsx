@@ -9,7 +9,7 @@
      - history = backend /api/history items
    ───────────────────────────────────────────────────────────────────────── */
 
-import { createContext, useCallback, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import mammoth from 'mammoth';
@@ -29,6 +29,35 @@ const Ctx = createContext(true);
 
 export function AppStateProvider({ children }) {
   return <Ctx.Provider value={true}>{children}</Ctx.Provider>;
+}
+
+/* ─── Copied-codes localStorage helpers ──────────────────────────────────
+   `copiedKeys` is a per-pallet+item bitset that drives the green chip
+   state in Focus. Stored locally (not on the server) — it's a UX
+   convenience for the active session, not data we need to audit or
+   sync across devices. Survives reload but not browser-storage clears
+   or device switches. Cleaned up when the Auftrag finishes/cancels. */
+const CK_PREFIX = 'marathon.copiedKeys.';
+const CK_KEY = (auftragId) => `${CK_PREFIX}${auftragId}`;
+
+function readCopiedKeys(auftragId) {
+  if (!auftragId || typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(CK_KEY(auftragId));
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function writeCopiedKeys(auftragId, obj) {
+  if (!auftragId || typeof window === 'undefined') return;
+  try { window.localStorage.setItem(CK_KEY(auftragId), JSON.stringify(obj)); }
+  catch { /* quota / private mode — silent */ }
+}
+
+function clearCopiedKeys(auftragId) {
+  if (!auftragId || typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(CK_KEY(auftragId)); }
+  catch { /* ignore */ }
 }
 
 /* ─── Adapters: backend (camelCase via marathonApi) → legacy localStorage shape ── */
@@ -56,7 +85,11 @@ function toLegacy(a) {
     currentPalletIdx: a.currentPalletIdx ?? 0,
     currentItemIdx:   a.currentItemIdx ?? 0,
     completedKeys:    a.completedKeys || {},
-    copiedKeys:       a.copiedKeys || {},
+    /* copiedKeys is purely a UX hint (green chips for code-cards the
+       worker already clicked). It's per-device — no audit value, no
+       cross-device need — so it lives in localStorage rather than the
+       DB. Hydrated below from CK_KEY(auftragId). */
+    copiedKeys:       readCopiedKeys(a.id),
     palletTimings:    a.palletTimings || {},
 
     assignedToUserId:   a.assignedToUserId,
@@ -146,7 +179,16 @@ export function useAppState() {
     () => all.find((a) => a.status === 'in_progress' && a.assignedToUserId === me?.id) ?? null,
     [all, me?.id],
   );
-  const current = useMemo(() => toLegacy(currentSrc), [currentSrc]);
+  /* Bump on markCodeCopied so the `current` memo re-reads localStorage
+     (since toLegacy hydrates copiedKeys from there). Without this counter,
+     localStorage writes would not propagate into React state until the
+     next refetch happened to also touch currentSrc. */
+  const [copiedKeysVersion, setCopiedKeysVersion] = useState(0);
+  const current = useMemo(
+    () => toLegacy(currentSrc),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentSrc, copiedKeysVersion],
+  );
 
   const history = useMemo(
     () => (historyQ.data?.items ?? []).map(toLegacyHistory),
@@ -162,7 +204,10 @@ export function useAppState() {
   const createMut  = useMutation({ mutationFn: createAuftrag, onSuccess: invalidateAll });
   const removeMut  = useMutation({ mutationFn: deleteAuftrag, onSuccess: invalidateAll });
   const reorderMut = useMutation({ mutationFn: apiReorder,    onSuccess: invalidateAll });
-  const cancelMut  = useMutation({ mutationFn: cancelAuftrag, onSuccess: invalidateAll });
+  const cancelMut  = useMutation({
+    mutationFn: cancelAuftrag,
+    onSuccess: (_data, id) => { clearCopiedKeys(id); invalidateAll(); },
+  });
   const startMut   = useMutation({
     mutationFn: startAuftrag,
     onSuccess:  invalidateAll,
@@ -175,7 +220,8 @@ export function useAppState() {
   });
   const completeMut = useMutation({
     mutationFn: completeAuftrag,
-    onSuccess: async () => {
+    onSuccess: async (_data, id) => {
+      clearCopiedKeys(id);
       invalidateAll();
       /* Auto-start the next queued Auftrag for me. */
       const fresh = await listAuftraege();
@@ -280,17 +326,18 @@ export function useAppState() {
     }
   }, [current, progressMut]);
 
-  /* Persist a "this position's Artikel-Code was copied" flag so reload
-     no longer wipes the green-chip state (CLAUDE.md Gotcha #9). Key
-     format mirrors the local Set used by Focus: `${palletIdx}|${itemIdx}`. */
+  /* "This position's Artikel-Code was copied" flag — persisted to
+     localStorage (per-device UX hint, no server roundtrip, no race
+     conditions with progressMut refetches). Key format mirrors the
+     local Set used by Focus: `${palletIdx}|${itemIdx}`. */
   const markCodeCopied = useCallback((palletIdx, itemIdx) => {
     if (!current?.id) return;
     const key = `${palletIdx}|${itemIdx}`;
-    const prev = current.copiedKeys || {};
-    if (prev[key]) return;  // already recorded — skip the round-trip
-    const copiedKeys = { ...prev, [key]: Date.now() };
-    progressMut.mutate({ id: current.id, payload: { copiedKeys } });
-  }, [current, progressMut]);
+    const prev = readCopiedKeys(current.id);
+    if (prev[key]) return;
+    writeCopiedKeys(current.id, { ...prev, [key]: Date.now() });
+    setCopiedKeysVersion((v) => v + 1);
+  }, [current?.id]);
 
   /* Mark current article fertig + advance. Returns true when last article
      of the last pallet has been completed (UI uses this to auto-navigate).

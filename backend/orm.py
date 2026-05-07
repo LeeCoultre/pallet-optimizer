@@ -140,9 +140,9 @@ class Auftrag(Base):
     completed_keys: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    copied_keys: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb")
-    )
+    # NOTE: copied_keys was previously a server-side mirror of the green-
+    # chip state in Focus. Reverted to per-device localStorage (UX hint
+    # only, no audit value) — column dropped in migration b9c0d1e2f3a4.
     pallet_timings: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
