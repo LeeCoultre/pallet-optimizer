@@ -387,11 +387,11 @@ export default function FocusScreen() {
         }
       />
 
-      {/* main fills the gap between Topbar (52) and StickyBar (~96). The
+      {/* main fills the gap between Topbar (60) and StickyBar (~96). The
           single hero card is centred vertically — the page itself never
           scrolls. min-height 0 lets flex children shrink past content. */}
       <main style={{
-        minHeight: 'calc(100vh - 52px - 96px)',
+        minHeight: 'calc(100vh - 60px - 96px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
