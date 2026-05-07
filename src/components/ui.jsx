@@ -77,8 +77,8 @@ export function Topbar({ crumbs = [], right }) {
       position: 'sticky',
       top: 0,
       zIndex: 10,
-      height: 52,
-      padding: '0 32px',
+      height: 60,
+      padding: '0 40px',
       background: 'rgba(255, 255, 255, 0.85)',
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
@@ -120,9 +120,9 @@ function Crumb({ crumb, isLast }) {
           display: 'inline-flex',
           alignItems: 'center',
           gap: 4,
-          padding: '4px 8px',
-          margin: '0 -8px',
-          fontSize: 13,
+          padding: '6px 10px',
+          margin: '0 -10px',
+          fontSize: 14.5,
           fontWeight: 500,
           fontFamily: 'inherit',
           color,
@@ -140,7 +140,7 @@ function Crumb({ crumb, isLast }) {
 
   return (
     <span style={{
-      fontSize: 13,
+      fontSize: 14.5,
       color: baseColor,
       fontWeight: isLast ? 600 : 500,
     }}>
@@ -150,7 +150,7 @@ function Crumb({ crumb, isLast }) {
 }
 
 export function Sep() {
-  return <span style={{ color: T.border.strong, fontSize: 12, margin: '0 4px' }}>/</span>;
+  return <span style={{ color: T.border.strong, fontSize: 13, margin: '0 5px' }}>/</span>;
 }
 
 /* ─── Stepper (Live Progress Line) ───────────────────────────────────────
@@ -634,10 +634,10 @@ const baseBtn = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 8,
-  height: 40,
-  padding: '0 20px',
+  height: 44,
+  padding: '0 22px',
   borderRadius: T.radius.md,
-  fontSize: 14,
+  fontSize: 15,
   fontWeight: 500,
   fontFamily: T.font.ui,
   cursor: 'pointer',
@@ -647,9 +647,9 @@ const baseBtn = {
 
 export function Button({ variant = 'primary', size = 'md', children, style, disabled, ...rest }) {
   const sizeStyle = size === 'sm'
-    ? { height: 32, padding: '0 12px', fontSize: 13 }
+    ? { height: 36, padding: '0 14px', fontSize: 13.5 }
     : size === 'lg'
-    ? { height: 44, padding: '0 24px', fontSize: 15 }
+    ? { height: 48, padding: '0 26px', fontSize: 16 }
     : {};
 
   let variantStyle;

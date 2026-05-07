@@ -32,7 +32,7 @@
   --font-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
 
   /* Updated dynamically by Sidebar when the user toggles collapse. */
-  --sidebar-width: 224px;
+  --sidebar-width: 248px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -43,7 +43,11 @@ html, body, #root {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 14px;
+  /* Bumped from 14→15px (2026-05-07) — Linear/Vercel/Stripe-class
+     reading scale on wide displays; everything that inherits or uses
+     em rescales proportionally. Discrete pixel sizes in components
+     stay as-is unless explicitly tuned. */
+  font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

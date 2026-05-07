@@ -24,7 +24,7 @@ import { Mark } from './Logo.jsx';
 import { T } from './ui.jsx';
 import { UserSwitcher } from './UserSwitcher.jsx';
 
-const SIZES = { expanded: 232, collapsed: 56 };
+const SIZES = { expanded: 248, collapsed: 60 };
 export const SIDEBAR_WIDTH = SIZES.expanded;
 
 const COLLAPSED_KEY = 'marathon.sidebar.collapsed.v1';
@@ -505,8 +505,8 @@ function NavGroup({ label, isFirst, collapsed, children }) {
     }}>
       {!collapsed && (
         <div style={{
-          padding: '2px 12px 6px',
-          fontSize: 9.5,
+          padding: '2px 14px 6px',
+          fontSize: 10.5,
           fontWeight: 500,
           color: T.text.faint,
           textTransform: 'uppercase',
@@ -552,9 +552,9 @@ function NavItem({ item, active, onClick, collapsed }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: collapsed ? 'center' : 'flex-start',
-        gap: 9,
+        gap: 11,
         width: '100%',
-        padding: collapsed ? '9px 0' : '7px 10px 7px 14px',
+        padding: collapsed ? '11px 0' : '9px 12px 9px 16px',
         background: active
           ? T.bg.surface3
           : (hover ? T.bg.surface2 : 'transparent'),
@@ -569,8 +569,8 @@ function NavItem({ item, active, onClick, collapsed }) {
     >
       <span style={{
         display: 'inline-flex',
-        width: 16,
-        height: 16,
+        width: 18,
+        height: 18,
         flexShrink: 0,
         color: active ? T.text.primary : T.text.subtle,
         transition: 'color 140ms',
@@ -582,7 +582,7 @@ function NavItem({ item, active, onClick, collapsed }) {
         <span style={{
           flex: 1,
           minWidth: 0,
-          fontSize: 12.5,
+          fontSize: 13.5,
           fontWeight: active ? 500 : 400,
           color: active ? T.text.primary : T.text.secondary,
           letterSpacing: '-0.005em',
@@ -1098,76 +1098,109 @@ function formatHMS(sec) {
    literal.
    ════════════════════════════════════════════════════════════════════════ */
 
+/* ─── Sidebar icon set ──────────────────────────────────────────────────
+   Ultra-minimal monoline icons. All share:
+     - 18×18 displayed (parent NavItem renders 18px square slot)
+     - viewBox 0 0 16 16 — geometry math stays simple
+     - stroke 1.4, round caps + joins, currentColor
+     - no fills (except deliberate dot/marker accents)
+   Each glyph is shaped to its tab's specific verb, not a generic
+   icon-library pick: Workflow = three-node flow with active dot,
+   Queue = two stacked cards, Search = clean magnifier, History =
+   counter-clockwise arc + dot, Live = three-beat ECG, Berichte =
+   bar trio, Einstellungen = two sliders, Admin = bare shield. */
+
+const ICON_SVG = {
+  width: 18, height: 18, viewBox: '0 0 16 16', fill: 'none',
+};
+const ICON_STROKE = {
+  stroke: 'currentColor', strokeWidth: 1.4,
+  strokeLinecap: 'round', strokeLinejoin: 'round',
+};
+
 function IconWorkflow() {
+  // Three-node flow with the middle (active) node solid.
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M3 12V4M3 4l2 2M3 4l-2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M8 12V8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-      <path d="M13 12V6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    <svg {...ICON_SVG}>
+      <path d="M3.5 8h9" {...ICON_STROKE} />
+      <circle cx="3.5" cy="8" r="1.5" {...ICON_STROKE} />
+      <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+      <circle cx="12.5" cy="8" r="1.5" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconQueue() {
+  // Two stacked cards — front + back, shifted up-left, suggests items
+  // waiting in line.
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M3 4h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="1"/>
-      <path d="M3 8h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.7"/>
-      <path d="M3 12h10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.4"/>
+    <svg {...ICON_SVG}>
+      <rect x="2.5" y="5.5" width="9" height="7" rx="1.4" {...ICON_STROKE} />
+      <path d="M5 5.5V4a1 1 0 0 1 1-1h7.5a1 1 0 0 1 1 1v6" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconSearch() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3"/>
-      <path d="M10.5 10.5L13 13" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    <svg {...ICON_SVG}>
+      <circle cx="7" cy="7" r="4" {...ICON_STROKE} />
+      <path d="M10.2 10.2L13.5 13.5" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconHistory() {
+  // Counter-clockwise arc + small reload tick — "look back in time".
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3"/>
-      <path d="M8 5v3l2 1.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg {...ICON_SVG}>
+      <path d="M8 2.5a5.5 5.5 0 1 1-5.45 6.25" {...ICON_STROKE} />
+      <path d="M2.2 5.5L2.5 8.5L5.5 8.2" {...ICON_STROKE} />
+      <path d="M8 5.5V8L9.7 9.2" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconLive() {
+  // Clean three-beat ECG — flat, peak, flat — suggests live monitor.
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M2 8h2.5L6 4l3 8 1.5-4H14" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg {...ICON_SVG}>
+      <path d="M2 8h3l1.5-3 2 6L10 8h4" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconReport() {
+  // Three rising bars on a baseline — pure chart, no document frame.
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M4 2h6l2.5 2.5V14H4z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-      <path d="M9.5 2v3H12.5" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-      <path d="M6.5 11v-2M8 11V8M9.5 11v-1.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    <svg {...ICON_SVG}>
+      <path d="M2.5 13.5h11" {...ICON_STROKE} />
+      <path d="M5 13V9.5" {...ICON_STROKE} />
+      <path d="M8 13V6.5" {...ICON_STROKE} />
+      <path d="M11 13V3.5" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconSettings() {
+  // Two horizontal sliders with off-center thumbs — Linear/iOS style,
+  // "preferences" not "machinery".
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3"/>
-      <path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1M12.6 12.6l-1.1-1.1M4.5 4.5L3.4 3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    <svg {...ICON_SVG}>
+      <path d="M2.5 5h11" {...ICON_STROKE} />
+      <path d="M2.5 11h11" {...ICON_STROKE} />
+      <circle cx="6" cy="5" r="1.6" fill="var(--bg, #fff)" {...ICON_STROKE} />
+      <circle cx="10.5" cy="11" r="1.6" fill="var(--bg, #fff)" {...ICON_STROKE} />
     </svg>
   );
 }
 
 function IconAdmin() {
+  // Bare shield outline — no check inside. Cleaner than the previous
+  // tick-shield combo; the role itself is the meaning.
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M8 2L3 4v3.5C3 10.5 5.2 13 8 14c2.8-1 5-3.5 5-6.5V4L8 2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-      <path d="M5.8 8.2l1.6 1.6L10.4 6.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg {...ICON_SVG}>
+      <path d="M8 2L3 4v4c0 3 2.4 5.4 5 6.2 2.6-0.8 5-3.2 5-6.2V4L8 2z" {...ICON_STROKE} />
     </svg>
   );
 }

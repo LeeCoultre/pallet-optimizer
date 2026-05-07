@@ -355,13 +355,13 @@ function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJu
 
       <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 18 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* FBA — compact but still hero */}
+          {/* FBA — full hero, scales generously on wide screens */}
           <div style={{
             fontFamily: T.font.mono,
-            fontSize: 'clamp(28px, 3.8vw, 44px)',
+            fontSize: 'clamp(36px, 5vw, 64px)',
             fontWeight: 500,
             color: T.text.primary,
-            letterSpacing: '-0.03em',
+            letterSpacing: '-0.035em',
             lineHeight: 1,
             wordBreak: 'break-all',
           }}>
@@ -370,8 +370,8 @@ function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJu
 
           {/* Meta line + insights merged into one tight stack */}
           <div style={{
-            marginTop: 10,
-            fontSize: 12.5,
+            marginTop: 14,
+            fontSize: 14,
             color: T.text.subtle,
             display: 'flex',
             gap: 10,
@@ -393,11 +393,11 @@ function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJu
 
           {insights.length > 0 && (
             <div style={{
-              marginTop: 6,
+              marginTop: 8,
               display: 'flex',
-              gap: 12,
+              gap: 14,
               flexWrap: 'wrap',
-              fontSize: 11,
+              fontSize: 12.5,
               color: T.text.faint,
               fontFamily: T.font.mono,
             }}>
@@ -483,18 +483,18 @@ function ReadyPill({ validView, stats }) {
       <span style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 7,
-        padding: '6px 12px',
+        gap: 8,
+        padding: '8px 14px',
         borderRadius: 999,
         background: palette.bg,
         border: `1px solid ${palette.border}`,
-        fontSize: 12,
+        fontSize: 13.5,
         fontWeight: 500,
         color: palette.text,
         position: 'relative',
       }}>
         <span style={{
-          width: 6, height: 6,
+          width: 7, height: 7,
           borderRadius: '50%',
           background: palette.main,
           boxShadow: okPulse ? `0 0 0 3px ${palette.main}22` : 'none',
@@ -502,7 +502,7 @@ function ReadyPill({ validView, stats }) {
         {label}
       </span>
       <span style={{
-        fontSize: 11,
+        fontSize: 12.5,
         fontFamily: T.font.mono,
         color: T.text.faint,
         fontVariantNumeric: 'tabular-nums',
@@ -534,7 +534,7 @@ function FingerprintRow({ pallets, ranking, palletStates, onClick }) {
         marginBottom: 10,
       }}>
         <span style={{
-          fontSize: 10,
+          fontSize: 11.5,
           fontWeight: 600,
           color: T.text.faint,
           textTransform: 'uppercase',
@@ -544,7 +544,7 @@ function FingerprintRow({ pallets, ranking, palletStates, onClick }) {
           Fingerprint
         </span>
         <span style={{
-          fontSize: 11,
+          fontSize: 12.5,
           color: T.text.faint,
           fontFamily: T.font.mono,
           fontVariantNumeric: 'tabular-nums',
@@ -629,20 +629,20 @@ function Metric({ value, label }) {
     <span style={{
       display: 'inline-flex',
       alignItems: 'baseline',
-      gap: 6,
+      gap: 8,
       padding: '0 4px',
     }}>
       <span style={{
-        fontSize: 16,
+        fontSize: 24,
         fontWeight: 600,
         color: T.text.primary,
         fontVariantNumeric: 'tabular-nums',
-        letterSpacing: '-0.012em',
+        letterSpacing: '-0.018em',
       }}>
         {value}
       </span>
       <span style={{
-        fontSize: 11,
+        fontSize: 12,
         color: T.text.faint,
         textTransform: 'uppercase',
         letterSpacing: '0.06em',
@@ -658,9 +658,9 @@ function MetricSep() {
   return (
     <span style={{
       width: 1,
-      height: 18,
+      height: 24,
       background: T.border.primary,
-      margin: '0 14px',
+      margin: '0 18px',
     }} />
   );
 }
@@ -678,17 +678,17 @@ function FillMetric({ pct }) {
       padding: '0 4px',
     }}>
       <span style={{
-        fontSize: 16,
+        fontSize: 24,
         fontWeight: 600,
         color: T.text.primary,
         fontVariantNumeric: 'tabular-nums',
-        letterSpacing: '-0.012em',
+        letterSpacing: '-0.018em',
       }}>
         {pctValue}%
       </span>
       <span style={{
         position: 'relative',
-        width: 60,
+        width: 76,
         height: 3,
         background: T.bg.surface3,
         borderRadius: 999,
@@ -704,7 +704,7 @@ function FillMetric({ pct }) {
         }} />
       </span>
       <span style={{
-        fontSize: 11,
+        fontSize: 12,
         color: T.text.faint,
         textTransform: 'uppercase',
         letterSpacing: '0.06em',

@@ -186,27 +186,28 @@ export default function UploadScreen({ onRoute }) {
       <StepperBar active="upload" />
 
       <main style={{
-        maxWidth: 1080,
+        maxWidth: 1120,
         margin: '0 auto',
-        padding: '40px 32px 80px',
+        padding: '72px 40px 96px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 64,
+        gap: 80,
       }}>
-        {/* Hero block — compact column. H1 + subtitle + drop-zone
-            with tight gaps so the drop-zone stays above the fold. */}
+        {/* Hero block — H1 + subtitle + drop-zone with breathing
+            room so the focal drop-zone reads like a primary surface,
+            not a wedged form field. */}
         <section style={{
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          gap: 18,
+          gap: 22,
         }}>
           <h1 style={{
             margin: 0,
-            fontSize: 'clamp(28px, 3.2vw, 36px)',
+            fontSize: 'clamp(36px, 2.8vw, 52px)',
             fontWeight: 500,
-            letterSpacing: '-0.025em',
-            lineHeight: 1.1,
+            letterSpacing: '-0.03em',
+            lineHeight: 1.05,
             color: T.text.primary,
             textAlign: 'center',
           }}>
@@ -215,17 +216,17 @@ export default function UploadScreen({ onRoute }) {
 
           <p style={{
             margin: 0,
-            fontSize: 14,
+            fontSize: 16,
             fontWeight: 400,
             lineHeight: 1.5,
             color: T.text.subtle,
             textAlign: 'center',
-            maxWidth: 480,
+            maxWidth: 520,
           }}>
             .docx-Datei ablegen — Marathon erkennt das Format automatisch.
           </p>
 
-          <div style={{ width: '100%', maxWidth: 720, marginTop: 6 }}>
+          <div style={{ width: '100%', maxWidth: 760, marginTop: 18 }}>
             <HeroDropZone
               over={over || globalOver}
               busy={busy}
@@ -336,8 +337,8 @@ function HeroDropZone({
         onAccept(e.dataTransfer.files);
       }}
       style={{
-        minHeight: 200,
-        padding: '32px 40px',
+        minHeight: 240,
+        padding: '44px 52px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
