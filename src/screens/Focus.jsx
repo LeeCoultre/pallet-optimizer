@@ -388,12 +388,11 @@ export default function FocusScreen() {
       />
 
       {/* main fills the gap between Topbar bottom and StickyBar top.
-          Topbar = 60px. StickyBar = 2px progress + ~52px pallet-flow
-          row + ~66px action row = ~120px. The hero card centers within
-          this band so it sits visually mid-way between the Topbar
-          hairline and the top edge of the pallet-flow strip. */}
+          Topbar = 60px. StickyBar = 2px progress + ~92px pallet-flow
+          row (current pallet card has progress hairline + chip strip)
+          + ~64px action row = ~158px. */}
       <main style={{
-        minHeight: 'calc(100vh - 60px - 120px)',
+        minHeight: 'calc(100vh - 60px - 158px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -876,11 +875,11 @@ function FocusStickyBar({
       </div>
 
       {/* Pallet flow strip — full timeline of pallets, each rendered
-          as a multi-layer pill (status · ID · counter · level fingerprint)
-          with stepper connectors between them. The current pallet's
-          item chips live next to it inside the flow itself. */}
+          as a multi-layer card (state-dot · ID · counter · progress
+          hairline + chip strip on current). Stepper-style connectors
+          run between cards as a horizontal progress chain. */}
       <div style={{
-        padding: '10px 32px',
+        padding: '14px 32px',
         borderBottom: `1px solid ${T.border.subtle}`,
         display: 'flex',
         alignItems: 'center',
@@ -1047,7 +1046,8 @@ function PalletConnector({ done }) {
   return (
     <span aria-hidden style={{
       display: 'inline-block',
-      width: 18, height: 1,
+      width: 28, height: 2,
+      borderRadius: 1,
       background: done ? T.status.success.main : T.border.primary,
       flexShrink: 0,
       transition: 'background 320ms cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1062,31 +1062,39 @@ function PalletNode({
 }) {
   const styles = {
     done:    { bg: T.status.success.bg, border: T.status.success.border,
-               text: T.status.success.text, sub: T.status.success.text },
+               text: T.status.success.text, sub: T.status.success.text,
+               accent: T.status.success.main },
     current: { bg: T.accent.bg,         border: T.accent.main,
-               text: T.accent.text,     sub: T.accent.text },
-    todo:    { bg: T.bg.surface2,       border: T.border.primary,
-               text: T.text.faint,      sub: T.text.faint },
+               text: T.accent.text,     sub: T.accent.text,
+               accent: T.accent.main },
+    todo:    { bg: T.bg.surface,        border: T.border.primary,
+               text: T.text.subtle,     sub: T.text.faint,
+               accent: T.border.strong },
   }[state];
   const isCurrent = state === 'current';
-  const counter = isCurrent ? `${copied}/${total}` : `${total}`;
+  const isDone    = state === 'done';
+  const counter   = isCurrent ? `${copied}/${total}` : `${total}`;
 
   return (
     <div
       style={{
         display: 'inline-flex',
         flexDirection: 'column',
-        gap: isCurrent ? 7 : 0,
-        padding: isCurrent ? '7px 10px 8px' : '5px 10px',
+        gap: isCurrent ? 10 : 6,
+        padding: isCurrent ? '12px 16px 14px' : '10px 14px',
         background: styles.bg,
         border: `1px solid ${styles.border}`,
-        borderRadius: 10,
-        opacity: blocked ? 0.55 : 1,
+        borderRadius: 14,
+        opacity: blocked ? 0.5 : 1,
         flexShrink: 0,
-        transition: 'background 240ms ease, border-color 240ms ease',
+        boxShadow: isCurrent
+          ? `0 1px 2px rgba(17,24,39,0.04), 0 8px 24px -12px ${styles.accent}3a`
+          : 'none',
+        transition: 'background 240ms ease, border-color 240ms ease, box-shadow 240ms ease',
+        minWidth: isCurrent ? 132 : 96,
       }}
     >
-      {/* Header row */}
+      {/* Header — state dot + ID + counter + ESKU/flag badges */}
       <div
         onClick={blocked ? undefined : onPickPallet}
         title={blocked
@@ -1095,71 +1103,98 @@ function PalletNode({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 6,
+          gap: 8,
           cursor: blocked ? 'not-allowed' : 'pointer',
           fontFamily: T.font.mono,
-          fontSize: 10.5,
-          fontWeight: isCurrent ? 600 : 500,
-          color: styles.text,
-          letterSpacing: '-0.005em',
         }}
       >
-        {state === 'done' && (
-          <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
-            <path d="M2.5 6.5l2 2 5-5.5" stroke="currentColor" strokeWidth="2"
-                  strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
+        {/* State indicator */}
+        {isDone && (
+          <span style={{
+            width: 16, height: 16, borderRadius: '50%',
+            background: styles.accent,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+              <path d="M2.5 6.5l2 2 5-5.5" stroke="#fff" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </span>
         )}
-        {state === 'current' && (
-          <span className="mr-pulse" style={{
-            width: 5, height: 5, borderRadius: '50%', background: T.accent.main,
-          }} />
+        {isCurrent && (
+          <span style={{
+            position: 'relative', width: 10, height: 10, flexShrink: 0,
+          }}>
+            <span className="mr-pulse" style={{
+              position: 'absolute', inset: 0, borderRadius: '50%',
+              background: styles.accent,
+            }} />
+            <span style={{
+              position: 'absolute', inset: 2, borderRadius: '50%',
+              background: '#fff',
+            }} />
+            <span style={{
+              position: 'absolute', inset: 3, borderRadius: '50%',
+              background: styles.accent,
+            }} />
+          </span>
         )}
         {state === 'todo' && (
           <span style={{
-            width: 5, height: 5, borderRadius: '50%',
-            border: `1px solid ${T.border.strong}`,
+            width: 10, height: 10, borderRadius: '50%',
+            border: `1.5px solid ${styles.accent}`, flexShrink: 0,
           }} />
         )}
-        <span>{pallet.id}</span>
+
+        {/* ID — bigger, dominant */}
         <span style={{
-          color: styles.sub,
-          opacity: 0.7,
-          fontSize: 10,
+          fontSize: 13.5,
+          fontWeight: isCurrent ? 700 : isDone ? 600 : 500,
+          color: styles.text,
+          letterSpacing: '-0.01em',
+        }}>
+          {pallet.id}
+        </span>
+
+        {/* Counter */}
+        <span style={{
+          fontSize: 12,
           fontWeight: 500,
-          marginLeft: 2,
+          color: styles.sub,
+          opacity: 0.85,
           fontVariantNumeric: 'tabular-nums',
+          marginLeft: 'auto',
+          paddingLeft: 4,
         }}>
           {counter}
         </span>
+
         {isEsku && (
           <span
             title="Pallet enthält ESKU-Artikel"
             style={{
-              fontSize: 9,
-              color: T.accent.main,
-              opacity: state === 'todo' ? 0.55 : 1,
-              marginLeft: 2,
+              fontSize: 11,
+              color: styles.accent,
+              opacity: state === 'todo' ? 0.6 : 1,
             }}
           >⬢</span>
         )}
         {hasFlag && (
           <span
             title="Pallet hat OVERLOAD oder Platzierungs-Flags"
+            aria-hidden
             style={{
-              width: 5, height: 5, borderRadius: '50%',
+              width: 6, height: 6, borderRadius: '50%',
               background: T.status.warn.main,
-              boxShadow: `0 0 0 2px ${T.status.warn.main}26`,
-              marginLeft: 2,
+              boxShadow: `0 0 0 2.5px ${T.status.warn.main}26`,
             }}
           />
         )}
       </div>
 
       {/* Body — numbered chip strip ONLY on the current pallet so each
-          item is individually visible, addressable, and click-jumpable.
-          Done/todo pallets stay compact (header-only) — the count is
-          enough context for non-active pallets. */}
+          item is individually visible, addressable, and click-jumpable. */}
       {isCurrent && (
         <NumberedChipStrip
           items={pallet.items || []}
@@ -1183,7 +1218,7 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
     <div style={{
       display: 'flex',
       flexWrap: 'nowrap',
-      gap: 4,
+      gap: 6,
       maxWidth: '100%',
       overflowX: 'auto',
       WebkitOverflowScrolling: 'touch',
@@ -1217,31 +1252,30 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
 }
 
 function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title }) {
-  /* Minimalist semantics — pure typography, no harsh fills:
-       todo    = medium gray number, transparent bg
-       copied  = faded number with strikethrough (done, no longer relevant)
-       active  = accent text + accent border + slight bg (current focus)
-     ESKU shifts the border style to dashed (only visible when active or
-     hovered, since border is transparent otherwise). Flag → tiny corner dot. */
+  /* Three visual states with clear hierarchy:
+       active  → filled accent surface, white number, prominent
+       copied  → green tinted surface, success-text number — code DONE
+       todo    → subtle outline, primary-text number, ready-to-act
+     ESKU shifts border style to dashed; flags → tiny warn dot. */
   let color, fontWeight, decoration, bg, border;
   if (isActive) {
-    color = T.accent.text;
+    color = '#fff';
     fontWeight = 700;
     decoration = 'none';
-    bg = T.accent.bg;
+    bg = T.accent.main;
     border = T.accent.main;
   } else if (isCopied) {
-    color = T.text.faint;
-    fontWeight = 400;
-    decoration = 'line-through';
-    bg = 'transparent';
-    border = 'transparent';
-  } else {
-    color = T.text.subtle;
-    fontWeight = 500;
+    color = T.status.success.text;
+    fontWeight = 600;
     decoration = 'none';
-    bg = 'transparent';
-    border = 'transparent';
+    bg = T.status.success.bg;
+    border = T.status.success.border;
+  } else {
+    color = T.text.primary;
+    fontWeight = 600;
+    decoration = 'none';
+    bg = T.bg.surface;
+    border = T.border.strong;
   }
 
   return (
@@ -1251,34 +1285,41 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title
       title={title}
       style={{
         position: 'relative',
-        minWidth: 22,
-        height: 20,
-        padding: '0 5px',
+        minWidth: 30,
+        height: 28,
+        padding: '0 8px',
         background: bg,
-        border: `1px ${isEsku ? 'dashed' : 'solid'} ${border}`,
-        borderRadius: 4,
+        border: `1.5px ${isEsku ? 'dashed' : 'solid'} ${border}`,
+        borderRadius: 8,
         color,
         fontFamily: T.font.mono,
-        fontSize: 11,
+        fontSize: 12.5,
         fontWeight,
         textDecoration: decoration,
         fontVariantNumeric: 'tabular-nums',
         letterSpacing: '-0.005em',
         cursor: 'pointer',
-        transition: 'color 200ms ease, background 200ms ease, border-color 200ms ease',
+        transition: 'color 200ms ease, background 200ms ease, border-color 200ms ease, transform 160ms ease',
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
+        boxShadow: isActive
+          ? `0 1px 2px rgba(17,24,39,0.06), 0 4px 12px -4px ${T.accent.main}50`
+          : 'none',
       }}
       onMouseEnter={(e) => {
         if (!isActive) {
-          e.currentTarget.style.background = T.bg.surface3;
+          e.currentTarget.style.borderColor = T.accent.main;
+          e.currentTarget.style.transform = 'translateY(-1px)';
         }
       }}
       onMouseLeave={(e) => {
         if (!isActive) {
-          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.borderColor = isCopied
+            ? T.status.success.border
+            : T.border.strong;
+          e.currentTarget.style.transform = 'none';
         }
       }}
     >
@@ -1286,9 +1327,10 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title
       {hasFlag && (
         <span aria-hidden style={{
           position: 'absolute',
-          top: -2, right: -2,
-          width: 5, height: 5, borderRadius: '50%',
+          top: -3, right: -3,
+          width: 7, height: 7, borderRadius: '50%',
           background: T.status.warn.main,
+          border: '1.5px solid #fff',
         }} />
       )}
     </button>
