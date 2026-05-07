@@ -291,6 +291,33 @@ export function useAppState() {
     reorderMut.mutate(items);
   }, [queue, qc, reorderMut]);
 
+  /* Bulk reorder — caller passes the ids in the desired order. Used by
+     Warteschlange's smart-sort buttons so a single round-trip applies the
+     full permutation instead of N adjacent swaps. */
+  const reorderQueueTo = useCallback((orderedIds) => {
+    if (!Array.isArray(orderedIds) || orderedIds.length !== queue.length) return;
+    const idSet = new Set(queue.map((q) => q.id));
+    if (!orderedIds.every((id) => idSet.has(id))) return;
+    /* No-op if already in this order */
+    let changed = false;
+    for (let i = 0; i < orderedIds.length; i++) {
+      if (queue[i]?.id !== orderedIds[i]) { changed = true; break; }
+    }
+    if (!changed) return;
+    const items = orderedIds.map((id, i) => ({ id, queuePosition: i }));
+    qc.setQueryData(['auftraege'], (old) => {
+      if (!old) return old;
+      const byId = new Map(old.map((a) => [a.id, a]));
+      const reordered = items.map((it, i) => ({
+        ...byId.get(it.id),
+        queuePosition: i,
+      }));
+      const inProgress = old.filter((a) => a.status === 'in_progress');
+      return [...reordered, ...inProgress];
+    });
+    reorderMut.mutate(items);
+  }, [queue, qc, reorderMut]);
+
   const startEntry = useCallback((entryId) => {
     /* Local guard — backend has the same rule; this avoids a needless 409
        round-trip when we already know we have an active Auftrag. */
@@ -417,14 +444,14 @@ export function useAppState() {
   /* ── Public API — same shape as the old localStorage version ──────── */
   return useMemo(() => ({
     queue, current, history,
-    addFiles, removeFromQueue, reorderQueue: reorderQueueAction, clearQueue,
+    addFiles, removeFromQueue, reorderQueue: reorderQueueAction, reorderQueueTo, clearQueue,
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   }), [
     queue, current, history,
-    addFiles, removeFromQueue, reorderQueueAction, clearQueue,
+    addFiles, removeFromQueue, reorderQueueAction, reorderQueueTo, clearQueue,
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     completeCurrentItem, completeAndAdvance, cancelCurrent,

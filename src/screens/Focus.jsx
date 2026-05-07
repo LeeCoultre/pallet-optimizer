@@ -37,7 +37,7 @@ import {
 } from '../utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '../marathonApi.js';
 import { detectWiederholt } from '../utils/wiederholtLogic.js';
-import { Page, Topbar, Button, Badge, T } from '../components/ui.jsx';
+import { Page, Topbar, Button, Badge, StudioFrame, T } from '../components/ui.jsx';
 import PalletInterlude, { resetSkipCount } from '../components/PalletInterlude.jsx';
 import AuftragFinaleStage from '../components/AuftragFinaleStage.jsx';
 
@@ -110,10 +110,12 @@ export default function FocusScreen() {
 
   /* ── view-only state ── */
   const [wiederholt, setWiederholt] = useState(null);
-  const [copiedCode, setCopiedCode] = useState(null);
   const [flashUse,   setFlashUse]   = useState(null);
   const [interlude,  setInterlude]  = useState(null);
   const [finale,     setFinale]     = useState(false);
+  /* «Zen»-Modus — Klick auf den freien Bereich (oder Z-Taste) blendet
+     alles bis auf das Wesentliche aus: Artikelname, Menge, Codes. */
+  const [zen,        setZen]        = useState(false);
   /* Whether the finale is "armed" — set true the moment the worker
      clicks Fertig on the last item of the last pallet. Without this
      gate the all-done detection effect would also trigger when the
@@ -234,7 +236,6 @@ export default function FocusScreen() {
   const onCopyArtikelCode = useCallback(() => {
     if (!item?.code) return;
     copyToClipboard(item.code);
-    setCopiedCode(item.code);
     markCodeCopied(palletIdx, itemIdx);
   }, [item, palletIdx, itemIdx, markCodeCopied]);
 
@@ -261,10 +262,12 @@ export default function FocusScreen() {
   }, [palletIdx, itemIdx]);
 
   /* Persistent copy-state for the Artikel-Code card on the hero — true
-     whenever this position's chip is also green. Falls back to the
-     transient setCopiedCode for the immediate copy-click flash. */
-  const codeCopied = copiedKeys.has(`${palletIdx}|${itemIdx}`)
-    || (copiedCode != null && copiedCode === item?.code);
+     whenever this exact position (pallet + item) is in copiedKeys.
+     Position-keyed only — never compare by code string, otherwise an
+     identical article reused on a later pallet would inherit the prior
+     pallet's green state. The localStorage write in markCodeCopied
+     bumps copiedKeysVersion which immediately re-derives this. */
+  const codeCopied = copiedKeys.has(`${palletIdx}|${itemIdx}`);
 
   /* Wiederholt auto-dismiss */
   useEffect(() => {
@@ -296,7 +299,14 @@ export default function FocusScreen() {
   /* Reset interlude skip counter on Auftrag change. */
   useEffect(() => { resetSkipCount(); }, [current?.id]);
 
-  /* Keyboard handler. */
+  /* Keyboard handler — gated by Shell mode.
+
+     Shell ON  → all workflow hotkeys live (Space/Enter Fertig, ←/→
+                 nav, ↑/↓ pallet jump, C copy code, U copy use-item).
+     Shell OFF → only the Wiederholt dialog's dismiss keys are wired.
+                 Worker is expected to use mouse clicks; this keeps
+                 the toggle semantically meaningful (fast vs. careful)
+                 instead of "Shell" being a no-op cosmetic state. */
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
@@ -310,6 +320,19 @@ export default function FocusScreen() {
         }
         return;
       }
+      /* Zen-Modus toggle — works regardless of Shell, since it's a UI
+         layer concern, not a workflow key. Esc exits zen too. */
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault();
+        setZen((v) => !v);
+        return;
+      }
+      if (zen && e.key === 'Escape') {
+        e.preventDefault();
+        setZen(false);
+        return;
+      }
+      if (!schnellmodus) return;          // Shell OFF — workflow keys disabled
       if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); handleFertig(); return; }
       if (e.key === 'ArrowRight') { e.preventDefault(); goNextItem(); return; }
       if (e.key === 'ArrowLeft')  { e.preventDefault(); goPrevItem(); return; }
@@ -333,7 +356,7 @@ export default function FocusScreen() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wiederholt, interlude, finale, handleFertig, goNextItem, goPrevItem,
+  }, [wiederholt, interlude, finale, zen, schnellmodus, handleFertig, goNextItem, goPrevItem,
       onCopyArtikelCode, onCopyUseItem, palletIdx, allPalletCopied, rawPallets]);
 
   /* Auftrag totals — used by AuftragFinaleStage. */
@@ -376,57 +399,118 @@ export default function FocusScreen() {
 
   return (
     <Page>
-      <Topbar
-        crumbs={[
-          { label: 'Prüfen', muted: true,
-            onClick: () => goToStep('pruefen'),
-            title: 'Zurück zu Prüfen' },
-          { label: 'Focus' },
-        ]}
-        right={
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <ShellToggle on={schnellmodus} onToggle={toggleSchnell} />
-            <Button variant="ghost" size="sm" onClick={onExit}
-                    title="Focus-Modus verlassen">
-              Verlassen
-            </Button>
-          </span>
-        }
-      />
+      {/* Topbar — fades in zen mode but stays mounted so layout
+          (sticky offset, scroll calc) doesn't jump on toggle. */}
+      <div style={{
+        opacity: zen ? 0 : 1,
+        pointerEvents: zen ? 'none' : 'auto',
+        transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+      }}>
+        <Topbar
+          crumbs={[
+            { label: 'Prüfen', muted: true,
+              onClick: () => goToStep('pruefen'),
+              title: 'Zurück zu Prüfen' },
+            { label: 'Focus' },
+          ]}
+          right={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <ShellToggle on={schnellmodus} onToggle={toggleSchnell} />
+              <Button variant="ghost" size="sm" onClick={onExit}
+                      title="Focus-Modus verlassen">
+                Verlassen
+              </Button>
+            </span>
+          }
+        />
+      </div>
 
       {/* main fills the gap between Topbar bottom and StickyBar top.
-          Topbar = 60px. StickyBar = 2px progress + ~92px pallet-flow
-          row (current pallet card has progress hairline + chip strip)
-          + ~64px action row = ~158px. */}
-      <main style={{
-        minHeight: 'calc(100vh - 60px - 158px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px 32px',
-        overflow: 'hidden',
-      }}>
-        <ArticleHeroCard
-          item={item}
-          palletId={pallet.id}
-          itemIdx={itemIdx}
-          itemCount={pallet.items.length}
-          copiedCode={codeCopied ? item?.code : null}
-          flashUse={flashUse}
-          onCopyCode={onCopyArtikelCode}
-          onCopyUse={onCopyUseItem}
-        />
+          Click on the empty background here toggles Zen mode — the
+          target check ensures only the bare-main background triggers,
+          not bubbled clicks from the article card or pallet flow. */}
+      <main
+        onClick={(e) => { if (e.target === e.currentTarget) setZen((v) => !v); }}
+        style={{
+          minHeight: 'calc(100vh - 60px - 98px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '32px 32px 96px',
+        }}
+      >
+        {/* Studio frame brackets BOTH the article hero AND the pallet
+            flow — single set of corner-marks + one mono eyebrow at top.
+            In zen mode the eyebrow + corner-marks fade out (StudioFrame
+            handles that internally via `zen` prop). */}
+        <StudioFrame
+          bare
+          gap={zen ? 0 : 20}
+          zen={zen}
+          label={`Aktueller Artikel · ${pallet.id}`}
+          status={`${String(itemIdx + 1).padStart(2, '0')} / ${String(pallet.items.length).padStart(2, '0')}`}
+          style={{ width: '100%', maxWidth: 1080 }}
+          contentStyle={{ transition: 'gap 240ms cubic-bezier(0.16, 1, 0.3, 1)' }}
+        >
+          <ArticleHeroCard
+            item={item}
+            palletId={pallet.id}
+            itemIdx={itemIdx}
+            itemCount={pallet.items.length}
+            copiedCode={codeCopied ? item?.code : null}
+            flashUse={flashUse}
+            onCopyCode={onCopyArtikelCode}
+            onCopyUse={onCopyUseItem}
+            zen={zen}
+          />
+
+          {/* Pallet flow — collapses out of view in zen mode (height 0
+              + opacity 0) so only the article hero remains on screen. */}
+          <div style={{
+            padding: '14px 18px',
+            background: T.bg.surface,
+            border: `1px solid ${T.border.primary}`,
+            borderRadius: 14,
+            boxShadow: '0 1px 3px rgba(17,24,39,0.03)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-start',
+            gap: 14,
+            overflow: 'hidden',
+            WebkitOverflowScrolling: 'touch',
+            scrollbarWidth: 'none',
+            opacity: zen ? 0 : 1,
+            maxHeight: zen ? 0 : 200,
+            paddingTop: zen ? 0 : 14,
+            paddingBottom: zen ? 0 : 14,
+            border: zen ? '1px solid transparent' : `1px solid ${T.border.primary}`,
+            pointerEvents: zen ? 'none' : 'auto',
+            transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), max-height 320ms cubic-bezier(0.16, 1, 0.3, 1), padding 240ms ease, border-color 240ms ease',
+          }}>
+            <PalletFlow
+              pallets={rawPallets}
+              palletStates={palletStates}
+              palletTimings={current?.palletTimings}
+              currentIdx={palletIdx}
+              itemIdx={itemIdx}
+              copiedKeys={copiedKeys}
+              allPalletCopied={allPalletCopied}
+              onPickPallet={(i) => {
+                if (i === palletIdx) return;
+                if (i > palletIdx && !allPalletCopied) { alert(blockMessage()); return; }
+                if (i > palletIdx) setInterlude(buildInterludePayload(palletIdx));
+                setCurrentPalletIdx(i);
+              }}
+              onPickItem={(i) => setCurrentItemIdx(i)}
+            />
+          </div>
+        </StudioFrame>
       </main>
 
       <FocusStickyBar
         pallets={rawPallets}
-        palletStates={palletStates}
-        palletTimings={current?.palletTimings}
         palletIdx={palletIdx}
         itemIdx={itemIdx}
-        copiedKeys={copiedKeys}
-        allPalletCopied={allPalletCopied}
-        blockMessage={blockMessage}
         overallPct={overallPct}
         overallPos={overallPos}
         totalArticles={totalArticles}
@@ -437,13 +521,7 @@ export default function FocusScreen() {
         onPrev={goPrevItem}
         onNext={goNextItem}
         onFertig={handleFertig}
-        onPickItem={(i) => setCurrentItemIdx(i)}
-        onPickPallet={(i) => {
-          if (i === palletIdx) return;
-          if (i > palletIdx && !allPalletCopied) { alert(blockMessage()); return; }
-          if (i > palletIdx) setInterlude(buildInterludePayload(palletIdx));
-          setCurrentPalletIdx(i);
-        }}
+        zen={zen}
       />
 
       <WiederholtOverlay
@@ -484,6 +562,7 @@ export default function FocusScreen() {
 function ArticleHeroCard({
   item, palletId, itemIdx, itemCount,
   copiedCode, flashUse, onCopyCode, onCopyUse,
+  zen = false,
 }) {
   const cat = item.levelMeta || LEVEL_META[1];
   const haloColor = cat.color || T.accent.main;
@@ -498,7 +577,7 @@ function ArticleHeroCard({
       background: T.bg.surface,
       border: `1px solid ${T.border.primary}`,
       borderRadius: 18,
-      boxShadow: '0 1px 3px rgba(17,24,39,0.03), 0 16px 40px -22px rgba(17,24,39,0.08)',
+      boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 22px 50px -24px rgba(17,24,39,0.20), 0 6px 14px -6px rgba(17,24,39,0.06)',
       overflow: 'hidden',
     }}>
       {/* Soft accent radial halo */}
@@ -511,20 +590,27 @@ function ArticleHeroCard({
       }} />
 
       <div style={{ position: 'relative' }}>
-        {/* Top mini-row — position eyebrow on left, badges on right */}
+        {/* Top mini-row — position eyebrow on left, badges on right.
+            In zen mode the row collapses (height 0) so the article name
+            anchors to the card's top padding. */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
           gap: 12,
           flexWrap: 'wrap',
-          marginBottom: 20,
+          marginBottom: zen ? 0 : 20,
+          maxHeight: zen ? 0 : 60,
+          opacity: zen ? 0 : 1,
+          overflow: 'hidden',
+          pointerEvents: zen ? 'none' : 'auto',
+          transition: 'opacity 200ms ease, max-height 280ms cubic-bezier(0.16, 1, 0.3, 1), margin-bottom 280ms cubic-bezier(0.16, 1, 0.3, 1)',
         }}>
           <PositionEyebrow palletId={palletId} itemIdx={itemIdx} itemCount={itemCount} />
           <span style={{ flex: 1 }} />
           <LevelChip level={item.level} cat={cat} />
           {item.isEsku && <Badge tone="accent">ESKU</Badge>}
           {item.lst && (
-            <Badge tone={item.lst === 'mit LST' ? 'accent' : 'neutral'}>{item.lst}</Badge>
+            <Badge tone={item.lst === 'mit LST' ? 'accent' : 'success'}>{item.lst}</Badge>
           )}
           {noVal && <Badge tone="danger">NO_VALID_PLACEMENT</Badge>}
           {!noVal && item.placementFlags?.length > 0 && (
@@ -539,7 +625,7 @@ function ArticleHeroCard({
           gap: 28,
           alignItems: 'stretch',
         }}>
-          <ArticleColumn item={item} />
+          <ArticleColumn item={item} zen={zen} />
           <span style={{ background: T.border.primary, alignSelf: 'stretch' }} />
           <CodesColumn
             item={item}
@@ -603,7 +689,7 @@ function LevelChip({ level, cat }) {
 }
 
 /* ── LEFT — article column ─────────────────────────────────────────── */
-function ArticleColumn({ item }) {
+function ArticleColumn({ item, zen = false }) {
   const perCarton = !item.isEsku
     ? (item.rollen ? { value: item.rollen, unit: item.rollenUnit || 'Rollen' } : null)
     : (item.eskuPacksPerCarton != null
@@ -627,9 +713,6 @@ function ArticleColumn({ item }) {
 
       {perCarton && (
         <div style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: 8,
           fontFamily: T.font.mono,
           fontSize: 'clamp(20px, 2.4vw, 28px)',
           fontWeight: 600,
@@ -638,17 +721,7 @@ function ArticleColumn({ item }) {
           lineHeight: 1.05,
           fontVariantNumeric: 'tabular-nums',
         }}>
-          <span>{perCarton.value} {perCarton.unit}</span>
-          <span style={{
-            fontFamily: T.font.mono,
-            fontSize: 'clamp(11px, 1vw, 13px)',
-            fontWeight: 600,
-            color: T.text.subtle,
-            letterSpacing: '0.14em',
-            textTransform: 'uppercase',
-          }}>
-            / Karton
-          </span>
+          {perCarton.value} {perCarton.unit}
         </div>
       )}
 
@@ -665,6 +738,10 @@ function ArticleColumn({ item }) {
           textTransform: 'uppercase',
           letterSpacing: '0.16em',
           marginBottom: 8,
+          opacity: zen ? 0 : 1,
+          maxHeight: zen ? 0 : 24,
+          overflow: 'hidden',
+          transition: 'opacity 200ms ease, max-height 240ms cubic-bezier(0.16, 1, 0.3, 1), margin-bottom 240ms ease',
         }}>
           {item.isEsku ? 'FBA-Kartons' : 'Menge'}
         </div>
@@ -699,6 +776,10 @@ function ArticleColumn({ item }) {
           <div style={{
             marginTop: 10,
             fontSize: 13, fontFamily: T.font.mono, color: T.text.subtle,
+            opacity: zen ? 0 : 1,
+            maxHeight: zen ? 0 : 30,
+            overflow: 'hidden',
+            transition: 'opacity 200ms ease, max-height 240ms cubic-bezier(0.16, 1, 0.3, 1), margin-top 240ms ease',
           }}>
             →&nbsp;
             <span style={{ color: T.text.primary, fontWeight: 500 }}>
@@ -711,6 +792,10 @@ function ArticleColumn({ item }) {
           <div style={{
             marginTop: 10,
             fontSize: 13, fontFamily: T.font.mono, color: T.text.subtle,
+            opacity: zen ? 0 : 1,
+            maxHeight: zen ? 0 : 30,
+            overflow: 'hidden',
+            transition: 'opacity 200ms ease, max-height 240ms cubic-bezier(0.16, 1, 0.3, 1), margin-top 240ms ease',
           }}>
             {item.units.toLocaleString('de-DE')} Einheiten gesamt
           </div>
@@ -846,12 +931,11 @@ function CodeRow({ label, kbd, value, copied, onCopy, size, accent }) {
    STICKY BAR — chip strip on top, status + actions below.
    ════════════════════════════════════════════════════════════════════════ */
 function FocusStickyBar({
-  pallets, palletStates, palletTimings, palletIdx, itemIdx,
-  copiedKeys, allPalletCopied,
+  pallets, palletIdx, itemIdx,
   overallPct, overallPos, totalArticles, missingCopies,
   canPrev, canNext,
   onPrev, onNext, onFertig,
-  onPickItem, onPickPallet,
+  zen = false,
 }) {
   const isReady  = missingCopies === 0;
   const dotColor = isReady ? T.status.success.main : T.status.warn.main;
@@ -865,11 +949,12 @@ function FocusStickyBar({
       left: 0,
       right: 0,
       zIndex: 50,
-      background: 'rgba(255, 255, 255, 0.94)',
+      background: zen ? 'rgba(255, 255, 255, 0.65)' : 'rgba(255, 255, 255, 0.94)',
       backdropFilter: 'blur(14px)',
       WebkitBackdropFilter: 'blur(14px)',
-      borderTop: `1px solid ${T.border.primary}`,
+      borderTop: zen ? '1px solid transparent' : `1px solid ${T.border.primary}`,
       marginLeft: 'var(--sidebar-width)',
+      transition: 'background 240ms ease, border-color 240ms ease',
     }}>
       {/* 2px overall progress hairline */}
       <div style={{ height: 2, background: 'rgba(15,23,42,0.04)' }}>
@@ -881,35 +966,6 @@ function FocusStickyBar({
         }} />
       </div>
 
-      {/* Pallet flow strip — full timeline of pallets, each rendered
-          as a multi-layer card (state-dot · ID · counter · progress
-          hairline + chip strip on current). Stepper-style connectors
-          run between cards as a horizontal progress chain. */}
-      <div style={{
-        padding: '14px 32px',
-        borderBottom: `1px solid ${T.border.subtle}`,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 14,
-        maxWidth: 1180,
-        margin: '0 auto',
-        overflowX: 'auto',
-        WebkitOverflowScrolling: 'touch',
-        scrollbarWidth: 'none',
-      }}>
-        <PalletFlow
-          pallets={pallets}
-          palletStates={palletStates}
-          palletTimings={palletTimings}
-          currentIdx={palletIdx}
-          itemIdx={itemIdx}
-          copiedKeys={copiedKeys}
-          allPalletCopied={allPalletCopied}
-          onPickPallet={onPickPallet}
-          onPickItem={onPickItem}
-        />
-      </div>
-
       {/* Action row */}
       <div style={{
         padding: '10px 32px 12px',
@@ -919,7 +975,12 @@ function FocusStickyBar({
         maxWidth: 1080,
         margin: '0 auto',
       }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          opacity: zen ? 0 : 1,
+          transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+          pointerEvents: zen ? 'none' : 'auto',
+        }}>
           <span style={{
             width: 7, height: 7, borderRadius: '50%',
             background: dotColor,
@@ -949,6 +1010,8 @@ function FocusStickyBar({
           color: T.text.faint,
           fontFamily: T.font.mono,
           fontVariantNumeric: 'tabular-nums',
+          opacity: zen ? 0 : 1,
+          transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
         }}>
           {overallPos} / {totalArticles}
         </span>
@@ -1365,13 +1428,13 @@ function WiederholtOverlay({ hit, onDismiss }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          maxWidth: 480,
+          maxWidth: 560,
           width: '100%',
           background: T.bg.surface,
           border: `1px solid ${T.border.primary}`,
-          borderRadius: 16,
+          borderRadius: 18,
           boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 24px 56px -20px rgba(17,24,39,0.20)',
-          padding: '24px 28px',
+          padding: '28px 32px 24px',
           cursor: 'default',
           animation: 'wiederholt-card-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both',
         }}
@@ -1379,19 +1442,102 @@ function WiederholtOverlay({ hit, onDismiss }) {
         <Badge tone="warn">Wiederholung erkannt</Badge>
 
         <h2 style={{
-          marginTop: 12, marginBottom: 6,
-          fontSize: 18, fontWeight: 500, color: T.text.primary,
-          letterSpacing: '-0.018em',
+          marginTop: 14, marginBottom: 4,
+          fontSize: 20, fontWeight: 500, color: T.text.primary,
+          letterSpacing: '-0.02em',
         }}>
           Dieser Artikel kommt erneut vor
         </h2>
-        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: T.text.muted }}>
-          Auf Palette {hit.palletId} taucht <strong style={{ fontFamily: T.font.mono, color: T.text.primary, fontWeight: 500 }}>{hit.code}</strong> mit{' '}
-          <strong style={{ color: T.status.warn.main, fontWeight: 600 }}>{hit.units}</strong> Stück auf.
+        <p style={{
+          margin: 0,
+          fontSize: 13.5,
+          lineHeight: 1.5,
+          color: T.text.subtle,
+          fontFamily: T.font.mono,
+          letterSpacing: '0.02em',
+        }}>
+          auf Palette {hit.palletId}
         </p>
 
+        {/* Hero — code (mono, large) + units (numeric, accent) so the
+            worker spots both at a glance without parsing prose. */}
         <div style={{
-          marginTop: 18,
+          marginTop: 22,
+          padding: '20px 22px',
+          background: T.bg.surface2,
+          border: `1px solid ${T.border.subtle}`,
+          borderRadius: 12,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 18,
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+            <span style={{
+              fontSize: 10.5,
+              fontWeight: 600,
+              fontFamily: T.font.mono,
+              color: T.text.faint,
+              textTransform: 'uppercase',
+              letterSpacing: '0.14em',
+            }}>
+              Artikel-Code
+            </span>
+            <span style={{
+              fontFamily: T.font.mono,
+              fontSize: 'clamp(24px, 3vw, 32px)',
+              fontWeight: 500,
+              color: T.text.primary,
+              letterSpacing: '-0.022em',
+              lineHeight: 1,
+              wordBreak: 'break-all',
+            }}>
+              {hit.code}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+            <span style={{
+              fontSize: 10.5,
+              fontWeight: 600,
+              fontFamily: T.font.mono,
+              color: T.text.faint,
+              textTransform: 'uppercase',
+              letterSpacing: '0.14em',
+            }}>
+              Menge
+            </span>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'baseline',
+              gap: 6,
+              fontFamily: T.font.mono,
+              fontVariantNumeric: 'tabular-nums',
+              lineHeight: 1,
+            }}>
+              <span style={{
+                fontSize: 'clamp(28px, 3.6vw, 40px)',
+                fontWeight: 600,
+                color: T.status.warn.main,
+                letterSpacing: '-0.025em',
+              }}>
+                {hit.units}
+              </span>
+              <span style={{
+                fontSize: 13,
+                fontWeight: 500,
+                color: T.text.subtle,
+                textTransform: 'uppercase',
+                letterSpacing: '0.10em',
+              }}>
+                Stück
+              </span>
+            </span>
+          </div>
+        </div>
+
+        <div style={{
+          marginTop: 22,
           display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12,
         }}>
           <span style={{ fontSize: 11.5, color: T.text.subtle,

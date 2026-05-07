@@ -35,11 +35,13 @@ export function getLevel(item) {
   // ship without that exact phrase but belong to the same physical class).
   if (/(wird (von .* )?produziert|tk\s+thermalking|sandsäcke|sandsack|sandsaecke)/.test(t)) return 4;
   if (/(klebeband|fragile|bruchgefahr)/.test(t)) return 3;          // Klebeband / Fragile
-  // L2 ÖKO Thermorollen — ONLY the genuine eco/phenol-free indicators.
-  // Brand names that contain "ECO" (e.g. "ECO ROOLLS®" — a vendor whose
-  // catalog is mostly regular Thermopapier) must NOT trigger L2 by
-  // themselves, otherwise plain thermal rolls get misclassified.
-  if (/(öko|phenolfrei)/.test(t)) return 2;
+  // L2 ÖKO Thermorollen — ONLY explicit "öko" branding. `phenolfrei`
+  // is a paper spec (BPA-free analog) that regular L1 thermorolls also
+  // carry, so matching it would false-positive thermal rolls like
+  // "EC Thermorollen ... phenolfrei 52g/m²" into L2. Genuine ÖKO
+  // articles always carry the "öko" word in their title — that's the
+  // only reliable signal.
+  if (/öko/.test(t)) return 2;
   return 1;                                                          // Thermorollen (default)
 }
 
@@ -414,16 +416,58 @@ function sizeBucket(it) {
    Works for both Mixed (Phase 1) and ESKU (Phase 2). */
 const VOL_TIE_BREAK_THRESHOLD = 0.10;
 
-/* Cluster key — same W×H stays adjacent. Falls back to 'xxx' when dims
-   are missing (still groups all dim-less items together). ESKU items
-   each get a unique key so they don't cluster (rule 7). */
+/* Cluster key — items with the same physical Rolle format group
+   together so the worker stacks like-with-like.
+
+   Resolution order:
+     1. ESKU → unique key (rule 7, never cluster).
+     2. **Rolle format from title** when extractable — covers L1/L2/L3
+        Thermorollen / Klebeband. Same format-signature clusters
+        regardless of LST status, useItem or own EAN. Two articles
+        printed as "57mm x 18m x 12mm" merge even when one is
+        "mit Lastschrifttext" and the other is plain — the worker
+        stacks them as one rolle family. (User-confirmed 2026-05-07.)
+     3. Fall back to `dim:WxH|use:EAN/X-code` for items without a
+        recognisable rolle pattern (L4 Produktion, generic Sandsäcke,
+        etc.). useItem keeps the V5/EZ EAN-cross-reference behaviour
+        for those non-rolle SKUs. */
 function formatClusterKey(it) {
   if (it.isEinzelneSku) {
     return `esku:${it.fnsku || it.sku || it.title || ''}`;
   }
+  const rolle = extractRolleFormat(it.title);
+  if (rolle) return `rolle:${rolle}`;
   const w = it.dim?.normW ?? it.dim?.w ?? 'x';
   const h = it.dim?.normH ?? it.dim?.h ?? 'x';
-  return `dim:${w}x${h}`;
+  const use = extractUseItemId(it.useItem)
+    ?? (it.ean ? String(it.ean) : null)
+    ?? 'x';
+  return `dim:${w}x${h}|use:${use}`;
+}
+
+/* Extract a canonical rolle-format signature from the title.
+
+   Patterns recognised (most specific first):
+     • "57mm x 18m x 12mm"  →  "57x18m-12"   (width × length-meters × thickness)
+     • "57x18x12 mm"        →  "57x18m-12"   (no spaces variant)
+     • "58/64/12"           →  "58/64/12"    (slash-format, e.g. Tacho diameter spec)
+
+   Carton-only specs like "(57x40x12)" without rolle units do NOT match —
+   those are carton dimensions and would falsely merge different rolle
+   families that happen to ship in similar boxes. */
+export function extractRolleFormat(title) {
+  if (!title) return null;
+  const t = String(title);
+  /* "57mm x 18m x 12mm" or "57 mm × 18 m × 12 mm" — middle token has 'm'
+     unit (meters, length of rolle), outer tokens have 'mm' (rolle width
+     and thickness). The 'm' alone (not 'mm') is the disambiguator. */
+  const a = t.match(/(\d{2,3})\s*mm\s*[x×]\s*(\d{1,3})\s*m\s*[x×]\s*(\d{1,3})\s*mm/i);
+  if (a) return `${a[1]}x${a[2]}m-${a[3]}`;
+  /* Slash-format e.g. "58/64/12" appearing as a standalone token (Tacho
+     inner/outer/thickness convention). */
+  const b = t.match(/(?:^|\s)(\d{2,3})\/(\d{2,3})\/(\d{1,3})(?=\s|$|[-,])/);
+  if (b) return `${b[1]}/${b[2]}/${b[3]}`;
+  return null;
 }
 
 export function sortItemsForPallet(items) {
@@ -464,6 +508,44 @@ export function sortItemsForPallet(items) {
   // Within each level: cluster by W×H, order clusters by sum-volume,
   // then sort items inside each cluster.
   for (const g of orderedGroups) {
+    if (!g.length) continue;
+    const groupLevel = g[0].level;
+
+    /* L6 (Tachorollen) — pack-size dominates ordering. The warehouse
+       always stacks the biggest pack first (60 → 15 → 6 → 3 Rollen),
+       regardless of total batch units. We bucket by `rollen` and order
+       buckets by rollen DESC, falling back to volume/units within the
+       same pack-size group. No W×H clustering — Tacho dims are usually
+       expressed as "57/8" (slashes) which the dim regex doesn't catch
+       anyway, so all Tacho items would otherwise land in one mega-bucket. */
+    if (groupLevel === 6) {
+      const buckets = new Map();
+      for (const e of g) {
+        const r = e.item.rollen ?? 0;
+        const key = `r:${r}`;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(e);
+      }
+      for (const bucket of buckets.values()) {
+        bucket.sort((a, b) => {
+          if (a.units    !== b.units)    return b.units    - a.units;
+          if (a.totalVol !== b.totalVol) return b.totalVol - a.totalVol;
+          return a.origIdx - b.origIdx;
+        });
+      }
+      const orderedBuckets = [...buckets.entries()]
+        .sort(([ka, ba], [kb, bb]) => {
+          const ra = parseInt(ka.slice(2), 10) || 0;
+          const rb = parseInt(kb.slice(2), 10) || 0;
+          if (ra !== rb) return rb - ra;                  // rollen DESC
+          return ba[0].origIdx - bb[0].origIdx;
+        })
+        .map(([, b]) => b);
+      g.length = 0;
+      for (const bucket of orderedBuckets) g.push(...bucket);
+      continue;
+    }
+
     const buckets = new Map();
     for (const e of g) {
       if (!buckets.has(e.fmtKey)) buckets.set(e.fmtKey, []);
@@ -1166,9 +1248,21 @@ export function estimateOrderSeconds(pallets) {
 /* ─── Build view-shape for Focus ──────────────────────────────────────── */
 export function focusItemView(item) {
   const { rollen } = parseTitleMeta(item.title || '');
+  /* LST detection — Lieferanten use both the abbreviation (mit/ohne LST)
+     and the full word "Lastschrifttext" (sometimes prefixed "SEPA-").
+     Also "SEPA-Druck" appears in some Veit titles. The presence-only
+     hits (Lastschrift / SEPA-Druck mention without ohne-prefix) imply
+     "mit LST" since these phrases describe an included feature. */
+  const t = item.title || '';
+  const lstFullPos = /\b(?:sepa[-\s]*)?lastschrift(?:text)?\b/i;
+  const sepaDruck = /\bsepa[-\s]*druck\b/i;
+  const ohneFull = /\bohne\s+(?:sepa[-\s]*)?lastschrift(?:text)?\b/i;
   const lst =
-    /\bmit\s+lst\b/i.test(item.title) ? 'mit LST' :
-    /\bohne\s+lst\b/i.test(item.title) ? 'ohne LST' : null;
+    /\bmit\s+lst\b/i.test(t) ? 'mit LST' :
+    /\bohne\s+lst\b/i.test(t) ? 'ohne LST' :
+    ohneFull.test(t) ? 'ohne LST' :
+    (lstFullPos.test(t) || sepaDruck.test(t)) ? 'mit LST' :
+    null;
 
   // Produktion-Fallback: "(50)" trailing oder "50x ..." leading
   let perCarton = item.rollen || rollen || null;

@@ -1,26 +1,31 @@
-/* Upload — Schritt 01.
+/* Upload v2 — «Drop Studio».
 
-   Design ethos: subdued accent, hairline borders, lighter type. The
-   drop-zone is the hero; everything else (mini-stepper, recents,
-   insights, hint) is light scaffolding. Same vocabulary as the new
-   sidebar.
+   Magazine-spread design (matches Pruefen / Focus / Live / Historie /
+   Warteschlange / Suche / Einstellungen):
+     • Hero drop-zone with morphing states (idle / over / busy /
+       success / batch-summary / countdown / duplicate / error)
+     • Live parse-preview during busy — per-file rows reveal FBA-Code +
+       pallets + articles as soon as the in-browser parse completes,
+       BEFORE the backend save finishes (fade-in 80ms each)
+     • Multi-file batch timeline — dropping N files no longer hides
+       N-1 results: every parsed file gets its own row with bulk
+       actions (Alle in Queue · Ersten starten)
+     • Duplicate detection — same FBA / fileName already in queue or
+       recent → inline confirm card (Trotzdem laden / Abbrechen)
+     • Validation pre-flight — surfaces the first warning details so
+       the operator can decide before queueing
+     • KPI strip v2 — 5 magazine numbers (Heute geladen / In Queue /
+       Heute fertig / Ø Dauer / Ø Paletten/Auftrag)
+     • Recent v2 — rich cards with status-Badge (Queue · Aktiv · Fertig)
+       and smart navigation (each opens the right screen)
+     • Educational footer — first-run only, 3 mini-cards explaining
+       Prüfen → Focus → Abschluss
+     • Keyboard cockpit — `o` open picker, `Esc` cancel countdown / clear
+       error, `⌘V` paste (existing usePasteFile hook), `g w` / `g h`
+       sequence to jump to Warteschlange / Historie
 
-   Headline features:
-     • Hero drop-zone with 5 visual states (idle / over / busy /
-       success / error). All states share one border + one background
-       — they morph in place via CSS transitions.
-     • Page-wide drag overlay so the operator can drop ANYWHERE on
-       the page, not just on the visible drop-zone.
-     • ⌘V paste support (Cursor-style).
-     • 3-second auto-start countdown after a successful single-file
-       parse with empty queue. Esc / explicit "Stop" cancels.
-     • Recent uploads list (last 5, localStorage). Click navigates
-       into Historie / Warteschlange depending on the entry's status.
-     • Smart insights row — 3 mini-KPI computed from local history.
-       Hidden until there's data.
-     • Mini-stepper (4 dots) lives in the Topbar instead of a heavy
-       StepperBar.
-     • Inline error state for parse failures — no modal, no toast.
+   Backend unchanged — all preview, dedup and validation work happens
+   in the browser before/after the existing `addFiles()` mutation.
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -29,103 +34,154 @@ import { useApiHealth } from '../hooks/useApiHealth.js';
 import { useRecentUploads } from '../hooks/useRecentUploads.js';
 import { useGlobalDragOverlay } from '../hooks/useGlobalDragOverlay.js';
 import { usePasteFile } from '../hooks/usePasteFile.js';
-import { Page, Topbar, StepperBar, PageH1, T } from '../components/ui.jsx';
+import {
+  Page, Topbar, StepperBar, Badge, CornerMarks, T,
+} from '../components/ui.jsx';
 
 const COUNTDOWN_SEC = 3;
 
+/* ════════════════════════════════════════════════════════════════════════ */
 export default function UploadScreen({ onRoute }) {
   const { queue, history, current, addFiles, startEntry } = useAppState();
   const { items: recent, add: addRecent, remove: removeRecent } = useRecentUploads();
   const apiHealth = useApiHealth();
   const isOffline = apiHealth?.data?.status === 'offline';
 
-  const [busy, setBusy] = useState(false);
-  const [over, setOver] = useState(false);   // local drop-zone hover
-  const [busyFiles, setBusyFiles] = useState([]);  // [{ name, status }]
-  const [lastBuilt, setLastBuilt] = useState(null);  // [{ id, parsed, status, ... }]
+  const [busy, setBusy]         = useState(false);
+  const [over, setOver]         = useState(false);
+  const [batch, setBatch]       = useState([]); /* [{name, stage, fba, palletCount, articleCount, units, validation, entry, error}] */
+  const [batchDone, setBatchDone] = useState([]); /* persisted snapshot after busy=false */
   const [parseError, setParseError] = useState(null);
-  const [countdown, setCountdown] = useState(null);
+  const [countdown, setCountdown]   = useState(null);
+  const [duplicateConfirm, setDuplicateConfirm] = useState(null); /* {filesToConfirm: File[], dupes: [...]} */
 
   const inputRef = useRef(null);
-
   const globalOver = useGlobalDragOverlay();
+  const goSeqRef = useRef({ ts: 0 }); /* `g w` / `g h` sequence buffer */
 
-  /* ─── core file pipeline ─────────────────────────────────────── */
-  const acceptFiles = useCallback(async (fl) => {
-    const arr = Array.from(fl || []).filter((f) => /\.docx$/i.test(f.name));
-    if (!arr.length) return;
-    /* Hard-stop if the backend is unreachable — without this the upload
-       silently swallows the network error (createMut.mutateAsync is
-       wrapped in .catch(() => null) inside addFiles) and the user sees
-       the busy spinner clear with no feedback. */
+  /* ── duplicate detector ───────────────────────────────────────── */
+  const dupIndex = useMemo(() => buildDupIndex(queue, recent), [queue, recent]);
+  const detectDupes = useCallback(
+    (files) => files.map((f) => ({
+      file: f,
+      hit: dupIndex.byFile.get(f.name.toLowerCase()) || null,
+    })).filter((x) => x.hit),
+    [dupIndex],
+  );
+
+  /* ── core file pipeline ───────────────────────────────────────── */
+  const runUpload = useCallback(async (files) => {
     if (isOffline) {
       setParseError('Server offline — Backend nicht erreichbar. Backend starten und erneut versuchen.');
       return;
     }
     setParseError(null);
-    setBusyFiles(arr.map((f) => ({ name: f.name, status: 'pending' })));
+    setBatchDone([]);
     setBusy(true);
-    try {
-      const built = await addFiles(arr);
-      setLastBuilt(built);
 
-      /* Empty result = network error swallowed by addFiles. Surface it. */
-      if (arr.length > 0 && built.length === 0) {
-        setParseError('Server hat nicht geantwortet. Bitte Backend prüfen und erneut versuchen.');
-        setBusyFiles([]);
-        return;
+    const initial = files.map((f) => ({
+      name: f.name,
+      stage: 'pending',
+      fba: null,
+      palletCount: 0,
+      articleCount: 0,
+      units: 0,
+      validation: null,
+      entry: null,
+      error: null,
+    }));
+    setBatch(initial);
+
+    /* Per-file serialised pipeline so the operator sees each row resolve
+       in turn. addFiles parses + saves; we interpret the returned entry
+       (or empty array on error). */
+    const built = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setBatch((prev) => prev.map((b, idx) => idx === i ? { ...b, stage: 'parsing' } : b));
+      let result = null;
+      try {
+        const created = await addFiles([f]);
+        result = created[0] || null;
+      } catch (e) {
+        result = null;
       }
+      if (!result) {
+        setBatch((prev) => prev.map((b, idx) => idx === i
+          ? { ...b, stage: 'error', error: 'Server hat nicht geantwortet oder Datei ist ungültig.' }
+          : b));
+        continue;
+      }
+      const meta = result.parsed?.meta || {};
+      const palletCount  = result.parsed?.pallets?.length || 0;
+      const articleCount = (result.parsed?.pallets || []).reduce((s, p) => s + (p.items?.length || 0), 0);
+      const units        = meta.totalUnits || 0;
+      const fba          = meta.sendungsnummer || meta.fbaCode || null;
+      const isReady      = result.status === 'ready';
+      setBatch((prev) => prev.map((b, idx) => idx === i ? {
+        ...b,
+        stage: isReady ? 'done' : 'error',
+        fba,
+        palletCount,
+        articleCount,
+        units,
+        validation: result.validation || null,
+        entry: result,
+        error: isReady ? null : (result.errorMessage || 'Datei konnte nicht geparst werden.'),
+      } : b));
 
-      /* Mark per-file status */
-      setBusyFiles(built.map((b) => ({
-        name: b.fileName,
-        status: b.status === 'ready' ? 'done' : 'error',
-      })));
-
-      /* Recent log — only successful ones */
-      built.filter((b) => b.status === 'ready').forEach((b) => {
-        const meta = b.parsed?.meta || {};
-        const palletCount = b.parsed?.pallets?.length || 0;
-        const articleCount = (b.parsed?.pallets || [])
-          .reduce((s, p) => s + (p.items?.length || 0), 0);
+      if (isReady) {
+        built.push(result);
         addRecent({
-          id: b.id,
-          fileName: b.fileName,
-          fbaCode: meta.sendungsnummer || meta.fbaCode || null,
+          id: result.id,
+          fileName: result.fileName,
+          fbaCode: fba,
           palletCount,
           articleCount,
         });
-      });
-
-      /* Auto-start countdown — only when:
-         - exactly one file was parsed successfully
-         - queue was empty before this batch
-         - no current Auftrag is being worked on */
-      const successes = built.filter((b) => b.status === 'ready');
-      if (
-        successes.length === 1
-        && !current
-        && queue.length === 0
-      ) {
-        startCountdown(successes[0].id);
       }
+    }
 
-      /* If everything failed, surface the first error inline */
-      if (built.length > 0 && successes.length === 0) {
-        setParseError(built[0].errorMessage || 'Datei konnte nicht verarbeitet werden.');
-      }
-    } catch (e) {
-      setParseError(e?.message || 'Upload fehlgeschlagen');
-    } finally {
-      setBusy(false);
-      /* Clear busy-files display after a beat so the operator sees
-         the final ✓/✗ row before it disappears. */
-      setTimeout(() => setBusyFiles([]), 1200);
+    /* Capture final snapshot before clearing busy → SuccessContent /
+       BatchSummary read it after the spinner releases. */
+    setBatch((prev) => {
+      setBatchDone(prev);
+      return prev;
+    });
+    setBusy(false);
+
+    /* Auto-start countdown when exactly one ready entry was uploaded
+       AND nothing else is waiting. */
+    const successes = built.filter((b) => b.status === 'ready');
+    if (successes.length === 1 && !current && queue.length === 0) {
+      startCountdown(successes[0].id);
+    }
+
+    if (files.length > 0 && successes.length === 0) {
+      setParseError(built[0]?.errorMessage || 'Keine Datei konnte verarbeitet werden.');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addFiles, addRecent, current, queue.length, isOffline]);
 
-  /* ─── countdown logic ────────────────────────────────────────── */
+  const acceptFiles = useCallback((fl) => {
+    const arr = Array.from(fl || []).filter((f) => /\.docx$/i.test(f.name));
+    if (!arr.length) return;
+    const dupes = detectDupes(arr);
+    if (dupes.length > 0) {
+      setDuplicateConfirm({ files: arr, dupes });
+      return;
+    }
+    runUpload(arr);
+  }, [detectDupes, runUpload]);
+
+  const confirmDuplicates = () => {
+    const files = duplicateConfirm?.files || [];
+    setDuplicateConfirm(null);
+    if (files.length) runUpload(files);
+  };
+  const cancelDuplicates = () => setDuplicateConfirm(null);
+
+  /* ── countdown logic ──────────────────────────────────────────── */
   const countdownTimer = useRef(null);
   const cancelCountdown = useCallback(() => {
     if (countdownTimer.current) {
@@ -149,32 +205,66 @@ export default function UploadScreen({ onRoute }) {
       }
     }, 1000);
   };
-  /* Cleanup on unmount + Esc-to-cancel */
   useEffect(() => () => cancelCountdown(), [cancelCountdown]);
-  useEffect(() => {
-    if (!countdown) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') cancelCountdown(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [countdown, cancelCountdown]);
 
-  /* ─── paste support ──────────────────────────────────────────── */
+  /* ── paste support ────────────────────────────────────────────── */
   usePasteFile(acceptFiles);
 
-  /* ─── render ─────────────────────────────────────────────────── */
-  const lastSuccess = useMemo(() => {
-    if (!lastBuilt) return null;
-    return lastBuilt.find((b) => b.status === 'ready') || null;
-  }, [lastBuilt]);
+  /* ── keyboard cockpit ─────────────────────────────────────────── */
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target.tagName;
+      const inField = tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable;
+      if (inField) return;
+
+      if (e.key === 'Escape') {
+        if (countdown)        { cancelCountdown(); return; }
+        if (parseError)       { setParseError(null); return; }
+        if (duplicateConfirm) { cancelDuplicates(); return; }
+      }
+      if (e.key === 'o' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        if (!busy && !duplicateConfirm) inputRef.current?.click();
+        return;
+      }
+      /* `g` then `w` / `h` jump shortcut. */
+      if (e.key === 'g') {
+        goSeqRef.current = { ts: Date.now() };
+        return;
+      }
+      const seqAlive = (Date.now() - (goSeqRef.current?.ts || 0)) < 1500;
+      if (seqAlive && (e.key === 'w' || e.key === 'h')) {
+        e.preventDefault();
+        if (onRoute) onRoute(e.key === 'w' ? 'warteschlange' : 'historie');
+        goSeqRef.current = { ts: 0 };
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, countdown, parseError, duplicateConfirm, cancelCountdown, onRoute]);
+
+  /* ── derived: which batch slice to render ─────────────────────── */
+  const liveBatch  = busy ? batch : batchDone;
+  const lastSuccess = useMemo(
+    () => liveBatch.filter((b) => b.stage === 'done' && b.entry).map((b) => b.entry).slice(-1)[0] || null,
+    [liveBatch],
+  );
+  const showBatchSummary = !busy && !countdown && liveBatch.length > 1
+    && liveBatch.some((b) => b.stage === 'done');
+  const singleSuccessRow = !busy && !countdown && liveBatch.length === 1
+    && liveBatch[0].stage === 'done' ? liveBatch[0] : null;
+
+  const showEducation = !current && queue.length === 0 && recent.length === 0
+    && !busy && !lastSuccess && !parseError && !countdown && !duplicateConfirm;
 
   return (
     <Page>
       <Topbar
-        crumbs={[
-          { label: 'Upload' },
-        ]}
+        crumbs={[{ label: 'Upload' }]}
         right={
-          queue.length > 0 ? (
+          isOffline ? (
+            <OfflineDot />
+          ) : queue.length > 0 ? (
             <StatusStrip
               count={queue.length}
               onOpen={() => onRoute && onRoute('warteschlange')}
@@ -191,11 +281,9 @@ export default function UploadScreen({ onRoute }) {
         padding: '72px 40px 96px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 80,
+        gap: 64,
       }}>
-        {/* Hero block — H1 + subtitle + drop-zone with breathing
-            room so the focal drop-zone reads like a primary surface,
-            not a wedged form field. */}
+        {/* HERO */}
         <section style={{
           display: 'flex',
           flexDirection: 'column',
@@ -213,7 +301,6 @@ export default function UploadScreen({ onRoute }) {
           }}>
             Auftrag laden
           </h1>
-
           <p style={{
             margin: 0,
             fontSize: 16,
@@ -223,25 +310,68 @@ export default function UploadScreen({ onRoute }) {
             textAlign: 'center',
             maxWidth: 520,
           }}>
-            .docx-Datei ablegen — Marathon erkennt das Format automatisch.
+            <code style={inlineCodeStyle}>.docx</code>-Datei ablegen — Marathon
+            erkennt das Format, parst lokal und übergibt es validiert an
+            die Warteschlange.
           </p>
 
-          <div style={{ width: '100%', maxWidth: 760, marginTop: 18 }}>
+          <div style={{
+            position: 'relative',
+            width: '100%',
+            maxWidth: 920,
+            marginTop: 26,
+          }}>
+            {/* Mono eyebrow above the drop surface — labels it as a studio */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: 12,
+              padding: '0 4px',
+            }}>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 10.5,
+                fontFamily: T.font.mono,
+                fontWeight: 600,
+                color: T.text.subtle,
+                textTransform: 'uppercase',
+                letterSpacing: '0.14em',
+              }}>
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: T.accent.main }} />
+                Drop Studio · .docx-Empfang
+              </span>
+              <span style={{
+                fontSize: 10.5,
+                fontFamily: T.font.mono,
+                fontWeight: 500,
+                color: T.text.faint,
+                letterSpacing: '0.10em',
+              }}>
+                {isOffline ? 'OFFLINE' : 'BEREIT'}
+              </span>
+            </div>
+
+            {/* Corner accents — Linear/Raycast-style hairline frame marks */}
+            <CornerMarks />
+
             <HeroDropZone
               over={over || globalOver}
               busy={busy}
-              busyFiles={busyFiles}
-              lastSuccess={lastSuccess}
+              batch={liveBatch}
+              singleSuccess={singleSuccessRow}
+              showBatchSummary={showBatchSummary}
               parseError={parseError}
               countdown={countdown}
+              duplicateConfirm={duplicateConfirm}
+              isOffline={isOffline}
               onPick={() => inputRef.current?.click()}
               onAccept={acceptFiles}
               onDragOverChange={setOver}
               onCancelCountdown={cancelCountdown}
               onStartNow={() => {
-                /* Start whichever Auftrag is currently surfaced — the
-                   active countdown takes priority, otherwise the last
-                   successful upload shown in SuccessContent. */
                 const idToStart = countdown?.auftragId || lastSuccess?.id;
                 if (idToStart) {
                   cancelCountdown();
@@ -252,7 +382,17 @@ export default function UploadScreen({ onRoute }) {
                 cancelCountdown();
                 if (onRoute) onRoute('warteschlange');
               }}
-              onClearError={() => { setParseError(null); setLastBuilt(null); }}
+              onClearError={() => { setParseError(null); setBatchDone([]); }}
+              onConfirmDupes={confirmDuplicates}
+              onCancelDupes={cancelDuplicates}
+              onStartFromBatch={(id) => { startEntry(id); }}
+              onAllToQueue={() => {
+                /* No-op — they're already in queue once addFiles resolved.
+                   We just visually retire the summary by clearing it. */
+                setBatchDone([]);
+                if (onRoute) onRoute('warteschlange');
+              }}
+              onCloseBatchSummary={() => setBatchDone([])}
             />
             <input
               ref={inputRef}
@@ -265,64 +405,73 @@ export default function UploadScreen({ onRoute }) {
           </div>
         </section>
 
-        {/* Bottom row — recents and insights side-by-side, separated
-            by a hairline. No cards: just labels + values, presentation
-            mode. Either side hides when its data is empty; if both
-            empty, the whole row vanishes. */}
-        {(recent.length > 0 || history.length > 0) && (
-          <PresentationRow>
-            {recent.length > 0 && (
-              <RecentColumn
-                items={recent}
-                onOpen={() => onRoute && onRoute('warteschlange')}
-                onRemove={removeRecent}
-              />
-            )}
-            {history.length > 0 && (
-              <InsightsColumn history={history} />
-            )}
-          </PresentationRow>
+        {/* KPI STRIP — magazine-style 5 numbers from local history + queue */}
+        {(history.length > 0 || queue.length > 0) && (
+          <KpiStripV2 history={history} queue={queue} current={current} />
         )}
+
+        {/* RECENT — rich card list */}
+        {recent.length > 0 && (
+          <RecentV2
+            items={recent}
+            queue={queue}
+            current={current}
+            history={history}
+            onOpen={(entry, status) => {
+              if (status === 'aktiv')   return onRoute?.('workspace');
+              if (status === 'queue')   return onRoute?.('warteschlange');
+              if (status === 'fertig')  return onRoute?.('historie');
+              return onRoute?.('warteschlange');
+            }}
+            onRemove={removeRecent}
+          />
+        )}
+
+        {/* EDUCATIONAL FOOTER — first-run scaffolding */}
+        {showEducation && <EducationalFooter />}
+
+        {/* KEYBOARD HINTS */}
+        <KbdHints />
       </main>
 
       {/* Page-wide drag overlay */}
       <GlobalDragOverlay
         visible={globalOver && !busy}
-        onDrop={(e) => {
-          e.preventDefault();
-          acceptFiles(e.dataTransfer.files);
-        }}
+        onDrop={(e) => { e.preventDefault(); acceptFiles(e.dataTransfer.files); }}
       />
     </Page>
   );
 }
 
-/* WorkflowSteps живёт jetzt im ui.jsx als StepperBar — wiederverwendet
-   von Pruefen + Abschluss, damit der gesamte 4-Schritte-Flow visuell
-   konsistent bleibt. */
-
 /* ════════════════════════════════════════════════════════════════════════
-   HERO DROP-ZONE — single block, 5 morphing states.
+   HERO DROP-ZONE — single block, multiple morphing states
    ════════════════════════════════════════════════════════════════════════ */
 function HeroDropZone({
-  over, busy, busyFiles, lastSuccess, parseError, countdown,
+  over, busy, batch, singleSuccess, showBatchSummary, parseError, countdown,
+  duplicateConfirm, isOffline,
   onPick, onAccept, onDragOverChange,
   onCancelCountdown, onStartNow, onAttachInstead, onClearError,
+  onConfirmDupes, onCancelDupes,
+  onStartFromBatch, onAllToQueue, onCloseBatchSummary,
 }) {
   const showCountdown = !!countdown;
-  const showSuccess = !!lastSuccess && !showCountdown;
-  const showError = !!parseError;
-  const showBusy = busy && !showCountdown && !showSuccess && !showError;
-  const showOver = over && !busy && !showCountdown && !showSuccess && !showError;
-  const showIdle = !showCountdown && !showSuccess && !showError && !showBusy && !showOver;
+  const showDup       = !!duplicateConfirm && !showCountdown;
+  const showError     = !!parseError && !showCountdown && !showDup;
+  const showBusy      = busy && !showCountdown && !showError && !showDup;
+  const showSingle    = !!singleSuccess && !showCountdown && !showDup && !showError && !showBusy;
+  const showSummary   = !!showBatchSummary && !showCountdown && !showDup && !showError && !showBusy && !showSingle;
+  const showOver      = over && !busy && !showCountdown && !showError && !showDup && !showSingle && !showSummary;
+  const showIdle      = !showCountdown && !showError && !showDup && !showBusy && !showOver && !showSingle && !showSummary;
 
-  /* Border / bg morph based on state */
   const palette = (() => {
-    if (showError)   return { border: T.status.danger.border, bg: T.status.danger.bg, dashed: false };
-    if (showSuccess) return { border: T.status.success.border, bg: T.status.success.bg, dashed: false };
+    if (isOffline)    return { border: T.status.danger.border, bg: T.status.danger.bg, dashed: false };
+    if (showError)    return { border: T.status.danger.border, bg: T.status.danger.bg, dashed: false };
+    if (showDup)      return { border: T.status.warn.border,   bg: T.status.warn.bg,   dashed: false };
+    if (showSingle)   return { border: T.status.success.border, bg: T.status.success.bg, dashed: false };
+    if (showSummary)  return { border: T.accent.border, bg: T.accent.bg, dashed: false };
     if (showCountdown) return { border: T.accent.border, bg: T.accent.bg, dashed: false };
-    if (showBusy)    return { border: T.accent.border, bg: T.accent.bg, dashed: false };
-    if (showOver)    return { border: T.accent.main, bg: T.accent.bg, dashed: true };
+    if (showBusy)     return { border: T.accent.border, bg: T.accent.bg, dashed: false };
+    if (showOver)     return { border: T.accent.main,   bg: T.accent.bg, dashed: true };
     return { border: T.border.strong, bg: T.bg.surface, dashed: true };
   })();
 
@@ -337,70 +486,134 @@ function HeroDropZone({
         onAccept(e.dataTransfer.files);
       }}
       style={{
-        minHeight: 240,
-        padding: '44px 52px',
+        position: 'relative',
+        minHeight: 300,
+        padding: '52px 56px',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
         background: palette.bg,
         border: `1px ${palette.dashed ? 'dashed' : 'solid'} ${palette.border}`,
-        borderRadius: 14,
+        borderRadius: 18,
         cursor: showIdle ? 'pointer' : 'default',
         boxShadow: showOver
-          ? `0 8px 32px -8px ${T.accent.main}40, 0 2px 8px rgba(17,24,39,0.04)`
-          : '0 1px 3px rgba(17,24,39,0.04), 0 8px 24px -12px rgba(17,24,39,0.06)',
+          ? `0 0 0 1px ${T.accent.border}, 0 24px 60px -22px ${T.accent.main}55, 0 6px 18px rgba(17,24,39,0.06)`
+          : showIdle
+          ? '0 1px 3px rgba(17,24,39,0.03), 0 18px 44px -22px rgba(17,24,39,0.18), 0 4px 10px -4px rgba(17,24,39,0.04)'
+          : '0 1px 3px rgba(17,24,39,0.04), 0 12px 32px -16px rgba(17,24,39,0.14)',
         transition: 'background 240ms cubic-bezier(0.16, 1, 0.3, 1), border-color 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 240ms cubic-bezier(0.16, 1, 0.3, 1)',
         transform: showOver ? 'scale(1.008)' : 'scale(1)',
+        backgroundImage: showIdle
+          ? `radial-gradient(circle at 50% 50%, ${T.bg.surface} 0%, ${T.bg.surface} 60%, ${T.bg.surface2} 100%)`
+          : 'none',
       }}
     >
-      {showIdle    && <IdleContent onPick={onPick} />}
-      {showOver    && <OverContent />}
-      {showBusy    && <BusyContent files={busyFiles} />}
-      {showSuccess && <SuccessContent
-                        entry={lastSuccess}
-                        onStart={() => onStartNow()}
-                        onAttach={onAttachInstead}
-                      />}
-      {showError   && <ErrorContent message={parseError} onPick={onPick} onClear={onClearError} />}
+      {showIdle      && <IdleContent isOffline={isOffline} onPick={onPick} />}
+      {showOver      && <OverContent />}
+      {showBusy      && <BatchTimeline batch={batch} />}
+      {showSingle    && <SuccessContent
+                          row={singleSuccess}
+                          onStart={onStartNow}
+                          onAttach={onAttachInstead}
+                        />}
+      {showSummary   && <BatchSummary
+                          batch={batch}
+                          onStartFromBatch={onStartFromBatch}
+                          onAllToQueue={onAllToQueue}
+                          onClose={onCloseBatchSummary}
+                        />}
+      {showError     && <ErrorContent message={parseError} onPick={onPick} onClear={onClearError} />}
       {showCountdown && <CountdownContent
                           countdown={countdown}
                           onCancel={onCancelCountdown}
                           onStartNow={onStartNow}
                         />}
+      {showDup       && <DuplicateContent
+                          dupes={duplicateConfirm.dupes}
+                          onConfirm={onConfirmDupes}
+                          onCancel={onCancelDupes}
+                        />}
     </div>
   );
 }
 
-function IdleContent({ onPick }) {
+/* ════════════════════════════════════════════════════════════════════════
+   IDLE / OVER / OFFLINE
+   ════════════════════════════════════════════════════════════════════════ */
+function IdleContent({ isOffline, onPick }) {
+  if (isOffline) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 22 }}>
+        <span style={{
+          width: 46, height: 46,
+          borderRadius: 12,
+          background: '#fff',
+          border: `1px solid ${T.status.danger.border}`,
+          color: T.status.danger.main,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path d="M3 12a9 9 0 0 1 18 0M5 16a7 7 0 0 1 14 0M12 20h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+            <path d="M3 3l18 18" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 17, fontWeight: 500, color: T.status.danger.text, letterSpacing: '-0.012em' }}>
+            Server offline
+          </div>
+          <div style={{ marginTop: 4, fontSize: 13, color: T.status.danger.text, opacity: 0.85 }}>
+            Marathon prüft alle 20 Sek. die Verbindung. Sobald sie wieder
+            steht, kannst du laden.
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
-      <DropIcon />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
+      <DropIcon size={36} />
       <div style={{ flex: 1, lineHeight: 1.5 }}>
         <div style={{
-          fontSize: 17,
+          fontSize: 20,
           fontWeight: 500,
           color: T.text.primary,
-          letterSpacing: '-0.012em',
+          letterSpacing: '-0.018em',
         }}>
           Datei hier ablegen
         </div>
-        <div style={{ marginTop: 4, fontSize: 13, color: T.text.subtle, fontWeight: 400 }}>
-          .docx · Drag &amp; Drop, klicken oder <Kbd>⌘V</Kbd> einfügen
+        <div style={{
+          marginTop: 6,
+          fontSize: 13.5,
+          color: T.text.subtle,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          flexWrap: 'wrap',
+        }}>
+          <span>.docx · Drag &amp; Drop, klicken,</span>
+          <Kbd>O</Kbd>
+          <span>öffnen oder</span>
+          <Kbd>⌘V</Kbd>
+          <span>einfügen</span>
         </div>
       </div>
       <button
         onClick={(e) => { e.stopPropagation(); onPick(); }}
         style={{
-          padding: '7px 14px',
-          fontSize: 12.5,
+          padding: '10px 18px',
+          fontSize: 13,
           fontWeight: 500,
           color: T.text.secondary,
           background: T.bg.surface,
           border: `1px solid ${T.border.strong}`,
-          borderRadius: 6,
+          borderRadius: 8,
           cursor: 'pointer',
           fontFamily: T.font.ui,
           transition: 'all 160ms',
+          flexShrink: 0,
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.borderColor = T.accent.main;
@@ -422,179 +635,505 @@ function OverContent() {
     <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
       <DropIcon accent />
       <div style={{ flex: 1 }}>
-        <div style={{
-          fontSize: 18,
-          fontWeight: 500,
-          color: T.accent.text,
-          letterSpacing: '-0.012em',
-        }}>
+        <div style={{ fontSize: 18, fontWeight: 500, color: T.accent.text, letterSpacing: '-0.012em' }}>
           Jetzt loslassen
         </div>
         <div style={{ marginTop: 4, fontSize: 13, color: T.accent.text, opacity: 0.8 }}>
-          Marathon erkennt das Format automatisch.
+          Marathon erkennt das Format automatisch — auch mehrere Dateien gleichzeitig.
         </div>
       </div>
     </div>
   );
 }
 
-function BusyContent({ files }) {
+/* ════════════════════════════════════════════════════════════════════════
+   BATCH TIMELINE — live progress, one row per file
+   ════════════════════════════════════════════════════════════════════════ */
+function BatchTimeline({ batch }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 12,
+        gap: 10,
         marginBottom: 4,
       }}>
-        <Spinner size={18} color={T.accent.main} />
+        <Spinner size={16} color={T.accent.main} />
         <span style={{
           fontSize: 14,
           fontWeight: 500,
           color: T.accent.text,
           letterSpacing: '-0.005em',
         }}>
-          Wird verarbeitet…
+          {batch.length === 1 ? 'Wird verarbeitet…' : `${batch.length} Dateien — wird verarbeitet…`}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span style={{
+          fontSize: 11,
+          fontFamily: T.font.mono,
+          color: T.accent.text,
+          opacity: 0.7,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {batch.filter((b) => b.stage === 'done').length}/{batch.length} ✓
         </span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {files.map((f, i) => <BusyRow key={i} file={f} />)}
+        {batch.map((b, i) => <BatchTimelineRow key={i} row={b} />)}
       </div>
     </div>
   );
 }
 
-function BusyRow({ file }) {
+function BatchTimelineRow({ row }) {
+  const isPending = row.stage === 'pending';
+  const isParsing = row.stage === 'parsing';
+  const isDone    = row.stage === 'done';
+  const isError   = row.stage === 'error';
+
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
-      gap: 8,
-      padding: '4px 0',
+      gap: 10,
+      padding: '8px 0',
+      borderTop: `1px solid ${T.accent.border}`,
+      animation: 'mp-up-fade 200ms ease-out',
     }}>
+      <span style={{ width: 16, display: 'inline-flex', justifyContent: 'center' }}>
+        {isPending && <span style={{ width: 5, height: 5, borderRadius: '50%', background: T.text.faint }} />}
+        {isParsing && <Spinner size={12} color={T.accent.main} />}
+        {isDone    && (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ color: T.status.success.main }}>
+            <path d="M3 7l3 3 5-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        {isError && (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ color: T.status.danger.main }}>
+            <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        )}
+      </span>
       <span style={{
         fontFamily: T.font.mono,
-        fontSize: 12,
-        color: T.text.secondary,
-        flex: 1,
+        fontSize: 12.5,
+        color: T.text.primary,
+        flex: '0 0 auto',
+        maxWidth: 240,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
-      }}>
-        {file.name}
+      }} title={row.name}>
+        {row.name}
       </span>
-      {file.status === 'pending' && <Spinner size={11} color={T.text.faint} />}
-      {file.status === 'done' && (
-        <span style={{ color: T.status.success.main, display: 'inline-flex' }}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M3 7l3 3 5-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+      {/* Live preview — appears as parse completes */}
+      {isDone && row.fba && (
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 11,
+          fontFamily: T.font.mono,
+          color: T.text.secondary,
+          flex: 1,
+          minWidth: 0,
+          animation: 'mp-up-fade 220ms ease-out',
+        }}>
+          <span style={{ color: T.accent.text, fontWeight: 600 }}>{row.fba}</span>
+          <span style={{ color: T.border.strong }}>·</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{row.palletCount} Pal</span>
+          <span style={{ color: T.border.strong }}>·</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums' }}>{row.articleCount} Art</span>
+          {row.units > 0 && (
+            <>
+              <span style={{ color: T.border.strong }}>·</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{row.units.toLocaleString('de-DE')} EH</span>
+            </>
+          )}
+          <ValidationPill validation={row.validation} />
         </span>
       )}
-      {file.status === 'error' && (
-        <span style={{ color: T.status.danger.main, display: 'inline-flex' }}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          </svg>
+      {isError && (
+        <span style={{
+          fontSize: 11.5,
+          color: T.status.danger.text,
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }} title={row.error || ''}>
+          {row.error || 'Fehler'}
         </span>
       )}
     </div>
   );
 }
 
-function SuccessContent({ entry, onStart, onAttach }) {
-  const meta = entry.parsed?.meta || {};
-  const fba = meta.sendungsnummer || meta.fbaCode || entry.fileName;
-  const palletCount = entry.parsed?.pallets?.length || 0;
-  const articleCount = (entry.parsed?.pallets || [])
-    .reduce((s, p) => s + (p.items?.length || 0), 0);
-  const validErrors = entry.validation?.errorCount || 0;
-  const validWarns = entry.validation?.warningCount || 0;
+function ValidationPill({ validation }) {
+  if (!validation) return null;
+  const errs  = validation.errorCount || 0;
+  const warns = validation.warningCount || 0;
+  if (errs === 0 && warns === 0) {
+    return <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, color: T.status.success.text, fontFamily: T.font.mono }}>VALIDIERT</span>;
+  }
+  if (errs > 0) {
+    return <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, color: T.status.danger.text, fontFamily: T.font.mono }}>{errs} FEHLER</span>;
+  }
+  return <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, color: T.status.warn.text, fontFamily: T.font.mono }}>{warns} WARN</span>;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SUCCESS — single-file path
+   ════════════════════════════════════════════════════════════════════════ */
+function SuccessContent({ row, onStart, onAttach }) {
+  const [showWarnings, setShowWarnings] = useState(false);
+  const v = row.validation || {};
+  const hasWarnings = (v.warningCount || 0) > 0;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-      <span style={{
-        width: 36, height: 36,
-        borderRadius: '50%',
-        background: T.status.success.main,
-        color: '#fff',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+        <span style={{
+          width: 36, height: 36,
+          borderRadius: '50%',
+          background: T.status.success.main,
+          color: '#fff',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M4 9l3 3 7-8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: T.font.mono,
+            fontSize: 15,
+            fontWeight: 500,
+            color: T.text.primary,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {row.fba || row.name}
+          </div>
+          <div style={{
+            marginTop: 4,
+            display: 'flex',
+            gap: 14,
+            fontSize: 12,
+            color: T.text.subtle,
+            fontVariantNumeric: 'tabular-nums',
+            flexWrap: 'wrap',
+          }}>
+            <span>{row.palletCount} Pal · {row.articleCount} Art</span>
+            {row.units > 0 && <span>{row.units.toLocaleString('de-DE')} EH</span>}
+            {(v.errorCount || 0) > 0
+              ? <span style={{ color: T.status.danger.text }}>{v.errorCount} Fehler</span>
+              : hasWarnings
+              ? <span style={{ color: T.status.warn.text }}>{v.warningCount} Warnungen</span>
+              : <span style={{ color: T.status.success.text }}>Validiert</span>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={onAttach}
+            style={ghostButtonStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.text.subtle; e.currentTarget.style.color = T.text.primary; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.strong; e.currentTarget.style.color = T.text.secondary; }}
+          >
+            In Warteschlange
+          </button>
+          <button
+            onClick={onStart}
+            style={primaryButtonStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.background = T.accent.hover; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = T.accent.main; }}
+          >
+            Jetzt starten
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+              <path d="M2.5 1.5v9l8-4.5z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Validation drawer — collapsible */}
+      {hasWarnings && (
+        <div style={{
+          background: T.bg.surface,
+          border: `1px solid ${T.status.warn.border}`,
+          borderRadius: T.radius.md,
+          padding: '10px 14px',
+        }}>
+          <button
+            onClick={() => setShowWarnings((s) => !s)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              width: '100%',
+              padding: 0,
+              background: 'transparent',
+              border: 0,
+              cursor: 'pointer',
+              fontFamily: T.font.ui,
+              fontSize: 12.5,
+              fontWeight: 500,
+              color: T.status.warn.text,
+              textAlign: 'left',
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{
+              transform: showWarnings ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 180ms',
+            }}>
+              <path d="M5 3l4 4-4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>{v.warningCount} {v.warningCount === 1 ? 'Warnung' : 'Warnungen'} · {showWarnings ? 'einklappen' : 'anzeigen'}</span>
+          </button>
+          {showWarnings && (
+            <ul style={{
+              margin: '10px 0 0',
+              padding: 0,
+              listStyle: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+            }}>
+              {(v.issues || []).slice(0, 8).map((iss, i) => (
+                <li key={i} style={{
+                  fontSize: 12,
+                  fontFamily: T.font.mono,
+                  color: T.text.secondary,
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 8,
+                }}>
+                  <span style={{ color: T.status.warn.main }}>▸</span>
+                  <span>{iss.message || iss.code || JSON.stringify(iss)}</span>
+                </li>
+              ))}
+              {(v.issues || []).length > 8 && (
+                <li style={{ fontSize: 11.5, color: T.text.faint, marginTop: 4 }}>
+                  +{v.issues.length - 8} weitere — sichtbar nach dem Laden im Prüfen-Schritt.
+                </li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   BATCH SUMMARY — multi-file post-upload card
+   ════════════════════════════════════════════════════════════════════════ */
+function BatchSummary({ batch, onStartFromBatch, onAllToQueue, onClose }) {
+  const successes = batch.filter((b) => b.stage === 'done');
+  const errors    = batch.filter((b) => b.stage === 'error');
+  const totalPal  = successes.reduce((s, b) => s + (b.palletCount || 0), 0);
+  const totalArt  = successes.reduce((s, b) => s + (b.articleCount || 0), 0);
+  const warnings  = successes.filter((b) => (b.validation?.warningCount || 0) > 0).length;
+
+  const firstReadyId = successes.find((b) => b.entry?.id)?.entry?.id || null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Aggregate */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+        <span style={{
+          width: 36, height: 36,
+          borderRadius: '50%',
+          background: T.accent.main,
+          color: '#fff',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          fontFamily: T.font.mono,
+          fontSize: 14,
+          fontWeight: 700,
+        }}>
+          {batch.length}
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 15,
+            fontWeight: 500,
+            color: T.accent.text,
+            letterSpacing: '-0.005em',
+          }}>
+            {batch.length} Dateien geladen
+          </div>
+          <div style={{
+            marginTop: 4,
+            display: 'flex',
+            gap: 14,
+            fontSize: 12,
+            color: T.text.subtle,
+            fontVariantNumeric: 'tabular-nums',
+            flexWrap: 'wrap',
+          }}>
+            <span style={{ color: T.status.success.text }}>{successes.length} ✓</span>
+            {errors.length > 0   && <span style={{ color: T.status.danger.text }}>{errors.length} ✗</span>}
+            {warnings > 0        && <span style={{ color: T.status.warn.text }}>{warnings} mit Warnungen</span>}
+            <span>{totalPal} Pal · {totalArt} Art</span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={onClose} style={ghostButtonStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.text.subtle; e.currentTarget.style.color = T.text.primary; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.strong; e.currentTarget.style.color = T.text.secondary; }}
+          >
+            Schließen
+          </button>
+          {firstReadyId && (
+            <button
+              onClick={() => onStartFromBatch(firstReadyId)}
+              style={primaryButtonStyle}
+              onMouseEnter={(e) => { e.currentTarget.style.background = T.accent.hover; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = T.accent.main; }}
+            >
+              Ersten starten
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
+                <path d="M2.5 1.5v9l8-4.5z" />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={onAllToQueue}
+            style={ghostButtonStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.accent.main; e.currentTarget.style.color = T.accent.main; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.strong; e.currentTarget.style.color = T.text.secondary; }}
+          >
+            Alle in Queue →
+          </button>
+        </div>
+      </div>
+
+      {/* Per-file rows */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        background: T.bg.surface,
+        border: `1px solid ${T.accent.border}`,
+        borderRadius: T.radius.md,
+        overflow: 'hidden',
       }}>
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <path d="M4 9l3 3 7-8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        {batch.map((row, i) => (
+          <BatchSummaryRow
+            key={i}
+            row={row}
+            isLast={i === batch.length - 1}
+            onStart={row.entry?.id ? () => onStartFromBatch(row.entry.id) : null}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BatchSummaryRow({ row, isLast, onStart }) {
+  const v = row.validation || {};
+  const isErr = row.stage === 'error';
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+      padding: '12px 14px',
+      borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
+    }}>
+      <span style={{ width: 16, display: 'inline-flex', justifyContent: 'center', flexShrink: 0 }}>
+        {isErr ? (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ color: T.status.danger.main }}>
+            <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ color: T.status.success.main }}>
+            <path d="M3 7l3 3 5-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontFamily: T.font.mono,
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: 500,
           color: T.text.primary,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
         }}>
-          {fba}
+          {row.fba || row.name}
         </div>
         <div style={{
-          marginTop: 4,
-          display: 'flex',
-          gap: 14,
-          fontSize: 12,
+          marginTop: 2,
+          fontSize: 11.5,
           color: T.text.subtle,
-          fontVariantNumeric: 'tabular-nums',
-        }}>
-          <span>{palletCount} Pal · {articleCount} Art</span>
-          {validErrors > 0 && (
-            <span style={{ color: T.status.danger.text }}>{validErrors} Fehler</span>
-          )}
-          {validErrors === 0 && validWarns > 0 && (
-            <span style={{ color: T.status.warn.text }}>{validWarns} Warnungen</span>
-          )}
-          {validErrors === 0 && validWarns === 0 && (
-            <span style={{ color: T.status.success.text }}>Validiert</span>
-          )}
+          fontFamily: T.font.mono,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }} title={row.name}>
+          {isErr ? (row.error || 'Fehler') : `${row.name}`}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button
-          onClick={onAttach}
-          style={ghostButtonStyle}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = T.text.subtle;
-            e.currentTarget.style.color = T.text.primary;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = T.border.strong;
-            e.currentTarget.style.color = T.text.secondary;
-          }}
-        >
-          In Warteschlange
-        </button>
+      {!isErr && (
+        <span style={{
+          fontSize: 11.5,
+          fontFamily: T.font.mono,
+          color: T.text.secondary,
+          fontVariantNumeric: 'tabular-nums',
+          flexShrink: 0,
+        }}>
+          {row.palletCount}/{row.articleCount}
+        </span>
+      )}
+      {!isErr && (
+        (v.errorCount || 0) > 0 ? <Badge tone="danger">{v.errorCount} Fehler</Badge>
+        : (v.warningCount || 0) > 0 ? <Badge tone="warn">{v.warningCount} Warn</Badge>
+        : <Badge tone="success">Validiert</Badge>
+      )}
+      {onStart && (
         <button
           onClick={onStart}
-          style={primaryButtonStyle}
-          onMouseEnter={(e) => { e.currentTarget.style.background = T.accent.hover; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = T.accent.main; }}
+          style={{
+            padding: '5px 10px',
+            fontSize: 11.5,
+            fontWeight: 500,
+            color: T.text.secondary,
+            background: 'transparent',
+            border: `1px solid ${T.border.primary}`,
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontFamily: T.font.ui,
+            transition: 'all 150ms',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.accent.main; e.currentTarget.style.color = T.accent.main; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.primary; e.currentTarget.style.color = T.text.secondary; }}
         >
-          Jetzt starten
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="currentColor">
-            <path d="M2.5 1.5v9l8-4.5z" />
-          </svg>
+          Starten
         </button>
-      </div>
+      )}
     </div>
   );
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   COUNTDOWN
+   ════════════════════════════════════════════════════════════════════════ */
 function CountdownContent({ countdown, onCancel, onStartNow }) {
   const ratio = (COUNTDOWN_SEC - countdown.remaining + 1) / COUNTDOWN_SEC;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-      {/* Ring countdown */}
       <span style={{ position: 'relative', width: 44, height: 44, flexShrink: 0 }}>
         <svg width="44" height="44" viewBox="0 0 44 44">
           <circle cx="22" cy="22" r="18" stroke={T.accent.border} strokeWidth="2" fill="none" />
@@ -630,27 +1169,17 @@ function CountdownContent({ countdown, onCancel, onStartNow }) {
           Startet automatisch in {countdown.remaining}s
         </div>
         <div style={{ fontSize: 12, color: T.accent.text, opacity: 0.85, marginTop: 2 }}>
-          Esc oder „Stop" hält den Auto-Start an.
+          <Kbd>Esc</Kbd> oder „Stop" hält den Auto-Start an.
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button
-          onClick={onCancel}
-          style={ghostButtonStyle}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = T.status.danger.main;
-            e.currentTarget.style.color = T.status.danger.text;
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = T.border.strong;
-            e.currentTarget.style.color = T.text.secondary;
-          }}
+        <button onClick={onCancel} style={ghostButtonStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.status.danger.main; e.currentTarget.style.color = T.status.danger.text; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.strong; e.currentTarget.style.color = T.text.secondary; }}
         >
           Stop
         </button>
-        <button
-          onClick={onStartNow}
-          style={primaryButtonStyle}
+        <button onClick={onStartNow} style={primaryButtonStyle}
           onMouseEnter={(e) => { e.currentTarget.style.background = T.accent.hover; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = T.accent.main; }}
         >
@@ -661,6 +1190,9 @@ function CountdownContent({ countdown, onCancel, onStartNow }) {
   );
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   ERROR
+   ════════════════════════════════════════════════════════════════════════ */
 function ErrorContent({ message, onPick, onClear }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
@@ -708,7 +1240,76 @@ function ErrorContent({ message, onPick, onClear }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   GLOBAL DRAG OVERLAY — page-wide capture.
+   DUPLICATE — confirm card
+   ════════════════════════════════════════════════════════════════════════ */
+function DuplicateContent({ dupes, onConfirm, onCancel }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20 }}>
+      <span style={{
+        width: 36, height: 36,
+        borderRadius: '50%',
+        background: T.status.warn.main,
+        color: '#fff',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+      }}>
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M9 4v6m0 2.5h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: T.status.warn.text }}>
+          {dupes.length === 1 ? 'Diese Datei kennst du schon' : `${dupes.length} dieser Dateien kennst du schon`}
+        </div>
+        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {dupes.slice(0, 4).map((d, i) => (
+            <div key={i} style={{
+              fontSize: 12,
+              fontFamily: T.font.mono,
+              color: T.text.secondary,
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 8,
+            }}>
+              <span style={{ color: T.status.warn.main }}>▸</span>
+              <span style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: 320,
+              }}>{d.file.name}</span>
+              <span style={{ color: T.text.faint }}>{d.hit.where} · {d.hit.relative}</span>
+            </div>
+          ))}
+          {dupes.length > 4 && (
+            <div style={{ fontSize: 11.5, color: T.text.faint }}>
+              +{dupes.length - 4} weitere
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <button onClick={onCancel} style={ghostButtonStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.text.subtle; e.currentTarget.style.color = T.text.primary; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.border.strong; e.currentTarget.style.color = T.text.secondary; }}
+        >
+          Abbrechen
+        </button>
+        <button onClick={onConfirm} style={primaryButtonStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.background = T.accent.hover; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = T.accent.main; }}
+        >
+          Trotzdem laden
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   GLOBAL DRAG OVERLAY
    ════════════════════════════════════════════════════════════════════════ */
 function GlobalDragOverlay({ visible, onDrop }) {
   if (!visible) return null;
@@ -748,11 +1349,7 @@ function GlobalDragOverlay({ visible, onDrop }) {
         }}>
           Datei hier ablegen
         </div>
-        <div style={{
-          marginTop: 8,
-          fontSize: 13,
-          color: T.text.subtle,
-        }}>
+        <div style={{ marginTop: 8, fontSize: 13, color: T.text.subtle }}>
           .docx-Datei wird automatisch erkannt und in die Warteschlange gelegt.
         </div>
       </div>
@@ -761,9 +1358,7 @@ function GlobalDragOverlay({ visible, onDrop }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   STATUS STRIP — paper-thin top ribbon. Sits ABOVE the hero block,
-   not as a card but as a near-invisible accent line. The dot pulses
-   subtly to draw the eye without shouting.
+   STATUS STRIP (top-right)
    ════════════════════════════════════════════════════════════════════════ */
 function StatusStrip({ count, onOpen }) {
   return (
@@ -781,148 +1376,267 @@ function StatusStrip({ count, onOpen }) {
         fontFamily: T.font.ui,
         transition: 'all 200ms cubic-bezier(0.16, 1, 0.3, 1)',
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = T.accent.main;
-        e.currentTarget.style.transform = 'translateY(-1px)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = T.accent.border;
-        e.currentTarget.style.transform = 'translateY(0)';
-      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = T.accent.main; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = T.accent.border; e.currentTarget.style.transform = 'translateY(0)'; }}
     >
-      <span style={{
-        width: 5, height: 5,
-        borderRadius: '50%',
-        background: T.accent.main,
-      }} />
-      <span style={{
-        fontSize: 11.5,
-        fontWeight: 500,
-        color: T.accent.text,
-        letterSpacing: '-0.005em',
-        whiteSpace: 'nowrap',
-      }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: T.accent.main }} />
+      <span style={{ fontSize: 11.5, fontWeight: 500, color: T.accent.text, letterSpacing: '-0.005em', whiteSpace: 'nowrap' }}>
         {count} in Warteschlange
       </span>
-      <span style={{
-        fontSize: 11,
-        color: T.accent.text,
-        opacity: 0.7,
-      }}>
-        →
-      </span>
+      <span style={{ fontSize: 11, color: T.accent.text, opacity: 0.7 }}>→</span>
     </button>
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   PRESENTATION ROW — wrapper for naked side-by-side columns. No
-   cards, no shaded backgrounds — just whitespace and a single
-   hairline divider between children. Drops to a single column on
-   narrow viewports (the 1080px max-width handles wide → narrow
-   gracefully via the wrap below).
-   ════════════════════════════════════════════════════════════════════════ */
-function PresentationRow({ children }) {
-  const arr = Array.isArray(children) ? children.filter(Boolean) : [children];
+function OfflineDot() {
   return (
-    <section style={{
-      display: 'grid',
-      gridTemplateColumns: arr.length === 2 ? '1fr 1fr' : '1fr',
-      gap: 0,
-      paddingTop: 32,
-      borderTop: `1px solid ${T.border.primary}`,
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '4px 10px',
+      background: T.status.danger.bg,
+      border: `1px solid ${T.status.danger.border}`,
+      borderRadius: 999,
+      fontFamily: T.font.mono,
+      fontSize: 11,
+      color: T.status.danger.text,
+      letterSpacing: '0.04em',
     }}>
-      {arr.map((child, i) => (
-        <div
-          key={i}
-          style={{
-            padding: arr.length === 2 ? `0 ${i === 0 ? 48 : 0}px 0 ${i === 0 ? 0 : 48}px` : 0,
-            borderLeft: arr.length === 2 && i > 0 ? `1px solid ${T.border.primary}` : 'none',
-          }}
-        >
-          {child}
-        </div>
-      ))}
-    </section>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.status.danger.main }} />
+      OFFLINE
+    </span>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   RECENT COLUMN — last 5 uploads as a naked stack of rows. No card,
-   no surface. Each row is a single line; remove button only on hover.
+   KPI STRIP V2 — magazine-style 5 numbers
    ════════════════════════════════════════════════════════════════════════ */
-function RecentColumn({ items, onOpen, onRemove }) {
+function KpiStripV2({ history, queue, current }) {
+  const stats = useMemo(() => {
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayMs = +todayStart;
+    let loadedToday = 0;
+    let finishedToday = 0;
+    let totalSec = 0;
+    let totalPal = 0;
+    let n = 0;
+    for (const h of history) {
+      n += 1;
+      totalSec += h.durationSec || 0;
+      totalPal += h.palletCount || 0;
+      if (h.finishedAt && h.finishedAt >= todayMs) finishedToday += 1;
+    }
+    /* Loaded-today is best-effort: queue + current + finished today are
+       lifetime-of-shift entities. We approximate with finishedToday +
+       (queue.length already includes parsed-today) + (1 if current). */
+    loadedToday = finishedToday + queue.length + (current ? 1 : 0);
+    return {
+      loadedToday,
+      inQueue: queue.length,
+      finishedToday,
+      avgSec: n > 0 ? Math.round(totalSec / n) : 0,
+      avgPal: n > 0 ? totalPal / n : 0,
+      n,
+    };
+  }, [history, queue, current]);
+
+  return (
+    <section style={{
+      padding: '24px 28px',
+      background: T.bg.surface,
+      border: `1px solid ${T.border.primary}`,
+      borderRadius: T.radius.lg,
+      display: 'grid',
+      gridTemplateColumns: 'repeat(5, 1fr)',
+      gap: 8,
+    }}>
+      <KpiBox label="Heute geladen" value={stats.loadedToday} />
+      <KpiBox label="In Queue"      value={stats.inQueue}      accent={stats.inQueue > 0} />
+      <KpiBox label="Heute fertig"  value={stats.finishedToday} success={stats.finishedToday > 0} />
+      <KpiBox label="Ø Dauer"       value={stats.avgSec ? formatMin(stats.avgSec) : '—'} />
+      <KpiBox label="Ø Paletten"    value={stats.n > 0 ? stats.avgPal.toFixed(1) : '—'} />
+    </section>
+  );
+}
+
+function KpiBox({ label, value, accent, success }) {
+  const color = accent ? T.accent.text : success ? T.status.success.text : T.text.primary;
   return (
     <div>
-      <SlideHeader num="01" label="Zuletzt geladen" />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, marginTop: 18 }}>
-        {items.map((it, i) => (
-          <RecentRow
-            key={it.id}
-            entry={it}
-            isLast={i === items.length - 1}
-            onOpen={() => onOpen(it)}
-            onRemove={() => onRemove(it.id)}
-          />
-        ))}
+      <div style={{
+        fontSize: 10.5,
+        fontFamily: T.font.mono,
+        fontWeight: 600,
+        color: T.text.subtle,
+        textTransform: 'uppercase',
+        letterSpacing: '0.10em',
+        marginBottom: 6,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontFamily: T.font.ui,
+        fontSize: 26,
+        fontWeight: 500,
+        letterSpacing: '-0.02em',
+        color,
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1.1,
+      }}>
+        {value}
       </div>
     </div>
   );
 }
 
-function RecentRow({ entry, isLast, onOpen, onRemove }) {
+/* ════════════════════════════════════════════════════════════════════════
+   RECENT V2 — rich cards with status-aware navigation
+   ════════════════════════════════════════════════════════════════════════ */
+function RecentV2({ items, queue, current, history, onOpen, onRemove }) {
+  /* Derive status of each recent entry from live data. */
+  const annotated = useMemo(() => items.map((it) => {
+    const statusInfo = deriveRecentStatus(it, queue, current, history);
+    return { ...it, ...statusInfo };
+  }), [items, queue, current, history]);
+
+  return (
+    <section>
+      <div style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 10,
+        marginBottom: 14,
+      }}>
+        <span style={{
+          fontSize: 10.5,
+          fontFamily: T.font.mono,
+          fontWeight: 600,
+          color: T.text.subtle,
+          textTransform: 'uppercase',
+          letterSpacing: '0.10em',
+        }}>
+          Zuletzt geladen
+        </span>
+        <span style={{ fontSize: 11, color: T.text.faint, fontFamily: T.font.mono }}>
+          {items.length}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {annotated.map((entry) => (
+          <RecentCard
+            key={entry.id}
+            entry={entry}
+            onOpen={() => onOpen(entry, entry.statusKey)}
+            onRemove={() => onRemove(entry.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function deriveRecentStatus(entry, queue, current, history) {
+  if (current && current.id === entry.id) {
+    return { statusKey: 'aktiv',  statusLabel: 'Aktiv',     statusTone: 'warn'    };
+  }
+  if (queue.some((q) => q.id === entry.id)) {
+    return { statusKey: 'queue',  statusLabel: 'In Queue',  statusTone: 'accent'  };
+  }
+  if (history.some((h) => h.id === entry.id)) {
+    return { statusKey: 'fertig', statusLabel: 'Fertig',    statusTone: 'success' };
+  }
+  return   { statusKey: 'gone',   statusLabel: 'Entfernt',  statusTone: 'neutral' };
+}
+
+function RecentCard({ entry, onOpen, onRemove }) {
   const [hover, setHover] = useState(false);
   return (
     <div
+      onClick={onOpen}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      onClick={onOpen}
       style={{
-        display: 'flex',
+        display: 'grid',
+        gridTemplateColumns: 'auto 1fr auto auto',
         alignItems: 'center',
-        gap: 14,
-        padding: '12px 12px',
-        margin: '0 -12px',
+        gap: 16,
+        padding: '14px 18px',
+        background: T.bg.surface,
+        border: `1px solid ${hover ? T.text.primary : T.border.primary}`,
+        borderRadius: T.radius.md,
         cursor: 'pointer',
-        background: hover ? T.bg.surface2 : 'transparent',
-        borderRadius: 8,
-        borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
-        transition: 'background 140ms',
+        transition: 'border-color 150ms',
       }}
     >
       <span style={{
-        fontFamily: T.font.mono,
-        fontSize: 13.5,
-        fontWeight: 500,
-        color: hover ? T.accent.text : T.text.primary,
-        flex: 1,
-        minWidth: 0,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        letterSpacing: '-0.005em',
-        transition: 'color 140ms',
+        width: 36, height: 36,
+        borderRadius: T.radius.sm,
+        background: T.bg.surface3,
+        border: `1px solid ${T.border.primary}`,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: T.text.subtle,
+        flexShrink: 0,
       }}>
-        {entry.fbaCode || entry.fileName}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+          <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+        </svg>
       </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 3,
+          flexWrap: 'wrap',
+        }}>
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 14,
+            fontWeight: 500,
+            color: T.text.primary,
+            letterSpacing: '-0.005em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            maxWidth: 320,
+          }}>
+            {entry.fbaCode || entry.fileName}
+          </span>
+          <Badge tone={entry.statusTone}>{entry.statusLabel}</Badge>
+        </div>
+        <div style={{
+          fontSize: 11.5,
+          color: T.text.faint,
+          fontFamily: T.font.mono,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }} title={entry.fileName}>
+          {entry.fileName}
+        </div>
+      </div>
       <span style={{
-        fontSize: 11,
-        color: T.text.faint,
-        fontVariantNumeric: 'tabular-nums',
-        whiteSpace: 'nowrap',
+        fontSize: 12,
+        color: T.text.subtle,
         fontFamily: T.font.mono,
+        fontVariantNumeric: 'tabular-nums',
+        flexShrink: 0,
       }}>
         {entry.palletCount} · {entry.articleCount}
       </span>
       <span style={{
-        fontSize: 10.5,
+        fontSize: 11,
         color: T.text.faint,
         fontFamily: T.font.mono,
-        flex: '0 0 70px',
-        textAlign: 'right',
         fontVariantNumeric: 'tabular-nums',
-        letterSpacing: '0.02em',
         textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        flex: '0 0 80px',
+        textAlign: 'right',
       }}>
         {formatRelative(entry.ts)}
       </span>
@@ -930,8 +1644,7 @@ function RecentRow({ entry, isLast, onOpen, onRemove }) {
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
         title="Aus Verlauf entfernen"
         style={{
-          width: 18,
-          height: 18,
+          width: 22, height: 22,
           background: 'transparent',
           border: 0,
           color: hover ? T.text.faint : 'transparent',
@@ -941,11 +1654,12 @@ function RecentRow({ entry, isLast, onOpen, onRemove }) {
           justifyContent: 'center',
           padding: 0,
           transition: 'color 120ms',
+          flexShrink: 0,
         }}
         onMouseEnter={(e) => { e.currentTarget.style.color = T.status.danger.main; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = T.text.faint; }}
       >
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
           <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         </svg>
       </button>
@@ -954,150 +1668,138 @@ function RecentRow({ entry, isLast, onOpen, onRemove }) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   INSIGHTS COLUMN — 3 mini-stats stacked vertically as naked rows.
-   Big numbers, micro-labels, no card chrome.
+   EDUCATIONAL FOOTER — 3 mini-cards (Prüfen → Focus → Abschluss)
    ════════════════════════════════════════════════════════════════════════ */
-function InsightsColumn({ history }) {
-  const stats = useMemo(() => {
-    if (!history?.length) return null;
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    const todayMs = +todayStart;
-    let todayCount = 0;
-    let totalSec = 0;
-    let totalPal = 0;
-    let n = 0;
-    for (const h of history) {
-      n += 1;
-      totalSec += h.durationSec || 0;
-      totalPal += h.palletCount || 0;
-      if (h.finishedAt && h.finishedAt >= todayMs) todayCount += 1;
-    }
-    return {
-      todayCount,
-      avgSec: n > 0 ? totalSec / n : 0,
-      avgPal: n > 0 ? totalPal / n : 0,
-      n,
-    };
-  }, [history]);
-
-  if (!stats || stats.n === 0) return null;
-
+function EducationalFooter() {
   return (
-    <div>
-      <SlideHeader num="02" label="Insights" />
+    <section>
       <div style={{
-        marginTop: 18,
+        fontSize: 10.5,
+        fontFamily: T.font.mono,
+        fontWeight: 600,
+        color: T.text.subtle,
+        textTransform: 'uppercase',
+        letterSpacing: '0.10em',
+        marginBottom: 14,
+      }}>
+        Was passiert als nächstes
+      </div>
+      <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 32,
+        gap: 12,
       }}>
-        <BigStat label="Heute" value={stats.todayCount} />
-        <BigStat label="Ø Dauer" value={formatMin(stats.avgSec)} />
-        <BigStat label="Ø Pal" value={stats.avgPal.toFixed(1)} />
+        <EducationCard
+          step="01"
+          title="Prüfen & Validieren"
+          body="Marathon erkennt das Format, prüft Konsistenz, verteilt ESKU-Items mit dem Distributor und zeigt Auslastung pro Palette."
+        />
+        <EducationCard
+          step="02"
+          title="Focus-Modus"
+          body="Code-für-Code-Loading mit Live-Timing. Keyboard-driven, ohne Maus. Pallet-Übergänge als Szenenwechsel."
+        />
+        <EducationCard
+          step="03"
+          title="Abschluss"
+          body="Archivieren mit Dauer + Pallet-Zeiten + Artikel-Liste. Alles geht in Historie & Live-Aktivität."
+        />
       </div>
-    </div>
+    </section>
   );
 }
 
-function BigStat({ label, value }) {
+function EducationCard({ step, title, body }) {
   return (
-    <div>
+    <div style={{
+      padding: '18px 20px',
+      background: T.bg.surface,
+      border: `1px solid ${T.border.primary}`,
+      borderRadius: T.radius.md,
+    }}>
       <div style={{
-        fontSize: 'clamp(32px, 3.4vw, 40px)',
-        fontWeight: 500,
-        color: T.text.primary,
-        fontVariantNumeric: 'tabular-nums',
-        letterSpacing: '-0.03em',
-        lineHeight: 1,
-      }}>
-        {value}
-      </div>
-      <div style={{
-        marginTop: 8,
         fontSize: 10,
-        fontWeight: 600,
-        color: T.text.faint,
+        fontFamily: T.font.mono,
+        fontWeight: 700,
+        color: T.accent.text,
         textTransform: 'uppercase',
         letterSpacing: '0.14em',
-        fontFamily: T.font.mono,
+        marginBottom: 8,
       }}>
-        {label}
+        {step}
+      </div>
+      <div style={{
+        fontSize: 14,
+        fontWeight: 500,
+        color: T.text.primary,
+        letterSpacing: '-0.01em',
+        marginBottom: 6,
+      }}>
+        {title}
+      </div>
+      <div style={{
+        fontSize: 12.5,
+        color: T.text.subtle,
+        lineHeight: 1.55,
+      }}>
+        {body}
       </div>
     </div>
   );
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   ATOMS
+   KEYBOARD HINTS
+   ════════════════════════════════════════════════════════════════════════ */
+function KbdHints() {
+  const items = [
+    { k: 'O',     v: 'Datei wählen' },
+    { k: '⌘V',    v: 'Datei einfügen' },
+    { k: 'Esc',   v: 'Stop / leeren' },
+    { k: 'g w',   v: 'Warteschlange' },
+    { k: 'g h',   v: 'Historie' },
+  ];
+  return (
+    <div style={{
+      paddingTop: 20,
+      borderTop: `1px solid ${T.border.subtle}`,
+      display: 'flex',
+      gap: 24,
+      flexWrap: 'wrap',
+      fontSize: 11.5,
+      color: T.text.faint,
+      fontFamily: T.font.mono,
+      letterSpacing: '0.04em',
+    }}>
+      {items.map((it) => (
+        <span key={it.k} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <Kbd>{it.k}</Kbd>
+          <span>{it.v}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ATOMS + helpers
    ════════════════════════════════════════════════════════════════════════ */
 
-function SectionLabel({ children }) {
-  return (
-    <div style={{
-      marginBottom: 8,
-      fontSize: 10,
-      fontWeight: 500,
-      color: T.text.faint,
-      textTransform: 'uppercase',
-      letterSpacing: '0.1em',
-      fontFamily: T.font.mono,
-    }}>
-      {children}
-    </div>
-  );
-}
-
-/* SlideHeader — numbered eyebrow in the magazine-slide style of
-   Pruefen. Two mono-caps: index + label, separated by an em-dash. */
-function SlideHeader({ num, label }) {
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-    }}>
-      <span style={{
-        fontSize: 10.5,
-        fontWeight: 600,
-        fontFamily: T.font.mono,
-        color: T.text.faint,
-        letterSpacing: '0.16em',
-        textTransform: 'uppercase',
-      }}>
-        {num}
-      </span>
-      <span style={{
-        fontSize: 10.5,
-        fontWeight: 500,
-        fontFamily: T.font.mono,
-        color: T.text.subtle,
-        letterSpacing: '0.16em',
-        textTransform: 'uppercase',
-      }}>
-        — {label}
-      </span>
-    </div>
-  );
-}
-
-function Kbd({ children, style }) {
+function Kbd({ children }) {
   return (
     <span style={{
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      minWidth: 18,
-      padding: '0 5px',
-      height: 16,
-      fontSize: 10,
+      minWidth: 22, height: 18,
+      padding: '0 6px',
+      fontSize: 10.5,
       fontFamily: T.font.mono,
-      fontWeight: 600,
-      color: T.text.subtle,
-      background: T.bg.surface,
+      color: T.text.secondary,
+      background: T.bg.surface3,
       border: `1px solid ${T.border.primary}`,
       borderRadius: 3,
-      letterSpacing: '0.04em',
-      ...style,
+      lineHeight: 1,
     }}>
       {children}
     </span>
@@ -1140,7 +1842,10 @@ function Spinner({ size = 14, color }) {
       animation: 'mp-up-spin 600ms linear infinite',
       flexShrink: 0,
     }}>
-      <style>{`@keyframes mp-up-spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes mp-up-spin { to { transform: rotate(360deg); } }
+        @keyframes mp-up-fade { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
     </span>
   );
 }
@@ -1177,7 +1882,37 @@ const ghostButtonStyle = {
   transition: 'all 160ms',
 };
 
-/* ─── helpers ──────────────────────────────────────────────────────── */
+const inlineCodeStyle = {
+  fontFamily: T.font.mono,
+  fontSize: 13.5,
+  padding: '1px 6px',
+  background: T.bg.surface3,
+  border: `1px solid ${T.border.primary}`,
+  borderRadius: 4,
+  color: T.text.secondary,
+};
+
+/* ─── Duplicate detection ───────────────────────────────────────── */
+function buildDupIndex(queue, recent) {
+  const byFile = new Map();
+  for (const q of queue) {
+    if (q.fileName) byFile.set(q.fileName.toLowerCase(), { where: 'in Warteschlange', relative: '' });
+  }
+  for (const r of recent) {
+    if (r.fileName) {
+      const existing = byFile.get(r.fileName.toLowerCase());
+      if (!existing) {
+        byFile.set(r.fileName.toLowerCase(), {
+          where: 'zuletzt geladen',
+          relative: r.ts ? formatRelative(r.ts) : '',
+        });
+      }
+    }
+  }
+  return { byFile };
+}
+
+/* ─── Date helpers ──────────────────────────────────────────────── */
 function formatRelative(ts) {
   if (!ts) return '—';
   const diffSec = Math.floor((Date.now() - ts) / 1000);

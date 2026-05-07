@@ -19,6 +19,7 @@ import {
   primaryLevel,
   itemTotalVolumeCm3,
   itemTotalWeightKg,
+  extractRolleFormat,
   LEVEL_META,
 } from './auftragHelpers.js';
 
@@ -67,21 +68,27 @@ describe('getLevel / getDisplayLevel', () => {
     expect(getLevel({ title: 'Fragile Aufkleber' })).toBe(3);
   });
 
-  it('ÖKO / phenolfrei → L2 (genuine eco indicators only)', () => {
+  it('only the "öko" word triggers L2 — phenolfrei alone is L1', () => {
+    // Genuine ÖKO branding wins L2.
     expect(getLevel({ title: 'ÖKO Thermorollen phenolfrei' })).toBe(2);
-    expect(getLevel({ title: 'Phenolfrei BPA-frei Thermorolle' })).toBe(2);
+    expect(getLevel({ title: 'THERMALKING - ÖKO - Thermorollen 80mm' })).toBe(2);
+    // Phenolfrei alone is a paper spec, not an ÖKO product.
+    expect(getLevel({ title: 'Phenolfrei BPA-frei Thermorolle' })).toBe(1);
+    expect(getLevel({
+      title: 'EC Thermorollen mit SEPA-Lastschrifttext 57mm x 14m x 12mm phenolfrei 52g/m² (50)',
+    })).toBe(1);
   });
 
   it('ECO ROOLLS brand alone is L1, not L2', () => {
     // Brand prefix "ECO ROOLLS" (registered trademark) used to false-
-    // positive into L2. The vendor's catalog is mostly regular
-    // thermal paper — only count genuine öko/phenolfrei flags.
+    // positive into L2. The vendor's catalog is mostly regular thermal
+    // paper — only the explicit "öko" word marks an actual L2 product.
     expect(getLevel({
       title: 'ECO ROOLLS® EC Cash Rollen Thermopapier 57mm x 35mm x 12mm - Kassenrollen',
     })).toBe(1);
     expect(getLevel({ title: 'ECO ROOLLS 57×40' })).toBe(1);
     // ECO ROOLLS that ARE explicitly öko still hit L2:
-    expect(getLevel({ title: 'ECO ROOLLS phenolfrei 80×80' })).toBe(2);
+    expect(getLevel({ title: 'ECO ROOLLS öko 80×80' })).toBe(2);
   });
 
   it('default falls through to L1 Thermorollen', () => {
@@ -184,6 +191,74 @@ describe('sortItemsForPallet — W×H cluster rule (2026-05-06)', () => {
     b.dim = { w: 57, h: 18 };
     const sorted = sortItemsForPallet([a, b]);
     expect(sorted.length).toBe(2);    // both present
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
+describe('extractRolleFormat', () => {
+  it('captures "57mm x 18m x 12mm" as canonical 57x18m-12 signature', () => {
+    expect(extractRolleFormat('Ec-Cash Thermorollen 57mm x 18m x 12mm')).toBe('57x18m-12');
+    expect(extractRolleFormat('57mm × 14m × 12mm')).toBe('57x14m-12');
+  });
+  it('treats LST-variants as same format', () => {
+    const a = '50 EC-Cash Thermorollen im Karton 57mm x 18m x 12mm mit Lastschrifttext ELV';
+    const b = 'Ec-Cash Thermorollen 57mm x 18m x 12mm (57x40x12) (50 Rollen)';
+    expect(extractRolleFormat(a)).toBe(extractRolleFormat(b));
+  });
+  it('catches slash-format "58/64/12"', () => {
+    expect(extractRolleFormat('Thermorolle 58/64/12 - 50 Meter Lauflänge')).toBe('58/64/12');
+  });
+  it('returns null for carton-only specs (no rolle units)', () => {
+    expect(extractRolleFormat('(57x40x12) Karton')).toBeNull();
+    expect(extractRolleFormat('Thermorollen ohne Mass')).toBeNull();
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
+describe('sortItemsForPallet — Rolle-format clustering (2026-05-07)', () => {
+  /* Real production case: P1-B3 of FBA15LL4PK53.
+
+     Items (in source order):
+       X001CTH9YB · 57mm x 9m  x 12mm · useItem 9120107187471 · 20 units
+       X001CX6BRN · 57mm x 14m x 12mm · useItem 9120107187396 · 70 units
+       X00198BJKP · 58/64/12          · useItem 9120107187495 ·  2 units
+       X00101830P · 57mm x 18m x 12mm · useItem 9120107187457 · 15 units (mit LST)
+       X001CTN52B · 57mm x 18m x 12mm · useItem 9120107187433 · 75 units
+
+     X001CTN52B and X00101830P share rolle-format 57mm × 18m × 12mm
+     but have DIFFERENT useItems — they MUST cluster together regardless
+     of LST. Bucket order (by sum-volume DESC):
+        57x18m-12 (90 rollen)  →  57x14m-12 (70)  →  57x9m-12 (20)  →  58/64/12 (2)
+     Within bucket, units DESC: X001CTN52B (75) before X00101830P (15). */
+  it('clusters same rolle-format across different useItems (LST variants)', () => {
+    const items = [
+      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 9m x 12mm (57x30x12) (50 Rollen)',
+                units: 20, dim: { w: 57, h: 9 }, rollen: 50, fnsku: 'X001CTH9YB' }),
+      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 14m x 12mm (57x35x12-14 Meter - 50 Rollen)',
+                units: 70, dim: { w: 57, h: 14 }, rollen: 50, fnsku: 'X001CX6BRN' }),
+      mkMixed({ title: 'Thermorolle 58/64/12 - 50 Meter Lauflänge, 50 Stück',
+                units: 2, dim: null, rollen: 50, fnsku: 'X00198BJKP' }),
+      mkMixed({ title: '50 EC-Cash Thermorollen im Karton 57mm x 18m x 12mm mit Lastschrifttext ELV',
+                units: 15, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'X00101830P' }),
+      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 18m x 12mm (57x40x12) (50 Rollen)',
+                units: 75, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'X001CTN52B' }),
+    ];
+    /* Inject distinct useItems so the OLD (dim+useItem) key would split them. */
+    items[0].useItem = '9120107187471';
+    items[1].useItem = '9120107187396';
+    items[2].useItem = '9120107187495';
+    items[3].useItem = '9120107187457';
+    items[4].useItem = '9120107187433';
+
+    const sorted = sortItemsForPallet(items);
+    const order = sorted.map((it) => it.fnsku);
+    expect(order).toEqual([
+      'X001CTN52B',  // 57x18m, 75 units — bucket anchor
+      'X00101830P',  // 57x18m, 15 units — same bucket (clusters across LST)
+      'X001CX6BRN',  // 57x14m, 70 units
+      'X001CTH9YB',  // 57x9m,  20 units
+      'X00198BJKP',  // 58/64/12, 2 units
+    ]);
   });
 });
 

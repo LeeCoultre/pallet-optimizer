@@ -8,34 +8,30 @@
    Reduce-motion: collapses to a quick opacity fade. */
 
 import { useEffect } from 'react';
-import { T } from './ui.jsx';
+import { Button, T } from './ui.jsx';
 
 export default function AuftragFinaleStage({
   totals,
-  duration = 2000,
   reducedMotion = false,
+  // eslint-disable-next-line no-unused-vars
   schnellmodus = false,
   onComplete,
 }) {
-  const effDuration = reducedMotion ? Math.min(800, duration)
-    : schnellmodus ? 800 : duration;
-
+  /* Hard gate: no auto-advance, no overlay-click dismiss. The worker
+     must explicitly press Space/Enter or click the action button so
+     they read the completion summary intentionally before the route
+     change to Abschluss. */
   useEffect(() => {
-    const t = setTimeout(() => onComplete?.(), effDuration);
     const onKey = (e) => {
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        clearTimeout(t);
         onComplete?.();
       }
     };
     document.addEventListener('keydown', onKey, true);
-    return () => {
-      clearTimeout(t);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [effDuration, onComplete]);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onComplete]);
 
   const m3   = ((totals?.volCm3 || 0) / 1e6).toFixed(2);
   const kg   = Math.round(totals?.weightKg || 0);
@@ -44,7 +40,6 @@ export default function AuftragFinaleStage({
 
   return (
     <div
-      onClick={onComplete}
       style={{
         position: 'fixed',
         inset: 0,
@@ -54,12 +49,10 @@ export default function AuftragFinaleStage({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 32,
-        cursor: 'pointer',
         animation: `finale-bg-in ${fadeMs}ms cubic-bezier(0.16, 1, 0.3, 1) both`,
       }}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
           maxWidth: 540,
@@ -137,24 +130,19 @@ export default function AuftragFinaleStage({
           <Stat label="Dauer" value={time} />
         </div>
 
-        {/* Hint */}
+        {/* Action — explicit dismiss only (Space/Enter or click). */}
         <div style={{
-          marginTop: 20,
-          fontSize: 11.5,
-          color: T.text.subtle,
-          fontFamily: T.font.mono,
-          letterSpacing: '0.04em',
+          marginTop: 24,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 8,
+          gap: 14,
         }}>
-          <span>Weiter zu Abschluss in</span>
-          <strong style={{ color: T.text.primary, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-            {Math.round(effDuration / 100) / 10}s
-          </strong>
-          <Kbd>Space</Kbd>
-          <span style={{ textTransform: 'none' }}>jetzt</span>
+          <Button variant="primary" onClick={onComplete}
+                  title="Zur Abschluss-Seite (Space)">
+            Zu Abschluss
+            <Kbd>Space</Kbd>
+          </Button>
         </div>
       </div>
 

@@ -273,7 +273,8 @@ export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }) {
           zIndex: 0,
         }}
       />
-      {/* Accent fill — animates to current position */}
+      {/* Done fill — green track between completed steps. Width is the
+          fraction of done segments (activeIdx / n). */}
       <span
         aria-hidden
         style={{
@@ -282,7 +283,7 @@ export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }) {
           width: `${fillWidthPct}%`,
           top: 16,
           height: 1,
-          background: T.accent.main,
+          background: T.status.success.main,
           zIndex: 1,
           transition: 'width 480ms cubic-bezier(0.16, 1, 0.3, 1)',
         }}
@@ -331,9 +332,20 @@ function StepCell({
   const isCurrent = state === 'current';
   const [hover, setHover] = useState(false);
 
-  const circleBg = isDone || isCurrent ? T.accent.main : T.bg.surface;
-  const circleColor = isDone || isCurrent ? '#fff' : T.text.faint;
-  const circleBorder = isDone || isCurrent ? T.accent.main : T.border.strong;
+  /* Color semantics:
+       done     → success green (completed stage)
+       current  → accent orange (active stage, eye-magnet)
+       todo     → surface + faint text (idle)
+     The fill line between circles uses the same green so the done
+     segment of the workflow reads as one unified completed track. */
+  const stateColor = isDone
+    ? T.status.success.main
+    : isCurrent
+    ? T.accent.main
+    : null;
+  const circleBg = stateColor || T.bg.surface;
+  const circleColor = stateColor ? '#fff' : T.text.faint;
+  const circleBorder = stateColor || T.border.strong;
 
   const labelColor = (isCurrent || isDone) ? T.text.primary : T.text.faint;
   const labelWeight = isCurrent ? 600 : 500;
@@ -456,6 +468,145 @@ function StepCell({
         </div>
       </div>
     </Wrapper>
+  );
+}
+
+/* ─── StudioFrame ────────────────────────────────────────────────────────
+   Premium «studio» wrapper для hero-блоков.
+
+   Combines three signals that say «this is the centerpiece of the
+   screen»:
+     • Mono-eyebrow row above (label + optional status, accent dot)
+     • Hairline L-marks at the four corners — Linear/Raycast vibe
+     • Long premium drop-shadow when idle (single-source-of-truth so
+       Upload + Pruefen HeroFBA + Focus ArticleHeroCard look identical)
+
+   Children render INSIDE the frame and SHOULD NOT carry their own
+   border / shadow / borderRadius — StudioFrame supplies them. Use
+   `padding` prop to control inner space. */
+export function StudioFrame({
+  children, label, status, accent = true,
+  padding = '32px 36px', bare = false, gap = 14,
+  zen = false,
+  style, contentStyle,
+}) {
+  const accentColor = accent ? T.accent.main : T.text.faint;
+  const eyebrow = (label || status) ? (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: bare ? gap : 14,
+      padding: '0 4px',
+      gap: 12,
+      opacity: zen ? 0 : 1,
+      transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+      pointerEvents: zen ? 'none' : 'auto',
+    }}>
+      {label && (
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 10.5,
+          fontFamily: T.font.mono,
+          fontWeight: 600,
+          color: T.text.subtle,
+          textTransform: 'uppercase',
+          letterSpacing: '0.14em',
+        }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: accentColor }} />
+          {label}
+        </span>
+      )}
+      {status && (
+        <span style={{
+          fontSize: 10.5,
+          fontFamily: T.font.mono,
+          fontWeight: 500,
+          color: T.text.faint,
+          letterSpacing: '0.10em',
+          textTransform: 'uppercase',
+        }}>
+          {status}
+        </span>
+      )}
+    </div>
+  ) : null;
+
+  return (
+    <div style={{
+      position: 'relative',
+      /* Outer breathing room — keeps siblings from crowding the studio. */
+      margin: '12px 0',
+      ...style,
+    }}>
+      {/* OUTER MAT — invisible 16px buffer, hosts the corner-marks so
+          they sit a clear margin away from the card edge. The result
+          is a self-contained «island» easily distinguished from any
+          neighbouring section. The eyebrow lives INSIDE the mat so
+          it's visually framed by the corner-marks. */}
+      <div style={{
+        position: 'relative',
+        padding: 16,
+      }}>
+        <span style={{
+          position: 'absolute',
+          inset: 0,
+          opacity: zen ? 0 : 1,
+          transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+          pointerEvents: 'none',
+        }}>
+          <CornerMarks long />
+        </span>
+        {eyebrow}
+        {bare ? (
+          /* Bare mode — render children directly. Used when wrapping
+             multiple already-styled cards (each child supplies its own
+             chrome, so an inner box would double up). */
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap,
+            ...contentStyle,
+          }}>
+            {children}
+          </div>
+        ) : (
+          <div style={{
+            position: 'relative',
+            padding,
+            background: T.bg.surface,
+            border: `1px solid ${T.border.primary}`,
+            borderRadius: 18,
+            /* Premium long shadow + faint accent ring on the underside. */
+            boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 22px 50px -24px rgba(17,24,39,0.20), 0 6px 14px -6px rgba(17,24,39,0.06)',
+            ...contentStyle,
+          }}>
+            {children}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Hairline L-marks at the four corners of a studio surface. Pure
+   decoration — gives the wrapped element a «framed» feel. Pointer
+   events off so clicks pass through. The `long` variant uses bigger
+   arms and is anchored at offset 0 (used by StudioFrame's outer mat). */
+export function CornerMarks({ stroke, long }) {
+  const arm = long ? 20 : 14;
+  const offset = long ? 0 : -10;
+  const color = stroke || T.border.strong;
+  const common = { position: 'absolute', width: arm, height: arm, pointerEvents: 'none' };
+  return (
+    <>
+      <span style={{ ...common, top: offset, left: offset, borderTop: `1px solid ${color}`, borderLeft: `1px solid ${color}`, borderTopLeftRadius: 4 }} />
+      <span style={{ ...common, top: offset, right: offset, borderTop: `1px solid ${color}`, borderRight: `1px solid ${color}`, borderTopRightRadius: 4 }} />
+      <span style={{ ...common, bottom: offset, left: offset, borderBottom: `1px solid ${color}`, borderLeft: `1px solid ${color}`, borderBottomLeftRadius: 4 }} />
+      <span style={{ ...common, bottom: offset, right: offset, borderBottom: `1px solid ${color}`, borderRight: `1px solid ${color}`, borderBottomRightRadius: 4 }} />
+    </>
   );
 }
 

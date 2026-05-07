@@ -31,7 +31,7 @@ import {
 } from '../utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '../marathonApi.js';
 import {
-  Page, Topbar, StepperBar, Button, T,
+  Page, Topbar, StepperBar, StudioFrame, Button, T,
 } from '../components/ui.jsx';
 import PreflightCard from '../components/PreflightCard.jsx';
 import PalletStoryCard from '../components/PalletStoryCard.jsx';
@@ -238,26 +238,37 @@ export default function PruefenScreen() {
           gap: 32,
         }}>
 
-          {/* PRIMARY 1: FBA Hero */}
-          <HeroFBA
-            view={view}
-            stats={view.stats}
-            validView={validView}
-            insights={insights}
-            ranking={ranking}
-            palletStates={palletStates}
-            onJumpToPallet={handleJumpToPallet}
-          />
-
-          {/* PRIMARY 2: Preflight — always rendered, collapsed by default.
-              Header tone + check-strip already convey status at a
-              glance; the operator clicks to drill into specific flags. */}
-          <div style={{ animation: 'mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) 100ms backwards' }}>
-            <PreflightCard
-              briefing={briefing}
+          {/* PRIMARY 1+2: FBA Hero + Preflight wrapped in one «studio»
+              frame — single set of corner-marks brackets both cards
+              with one mono eyebrow at the top, like Upload's drop
+              studio. */}
+          <StudioFrame
+            bare
+            gap={20}
+            label="Auftrags-Identität · Schritt 02"
+            status={
+              validView.ok && validView.warnings === 0 ? 'Validiert'
+              : validView.errors > 0 ? `${validView.errors} Fehler`
+              : `${validView.warnings} Warnungen`
+            }
+          >
+            <HeroFBA
+              view={view}
+              stats={view.stats}
+              validView={validView}
+              insights={insights}
+              ranking={ranking}
+              palletStates={palletStates}
               onJumpToPallet={handleJumpToPallet}
             />
-          </div>
+
+            <div style={{ animation: 'mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) 100ms backwards' }}>
+              <PreflightCard
+                briefing={briefing}
+                onJumpToPallet={handleJumpToPallet}
+              />
+            </div>
+          </StudioFrame>
 
           {/* SECONDARY: collapsible Levels disclosure */}
           <div style={{ animation: `mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) ${hasPreflightFlags ? 180 : 140}ms backwards` }}>
@@ -337,8 +348,8 @@ function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJu
       padding: '28px 32px',
       background: T.bg.surface,
       border: `1px solid ${T.border.primary}`,
-      borderRadius: 20,
-      boxShadow: '0 1px 3px rgba(17,24,39,0.03), 0 16px 40px -22px rgba(17,24,39,0.08)',
+      borderRadius: 18,
+      boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 22px 50px -24px rgba(17,24,39,0.20), 0 6px 14px -6px rgba(17,24,39,0.06)',
       overflow: 'hidden',
       animation: 'mp-prf-hero 540ms cubic-bezier(0.16, 1, 0.3, 1) backwards',
     }}>
