@@ -1329,7 +1329,7 @@ function IconBtn({ children, onClick, title, danger }: { children?: React.ReactN
 /* ════════════════════════════════════════════════════════════════════════
    Expanded detail — Gantt timing + lazy article fetch
    ════════════════════════════════════════════════════════════════════════ */
-function ExpandedDetail({ entry, onClose }: { entry: { id: string; fileName?: string | null; palletCount?: number; articleCount?: number; durationSec?: number | null; palletTimings?: Record<string, { startedAt?: number; finishedAt?: number }> }; onClose?: () => void }) {
+function ExpandedDetail({ entry }: { entry: { id: string; fileName?: string | null; palletCount?: number; articleCount?: number; durationSec?: number | null; palletTimings?: Record<string, { startedAt?: number; finishedAt?: number }> }; onClose?: () => void }) {
   const detailQ = useQuery({
     queryKey: ['auftrag', entry.id],
     queryFn: () => getAuftrag(entry.id),

@@ -257,7 +257,6 @@ export default function PruefenScreen() {
               stats={view.stats}
               validView={validView}
               insights={insights}
-              ranking={ranking}
               palletStates={palletStates}
               onJumpToPallet={handleJumpToPallet}
             />
@@ -341,7 +340,7 @@ function PruefenStyles() {
    HERO FBA — primary anchor. Mega FBA mono + meta line + auto-insights
    + fingerprint row. Single elevated card on the page.
    ════════════════════════════════════════════════════════════════════════ */
-function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJumpToPallet }) {
+function HeroFBA({ view, stats, validView, insights, palletStates, onJumpToPallet }) {
   return (
     <div style={{
       position: 'relative',
@@ -433,7 +432,6 @@ function HeroFBA({ view, stats, validView, insights, ranking, palletStates, onJu
       {/* Fingerprint row */}
       <FingerprintRow
         pallets={view.pallets}
-        ranking={ranking}
         palletStates={palletStates}
         onClick={onJumpToPallet}
       />
@@ -529,7 +527,7 @@ function ReadyPill({ validView, stats }) {
    FINGERPRINT — 12 mini-squares, color = dominant level, top-right
    flag-dot if pallet has issues. Click → jump to pallet.
    ════════════════════════════════════════════════════════════════════════ */
-function FingerprintRow({ pallets, ranking, palletStates, onClick }) {
+function FingerprintRow({ pallets, palletStates, onClick }) {
   if (!pallets || pallets.length === 0) return null;
   return (
     <div style={{

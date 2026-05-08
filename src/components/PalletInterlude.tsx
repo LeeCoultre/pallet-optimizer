@@ -331,5 +331,6 @@ function fmt(ms) {
 /* Legacy exports kept as no-ops — Focus.jsx imports `resetSkipCount`
    from this module. The auto-advance heuristic is gone, but the import
    stays for backwards compatibility. */
+/* eslint-disable react-refresh/only-export-components -- legacy no-op exports */
 export function bumpSkipCount() { /* deprecated */ }
 export function resetSkipCount() { /* deprecated */ }

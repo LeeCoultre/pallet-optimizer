@@ -13,8 +13,8 @@ import { Button, T } from './ui.jsx';
 export default function AuftragFinaleStage({
   totals,
   reducedMotion = false,
-  // eslint-disable-next-line no-unused-vars
-  schnellmodus = false,
+   
+  schnellmodus: _schnellmodus = false,
   onComplete,
 }) {
   /* Hard gate: no auto-advance, no overlay-click dismiss. The worker

@@ -82,6 +82,10 @@ export default function DynamicIsland() {
       setMode((m) => (m === 'compact' ? 'glance' : m));
     }, PREDICTIVE_EXPAND_MS);
     return () => clearTimeout(predictiveTimerRef.current);
+    // We *only* want to re-fire when the signature flips — depending on the
+    // full `briefing` object would re-trigger the predictive expand on
+    // every shallow change, defeating the purpose. eslint-disable is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [briefing?.signature]);
 
   /* ─── Connection-state escalation: trigger pulse + brief expand ─ */

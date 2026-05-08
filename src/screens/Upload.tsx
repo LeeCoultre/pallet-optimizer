@@ -29,6 +29,7 @@
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { LegacyAuftrag } from '@/types/state';
 import { useAppState } from '@/state.jsx';
 import { useApiHealth } from '@/hooks/useApiHealth.js';
 import { useRecentUploads } from '@/hooks/useRecentUploads.js';
@@ -57,7 +58,7 @@ export default function UploadScreen({ onRoute }) {
     articleCount?: number;
     units?: number;
     validation?: unknown;
-    entry?: import('@/types/state').LegacyAuftrag | null;
+    entry?: LegacyAuftrag | null;
     error?: string | null;
   };
   const [batch, setBatch]       = useState<BatchItem[]>([]);
@@ -106,15 +107,15 @@ export default function UploadScreen({ onRoute }) {
     /* Per-file serialised pipeline so the operator sees each row resolve
        in turn. addFiles parses + saves; we interpret the returned entry
        (or empty array on error). */
-    const built: import('@/types/state').LegacyAuftrag[] = [];
+    const built: LegacyAuftrag[] = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       setBatch((prev) => prev.map((b, idx) => idx === i ? { ...b, stage: 'parsing' } : b));
-      let result: import('@/types/state').LegacyAuftrag | null = null;
+      let result: LegacyAuftrag | null = null;
       try {
         const created = await addFiles([f]);
         result = created[0] || null;
-      } catch (e) {
+      } catch {
         result = null;
       }
       if (!result) {

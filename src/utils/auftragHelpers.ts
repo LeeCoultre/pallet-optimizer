@@ -383,14 +383,6 @@ function itemWorkUnits(it) {
    is best-effort for non-roll items.
    ───────────────────────────────────────────────────────────────────── */
 
-function sizeBucket(it) {
-  if (it.dimensions) {
-    const v = it.dimensions.lengthCm * it.dimensions.widthCm * it.dimensions.heightCm;
-    return `dim:${Math.max(1, Math.round(v / 1000))}`;     // ~1L buckets
-  }
-  return `fmt:${formatSig(it)}`;
-}
-
 /* SOP picking order — drives both Pruefen rendering and Focus workflow.
    The worker stacks the pallet bottom-up, so the order they tackle
    items determines what physically lands first on the base.

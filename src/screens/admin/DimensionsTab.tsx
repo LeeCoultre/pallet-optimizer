@@ -693,7 +693,7 @@ interface DimRowProps {
   onDelete: () => void;
 }
 
-function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, onToggleExpand, onEdit, onDelete }: DimRowProps) {
+function DimRow({ row, isLast, isExpanded, isSelected, onToggleSelect, onToggleExpand, onEdit, onDelete }: DimRowProps) {
   const totalKeys = row.fnskus.length + row.skus.length + row.eans.length;
   const updated = formatRelative(row.updatedAt);
   return (

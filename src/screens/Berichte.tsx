@@ -205,7 +205,7 @@ export default function BerichteScreen() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [onDownload, presets, status]);
 
   const onApplyRecent = (entry) => {

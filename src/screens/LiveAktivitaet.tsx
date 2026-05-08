@@ -379,6 +379,7 @@ function groupByHour(events) {
       map.set(key, { hourMs: key, label, events: [] });
       order.push(key);
     }
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- key was just set above
     map.get(key)!.events.push(e);
   }
   return order.map((k) => map.get(k));
@@ -688,7 +689,7 @@ function StundenpulsCard({ hourly }) {
   );
 }
 
-function HourBar({ bucket, barHeight, max }: { bucket: { counts: Record<string, number>; total: number; hour?: number; label?: string }; barHeight: number; max?: number }) {
+function HourBar({ bucket, barHeight }: { bucket: { counts: Record<string, number>; total: number; hour?: number; label?: string }; barHeight: number; max?: number }) {
   const [hover, setHover] = useState(false);
   /* Stack segments by action color, proportional to count */
   const stacked = STACK_ORDER

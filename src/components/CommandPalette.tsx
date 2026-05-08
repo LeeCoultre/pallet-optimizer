@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '@/state.jsx';
 import { useMe } from '@/hooks/useMe.js';
 import { searchAuftraege } from '@/marathonApi.js';
+import type { SearchHit } from '@/types/api';
 import { T } from './ui.jsx';
 
 const PALETTE_WIDTH = 640;
@@ -35,7 +36,7 @@ function PaletteImpl({ onClose, onRoute }) {
   const me = useMe().data;
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<import('@/types/api').SearchHit[]>([]);
+  const [results, setResults] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);

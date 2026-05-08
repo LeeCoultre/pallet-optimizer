@@ -8,6 +8,9 @@
      - current = backend row where status='in_progress' AND assigned_to == me
      - history = backend /api/history items
    ───────────────────────────────────────────────────────────────────────── */
+/* eslint-disable react-refresh/only-export-components -- module exports both
+   the AppStateProvider component and the useAppState hook + adapters by
+   design; splitting would hurt locality. */
 
 import { createContext, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@clerk/clerk-react';
@@ -177,7 +180,7 @@ export function useAppState(): UseAppStateApi {
   });
 
   const all: AuftragSummary[] = auftraegeQ.data ?? [];
-  const me  = meQ.data;
+  void meQ;  // me is currently unused — kept query active for future role-gated UI.
 
   const queue = useMemo(
     () => all

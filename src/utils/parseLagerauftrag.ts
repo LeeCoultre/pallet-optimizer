@@ -205,7 +205,7 @@ function makePalletItemRegex(palletId, opts: { anchorStart?: boolean; global?: b
   // Item-line format: "P1-B1 <arrow> <SKU>\t<title>\t..."
   const m = String(palletId).match(/^([A-Z]+)(\d+)-(B\d+)$/i);
   if (!m) return null;
-  const [, prefix, num, b] = m;
+  const [, , num, b] = m;
   // Tolerate typos like "B1-B5" instead of "P1-B5" — match any [A-Z]+ prefix
   const head = `[A-Z]+${num}\\s*${DASH_RE}\\s*${b}`;
   const pattern = `${anchorStart ? '^' : ''}${head}\\s*${ARROW_RE}\\s*`;

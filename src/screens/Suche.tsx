@@ -21,7 +21,7 @@
    Backend unchanged — uses /api/search and /api/auftraege/{id}.
 */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { searchAuftraege, getAuftrag } from '@/marathonApi.js';
 import { useDebounced } from '@/hooks/useDebounced.js';

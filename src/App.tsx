@@ -81,6 +81,9 @@ function Router() {
      sees Pruefen / Focus / Abschluss instead of staying on Historie. */
   useEffect(() => {
     if (current) setRoute('workspace');
+    // We only re-trigger when identity/step changes, not on every render of
+    // the (heavy) `current` object — eslint-disable is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id, current?.step]);
 
   /* Global Cmd/Ctrl+K → Command Palette. Keep the listener on document

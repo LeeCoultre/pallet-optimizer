@@ -187,7 +187,6 @@ function PalletFrame({
 
           {/* Filled layers */}
           {layers.map(({ lvl, y, h }) => {
-            const meta = LEVEL_META[lvl];
             const isHover = hover === lvl;
             const isPulse = pulseLevel === lvl;
             const items = palletState.byLevel?.[lvl] || [];

@@ -1,7 +1,7 @@
 /* Admin panel — gated by useMe().role === 'admin'.
    Four tabs: Aufträge | Benutzer | Audit-Log | KPIs. */
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer,

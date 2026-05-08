@@ -1,5 +1,7 @@
 /* Marathon · Design System v3 — переиспользуемые атомы.
    Spec: DESIGN.md. */
+/* eslint-disable react-refresh/only-export-components -- design tokens (T,
+   STEPS) and component atoms ship from one module on purpose. */
 
 import React, { useEffect, useState, type ReactNode, type CSSProperties, type ButtonHTMLAttributes } from 'react';
 import { Wordmark } from './Logo.jsx';

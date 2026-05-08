@@ -28,6 +28,7 @@ const queryClient = new QueryClient({
   },
 })
 
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- index.html guarantees #root
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {/* ErrorBoundary wraps everything — even ClerkProvider init can throw

@@ -25,6 +25,7 @@ import { T } from './ui.jsx';
 import { UserSwitcher } from './UserSwitcher.jsx';
 
 const SIZES = { expanded: 248, collapsed: 60 };
+// eslint-disable-next-line react-refresh/only-export-components -- shared layout constant
 export const SIDEBAR_WIDTH = SIZES.expanded;
 
 const COLLAPSED_KEY = 'marathon.sidebar.collapsed.v1';

@@ -337,7 +337,6 @@ export default function WarteschlangeScreen({ onRoute }) {
               <QueueRowCard
                 key={entry.id}
                 entry={entry}
-                displayIdx={displayIdx}
                 queueIdx={queue.findIndex((q) => q.id === entry.id)}
                 isFirst={displayIdx === 0 && !current && !searchQuery && filterMode === 'all'}
                 isSelected={displayIdx === selectedIdx}
@@ -1104,7 +1103,7 @@ function TipCard({ eyebrow, title, body }) {
 
 /* ════════ Queue row card ═══════════════════════════════════════════════ */
 function QueueRowCard({
-  entry, displayIdx, queueIdx, isFirst, isSelected, hasCurrent,
+  entry, queueIdx, isFirst, isSelected, hasCurrent,
   isDragging, isDropAbove, isDropBelow,
   onSelect, onStart, onRemove, onUp, onDown,
   onDragStart, onDragOver, onDrop, onDragEnd,
