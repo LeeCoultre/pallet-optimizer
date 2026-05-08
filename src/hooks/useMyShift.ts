@@ -9,13 +9,14 @@
    `enabled` requires a Clerk session because /api/activity/shift is
    auth-only; calling it pre-sign-in just 401s. */
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-react';
-import { getMyShift } from '../marathonApi.js';
+import { getMyShift } from '../marathonApi';
+import type { ShiftInfo } from '../types/api';
 
-export function useMyShift() {
+export function useMyShift(): UseQueryResult<ShiftInfo, Error> {
   const { isSignedIn } = useAuth();
-  return useQuery({
+  return useQuery<ShiftInfo, Error>({
     queryKey: ['my-shift'],
     queryFn: getMyShift,
     enabled: !!isSignedIn,

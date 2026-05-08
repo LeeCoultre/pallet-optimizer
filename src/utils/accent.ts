@@ -8,11 +8,22 @@
 const KEY = 'marathon.accent.color.v1';
 const DEFAULT = '#FF5B1F';
 
-function clamp(n) {
+export interface RGB { r: number; g: number; b: number }
+
+export interface AccentShades {
+  main: string;
+  hover: string;
+  text: string;
+  bg: string;
+  border: string;
+  soft: string;
+}
+
+function clamp(n: number): number {
   return Math.max(0, Math.min(255, n));
 }
 
-function hexToRgb(hex) {
+function hexToRgb(hex: string): RGB {
   const m = hex.replace('#', '');
   if (m.length !== 6) return { r: 0, g: 0, b: 0 };
   return {
@@ -22,19 +33,18 @@ function hexToRgb(hex) {
   };
 }
 
-function rgbToHex({ r, g, b }) {
+function rgbToHex({ r, g, b }: RGB): string {
   return '#' + [r, g, b]
     .map((n) => clamp(Math.round(n)).toString(16).padStart(2, '0'))
     .join('');
 }
 
-function darken(hex, amount) {
+function darken(hex: string, amount: number): string {
   const { r, g, b } = hexToRgb(hex);
   return rgbToHex({ r: r - amount, g: g - amount, b: b - amount });
 }
 
-function mixWithWhite(hex, weight) {
-  // weight = 0 → original, 1 → pure white
+function mixWithWhite(hex: string, weight: number): string {
   const { r, g, b } = hexToRgb(hex);
   return rgbToHex({
     r: r + (255 - r) * weight,
@@ -45,19 +55,19 @@ function mixWithWhite(hex, weight) {
 
 /** Derive the five UI shades from a single hex. Tuned to look right on
  *  the existing white surface without per-color manual review. */
-export function deriveAccent(hex) {
+export function deriveAccent(hex: string): AccentShades {
   return {
     main:   hex,
     hover:  darken(hex, 25),
-    text:   darken(hex, 70),     // dark text variant for badges, links
+    text:   darken(hex, 70),
     bg:     mixWithWhite(hex, 0.92),
     border: mixWithWhite(hex, 0.6),
-    soft:   `${hex}14`,           // ~8% alpha (modern hex-with-alpha)
+    soft:   `${hex}14`,
   };
 }
 
 /** Push the accent into CSS custom properties. */
-export function applyAccent(hex) {
+export function applyAccent(hex: string): void {
   const s = deriveAccent(hex);
   const root = document.documentElement.style;
   root.setProperty('--accent',        s.main);
@@ -65,24 +75,24 @@ export function applyAccent(hex) {
   root.setProperty('--accent-text',   s.text);
   root.setProperty('--accent-bg',     s.bg);
   root.setProperty('--accent-border', s.border);
-  root.setProperty('--accent-2',      s.hover);     // legacy alias
+  root.setProperty('--accent-2',      s.hover);
   root.setProperty('--accent-soft',   s.soft);
 }
 
-export function getStoredAccent() {
+export function getStoredAccent(): string {
   try {
     const v = localStorage.getItem(KEY);
-    return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toUpperCase() : DEFAULT;
+    return v && /^#[0-9a-fA-F]{6}$/.test(v) ? v.toUpperCase() : DEFAULT;
   } catch {
     return DEFAULT;
   }
 }
 
-export function setStoredAccent(hex) {
+export function setStoredAccent(hex: string): void {
   try { localStorage.setItem(KEY, hex.toUpperCase()); } catch { /* ignore */ }
 }
 
-export function resetAccent() {
+export function resetAccent(): string {
   try { localStorage.removeItem(KEY); } catch { /* ignore */ }
   applyAccent(DEFAULT);
   return DEFAULT;
