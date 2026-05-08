@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: heavy parser/distributor, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    auftragHelpers — pure helpers that map parsed-Lagerauftrag data into
    shapes the screens consume. Keeps screens dumb.
@@ -589,12 +588,12 @@ export function sortItemsForPallet(items) {
 export function primaryLevel(items) {
   // Pick the dominant level by total volume (heavier physical presence)
   if (!items?.length) return 1;
-  const vols = {};
+  const vols: Record<string, number> = {};
   for (const it of items) {
     const lvl = getDisplayLevel(it);
     vols[lvl] = (vols[lvl] || 0) + itemTotalVolumeCm3(it);
   }
-  const sorted = Object.entries(vols).sort((a, b) => b[1] - a[1]);
+  const sorted = (Object.entries(vols) as Array<[string, number]>).sort((a, b) => b[1] - a[1]);
   return parseInt(sorted[0][0], 10);
 }
 
@@ -676,7 +675,7 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
         // group across pallets if any one fills up. Aggregate the
         // resulting placements per pallet for the UI.
         const totalCartons = Math.max(1, e.cartons || 1);
-        const splits = {};   // { palletId: { count, lastResult } }
+        const splits: Record<string, { count: number; result: any }> = {};
         for (let i = 0; i < totalCartons; i++) {
           const result = pickPallet(e, states);
           const target = result.target;
@@ -896,7 +895,7 @@ function passesHardConstraints(carton, ps) {
 }
 
 function scorePallet(carton, ps) {
-  const breakdown = {
+  const breakdown: Record<string, any> = {
     useItemMatch: false, formatMatch: false, brandMatch: false,
     fnskuMatch: false, levelMatch: false,
     monoLevelConflict: false, multiLevelMismatch: false,
@@ -1365,7 +1364,7 @@ function shortArticleName(item) {
 
 /* ─── Level aggregation across pallets (for Abschluss) ────────────────── */
 export function levelDistribution(pallets) {
-  const totals = {};
+  const totals: Record<string, number> = {};
   let grand = 0;
   pallets.forEach((p) => {
     p.items.forEach((it) => {
@@ -1374,7 +1373,7 @@ export function levelDistribution(pallets) {
       grand += it.units || 0;
     });
   });
-  return Object.entries(totals)
+  return (Object.entries(totals) as Array<[string, number]>)
     .sort((a, b) => parseInt(a[0], 10) - parseInt(b[0], 10))
     .map(([level, units]) => ({
       level: parseInt(level, 10),

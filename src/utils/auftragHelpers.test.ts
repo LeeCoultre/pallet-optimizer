@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Vitest — auftragHelpers.js critical-path tests.
 
    Covers:
@@ -25,7 +24,7 @@ import {
 } from './auftragHelpers.js';
 
 /* ─── Helpers to build minimal items ───────────────────────────────── */
-function mkMixed({ title, units = 10, dim = null, rollen = null, fnsku = 'X-FAKE' }) {
+function mkMixed({ title, units = 10, dim = null, rollen = null, fnsku = 'X-FAKE' }: any): any {
   return {
     title,
     units,
@@ -36,7 +35,7 @@ function mkMixed({ title, units = 10, dim = null, rollen = null, fnsku = 'X-FAKE
     isEinzelneSku: false,
   };
 }
-function mkEsku({ title, cartons = 5, packsPerCarton = 10, fnsku = 'X-ESKU' }) {
+function mkEsku({ title, cartons = 5, packsPerCarton = 10, fnsku = 'X-ESKU' }: any): any {
   return {
     title,
     fnsku,

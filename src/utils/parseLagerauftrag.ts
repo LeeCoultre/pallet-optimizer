@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: heavy parser/distributor, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    Lagerauftrag parsing — pure functions, testable in Node.
 
@@ -149,7 +148,7 @@ function grabField(text, label, captureRe = '([^\\n\\t]+)') {
 }
 
 function parseMetaCommon(text) {
-  const meta = {};
+  const meta: any = {};
   const sn = grabField(text, 'Sendungsnummer');
   if (sn && sn !== 'KARTON NR.' && /[A-Z0-9]/i.test(sn)) meta.sendungsnummer = sn;
   const nn = grabField(text, 'Name');
@@ -193,7 +192,7 @@ function normalizePalletId(rawId) {
 }
 
 /* ── Item-line regex ───────────────────────────────────────────────────── */
-function makePalletItemRegex(palletId, opts = {}) {
+function makePalletItemRegex(palletId, opts: any = {}) {
   const { anchorStart = true, global = false } = opts;
   // palletId is normalized "P1-B1"; on item lines we accept the same with
   // any dash variant and any arrow / non-word separator before the SKU.
@@ -342,7 +341,7 @@ function parseEinzelneSkuSection(tail) {
 }
 
 function parseEinzelneSkuItemLine(line, allLines, lineIdx, achtung) {
-  const parsed = parseItemColumns(line);
+  const parsed: any = parseItemColumns(line);
   if (!parsed) return null;
 
   // Look forward for "Zu verwendender Artikel"
@@ -437,7 +436,7 @@ function classifySchilderField(value) {
 
 function parseSchilder(rawText) {
   const text = rawText.replace(/\r/g, '');
-  const meta = {};
+  const meta: any = {};
 
   // Karton spec
   const km = text.match(SCHILDER_KARTON_RE);
