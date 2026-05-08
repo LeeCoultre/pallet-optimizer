@@ -61,7 +61,7 @@ export interface ParsedMeta {
 }
 
 export interface Parsed {
-  format: ParsedFormat;
+  format: ParsedFormat | string;
   meta: ParsedMeta;
   pallets: ParsedPallet[];
   einzelneSkuItems?: ParsedItem[];
@@ -72,7 +72,13 @@ export type Validation = Record<string, unknown>;
 
 /* `${palletIdx}|${itemIdx}|${key}` → unix-ms timestamp | true */
 export type CompletedKeys = Record<string, number | true>;
-export type PalletTimings = Record<string, number>;
+
+/* Per-pallet timing window. Keyed by pallet.id. */
+export interface PalletTiming {
+  startedAt: number;
+  finishedAt?: number;
+}
+export type PalletTimings = Record<string, PalletTiming>;
 
 /* ─── Users ──────────────────────────────────────────── */
 
@@ -121,8 +127,11 @@ export interface AuftragDetail extends AuftragSummary {
 export interface AuftragCreatePayload {
   fileName: string;
   rawText?: string | null;
-  parsed?: Parsed | null;
-  validation?: Validation | null;
+  /* Parsed/Validation are loose at the API boundary because the
+     parseLagerauftrag.js producer is JS-typed (all-any). The receiving
+     end (Parsed in api.ts) has the structured shape consumers rely on. */
+  parsed?: unknown;
+  validation?: unknown;
   errorMessage?: string | null;
 }
 

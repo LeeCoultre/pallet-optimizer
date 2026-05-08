@@ -9,7 +9,7 @@
      - history = backend /api/history items
    ───────────────────────────────────────────────────────────────────────── */
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@clerk/clerk-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import mammoth from 'mammoth';
@@ -21,13 +21,28 @@ import {
   listAuftraege, createAuftrag, getAuftrag, deleteAuftrag, reorderQueue as apiReorder,
   startAuftrag, updateProgress, completeAuftrag, cancelAuftrag,
   getHistory, deleteHistoryEntry, getMe,
-} from './marathonApi.js';
+  ApiError,
+} from './marathonApi';
+import type {
+  AuftragDetail,
+  AuftragSummary,
+  AuftragReorderItem,
+  CompletedKeys,
+  PalletTimings,
+  UUID,
+  WorkflowProgressPatch,
+  WorkflowStep,
+} from './types/api';
+import type { LegacyAuftrag, LegacyHistoryItem, UseAppStateApi } from './types/state';
+
+// Avoid unused-import warnings for getAuftrag (kept for re-export parity).
+void getAuftrag;
 
 /* AppStateProvider remains a marker — TanStack Query is mounted in main.jsx.
    We keep the wrapper so existing imports don't break. */
 const Ctx = createContext(true);
 
-export function AppStateProvider({ children }) {
+export function AppStateProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={true}>{children}</Ctx.Provider>;
 }
 
@@ -38,9 +53,9 @@ export function AppStateProvider({ children }) {
    sync across devices. Survives reload but not browser-storage clears
    or device switches. Cleaned up when the Auftrag finishes/cancels. */
 const CK_PREFIX = 'marathon.copiedKeys.';
-const CK_KEY = (auftragId) => `${CK_PREFIX}${auftragId}`;
+const CK_KEY = (auftragId: UUID) => `${CK_PREFIX}${auftragId}`;
 
-function readCopiedKeys(auftragId) {
+function readCopiedKeys(auftragId: UUID | undefined | null): Record<string, number> {
   if (!auftragId || typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(CK_KEY(auftragId));
@@ -48,13 +63,13 @@ function readCopiedKeys(auftragId) {
   } catch { return {}; }
 }
 
-function writeCopiedKeys(auftragId, obj) {
+function writeCopiedKeys(auftragId: UUID, obj: Record<string, number>): void {
   if (!auftragId || typeof window === 'undefined') return;
   try { window.localStorage.setItem(CK_KEY(auftragId), JSON.stringify(obj)); }
   catch { /* quota / private mode — silent */ }
 }
 
-function clearCopiedKeys(auftragId) {
+function clearCopiedKeys(auftragId: UUID): void {
   if (!auftragId || typeof window === 'undefined') return;
   try { window.localStorage.removeItem(CK_KEY(auftragId)); }
   catch { /* ignore */ }
@@ -62,42 +77,38 @@ function clearCopiedKeys(auftragId) {
 
 /* ─── Adapters: backend (camelCase via marathonApi) → legacy localStorage shape ── */
 
-function toLegacy(a) {
+function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): LegacyAuftrag | null {
   if (!a) return null;
+  const detail = a as Partial<AuftragDetail>;
   return {
     id:        a.id,
     fileName:  a.fileName,
     fbaCode:   a.fbaCode,
     addedAt:   a.createdAt ? Date.parse(a.createdAt) : Date.now(),
-    rawText:   a.rawText,
-    parsed:    a.parsed,
-    validation: a.validation,
+    rawText:   detail.rawText,
+    parsed:    detail.parsed,
+    validation: detail.validation,
     status:    a.status === 'error' ? 'error' : 'ready',
     error:     a.errorMessage,
     palletCount:  a.palletCount,
     articleCount: a.articleCount,
 
-    /* Workflow state — populated when in_progress / completed */
     startedAt:        a.startedAt  ? Date.parse(a.startedAt)  : undefined,
     finishedAt:       a.finishedAt ? Date.parse(a.finishedAt) : undefined,
     durationSec:      a.durationSec,
-    step:             a.step,
-    currentPalletIdx: a.currentPalletIdx ?? 0,
-    currentItemIdx:   a.currentItemIdx ?? 0,
-    completedKeys:    a.completedKeys || {},
-    /* copiedKeys is purely a UX hint (green chips for code-cards the
-       worker already clicked). It's per-device — no audit value, no
-       cross-device need — so it lives in localStorage rather than the
-       DB. Hydrated below from CK_KEY(auftragId). */
+    step:             detail.step,
+    currentPalletIdx: detail.currentPalletIdx ?? 0,
+    currentItemIdx:   detail.currentItemIdx ?? 0,
+    completedKeys:    detail.completedKeys ?? {},
     copiedKeys:       readCopiedKeys(a.id),
-    palletTimings:    a.palletTimings || {},
+    palletTimings:    a.palletTimings ?? {},
 
     assignedToUserId:   a.assignedToUserId,
     assignedToUserName: a.assignedToUserName,
   };
 }
 
-function toLegacyHistory(h) {
+function toLegacyHistory(h: AuftragSummary): LegacyHistoryItem {
   return {
     id:           h.id,
     fileName:     h.fileName,
@@ -107,14 +118,14 @@ function toLegacyHistory(h) {
     durationSec:  h.durationSec,
     palletCount:  h.palletCount,
     articleCount: h.articleCount,
-    palletTimings: h.palletTimings || {},
+    palletTimings: h.palletTimings ?? {},
     assignedToUserName: h.assignedToUserName,
   };
 }
 
 /* Parse one .docx in-browser; sort pallets so the upload result matches
    the workflow ordering used by Focus mode. */
-async function parseDocxFile(file) {
+async function parseDocxFile(file: File) {
   const buf = await file.arrayBuffer();
   let rawText = '';
   try {
@@ -125,21 +136,20 @@ async function parseDocxFile(file) {
     const validation = validateParsing(rawText, parsed);
     return { fileName: file.name, rawText, parsed, validation, errorMessage: null };
   } catch (e) {
-    return { fileName: file.name, rawText, parsed: null, validation: null,
-             errorMessage: String(e?.message || e) };
+    return {
+      fileName: file.name, rawText, parsed: null, validation: null,
+      errorMessage: String((e as Error)?.message ?? e),
+    };
   }
 }
 
 /* ─────────────────────────────────────────────────────────────────────── */
 
-/* Local-dev anonymous mode mirrors the backend's ALLOW_ANONYMOUS flag.
-   When VITE_ALLOW_ANONYMOUS=true, the queries fire even without a Clerk
-   session — marathonApi.js sends the request with no Authorization header
-   and the backend (with ALLOW_ANONYMOUS=true) binds it to the shared
-   anonymous@local user. NEVER set this in a Railway env. */
 const ALLOW_ANONYMOUS = import.meta.env.VITE_ALLOW_ANONYMOUS === 'true';
 
-export function useAppState() {
+interface ProgressMutationArgs { id: UUID; payload: WorkflowProgressPatch }
+
+export function useAppState(): UseAppStateApi {
   const qc = useQueryClient();
   const { isSignedIn } = useAuth();
   const effectivelySignedIn = isSignedIn || ALLOW_ANONYMOUS;
@@ -166,12 +176,14 @@ export function useAppState() {
     enabled: !!effectivelySignedIn,
   });
 
-  const all = auftraegeQ.data ?? [];
+  const all: AuftragSummary[] = auftraegeQ.data ?? [];
   const me  = meQ.data;
 
-  /* Derived: queue (waiting/error rows) and current (my in_progress row) */
   const queue = useMemo(
-    () => all.filter((a) => a.status === 'queued' || a.status === 'error').map(toLegacy),
+    () => all
+      .filter((a) => a.status === 'queued' || a.status === 'error')
+      .map(toLegacy)
+      .filter((x): x is LegacyAuftrag => x != null),
     [all],
   );
 
@@ -179,10 +191,6 @@ export function useAppState() {
     () => all.find((a) => a.status === 'in_progress' && a.assignedToUserId === me?.id) ?? null,
     [all, me?.id],
   );
-  /* Bump on markCodeCopied so the `current` memo re-reads localStorage
-     (since toLegacy hydrates copiedKeys from there). Without this counter,
-     localStorage writes would not propagate into React state until the
-     next refetch happened to also touch currentSrc. */
   const [copiedKeysVersion, setCopiedKeysVersion] = useState(0);
   const current = useMemo(
     () => toLegacy(currentSrc),
@@ -190,7 +198,7 @@ export function useAppState() {
     [currentSrc, copiedKeysVersion],
   );
 
-  const history = useMemo(
+  const history: LegacyHistoryItem[] = useMemo(
     () => (historyQ.data?.items ?? []).map(toLegacyHistory),
     [historyQ.data],
   );
@@ -206,24 +214,21 @@ export function useAppState() {
   const reorderMut = useMutation({ mutationFn: apiReorder,    onSuccess: invalidateAll });
   const cancelMut  = useMutation({
     mutationFn: cancelAuftrag,
-    onSuccess: (_data, id) => { clearCopiedKeys(id); invalidateAll(); },
+    onSuccess: (_data, id: UUID) => { clearCopiedKeys(id); invalidateAll(); },
   });
   const startMut   = useMutation({
     mutationFn: startAuftrag,
     onSuccess:  invalidateAll,
-    onError:    (err) => {
-      /* Race: caller's UI thought current was empty but server says otherwise.
-         Surface the message; refetch will sync the real state in. */
-      if (err?.status === 409) alert(err.message);
+    onError: (err: unknown) => {
+      if (err instanceof ApiError && err.status === 409) alert(err.message);
       invalidateAll();
     },
   });
   const completeMut = useMutation({
     mutationFn: completeAuftrag,
-    onSuccess: async (_data, id) => {
+    onSuccess: async (_data, id: UUID) => {
       clearCopiedKeys(id);
       invalidateAll();
-      /* Auto-start the next queued Auftrag for me. */
       const fresh = await listAuftraege();
       const next = fresh.find((a) => a.status === 'queued');
       if (next) startMut.mutate(next.id);
@@ -234,15 +239,13 @@ export function useAppState() {
     onSuccess: invalidateAll,
   });
 
-  /* Progress writes are frequent (every "Fertig" click). Optimistic update
-     keeps the UI snappy; we re-fetch the list once the server confirms. */
-  const progressMut = useMutation({
+  const progressMut = useMutation<AuftragDetail, Error, ProgressMutationArgs, { prev?: AuftragSummary[] }>({
     mutationFn: ({ id, payload }) => updateProgress(id, payload),
     onMutate: async ({ id, payload }) => {
       await qc.cancelQueries({ queryKey: ['auftraege'] });
-      const prev = qc.getQueryData(['auftraege']);
-      qc.setQueryData(['auftraege'], (old) =>
-        (old || []).map((a) => (a.id === id ? { ...a, ...payload } : a)),
+      const prev = qc.getQueryData<AuftragSummary[]>(['auftraege']);
+      qc.setQueryData<AuftragSummary[]>(['auftraege'], (old) =>
+        (old || []).map((a) => (a.id === id ? { ...a, ...(payload as Partial<AuftragSummary>) } : a)),
       );
       return { prev };
     },
@@ -253,74 +256,71 @@ export function useAppState() {
   });
 
   /* ── Actions (legacy useAppState() shape) ──────────────────────────── */
-  const addFiles = useCallback(async (fileList) => {
+  const addFiles = useCallback(async (fileList: FileList | File[] | null): Promise<LegacyAuftrag[]> => {
     const files = Array.from(fileList || []).filter((f) => /\.docx$/i.test(f.name));
     if (!files.length) return [];
     const built = await Promise.all(files.map(parseDocxFile));
     const created = await Promise.all(
       built.map((p) => createMut.mutateAsync(p).catch(() => null)),
     );
-    return created.filter(Boolean).map(toLegacy);
+    return created
+      .map((c) => toLegacy(c))
+      .filter((x): x is LegacyAuftrag => x != null);
   }, [createMut]);
 
-  const removeFromQueue = useCallback((id) => removeMut.mutate(id), [removeMut]);
+  const removeFromQueue = useCallback((id: UUID) => removeMut.mutate(id), [removeMut]);
 
   const clearQueue = useCallback(() => {
     queue.forEach((q) => removeMut.mutate(q.id));
   }, [queue, removeMut]);
 
-  /* Old signature: (fromIdx, toIdx). We translate to a list of
-     {id, queuePosition} and call PATCH /reorder. */
-  const reorderQueueAction = useCallback((fromIdx, toIdx) => {
+  const reorderQueueAction = useCallback((fromIdx: number, toIdx: number) => {
     if (fromIdx === toIdx) return;
     const next = [...queue];
     const [moved] = next.splice(fromIdx, 1);
     next.splice(toIdx, 0, moved);
-    const items = next.map((q, i) => ({ id: q.id, queuePosition: i }));
-    /* Optimistic: update list order immediately. */
-    qc.setQueryData(['auftraege'], (old) => {
+    const items: AuftragReorderItem[] = next.map((q, i) => ({ id: q.id, queuePosition: i }));
+    qc.setQueryData<AuftragSummary[]>(['auftraege'], (old) => {
       if (!old) return old;
       const byId = new Map(old.map((a) => [a.id, a]));
-      const reordered = items.map((it, i) => ({
-        ...byId.get(it.id),
-        queuePosition: i,
-      }));
+      const reordered = items
+        .map((it, i) => {
+          const base = byId.get(it.id);
+          return base ? { ...base, queuePosition: i } : null;
+        })
+        .filter((x): x is AuftragSummary => x != null);
       const inProgress = old.filter((a) => a.status === 'in_progress');
       return [...reordered, ...inProgress];
     });
     reorderMut.mutate(items);
   }, [queue, qc, reorderMut]);
 
-  /* Bulk reorder — caller passes the ids in the desired order. Used by
-     Warteschlange's smart-sort buttons so a single round-trip applies the
-     full permutation instead of N adjacent swaps. */
-  const reorderQueueTo = useCallback((orderedIds) => {
+  const reorderQueueTo = useCallback((orderedIds: UUID[]) => {
     if (!Array.isArray(orderedIds) || orderedIds.length !== queue.length) return;
     const idSet = new Set(queue.map((q) => q.id));
     if (!orderedIds.every((id) => idSet.has(id))) return;
-    /* No-op if already in this order */
     let changed = false;
     for (let i = 0; i < orderedIds.length; i++) {
       if (queue[i]?.id !== orderedIds[i]) { changed = true; break; }
     }
     if (!changed) return;
-    const items = orderedIds.map((id, i) => ({ id, queuePosition: i }));
-    qc.setQueryData(['auftraege'], (old) => {
+    const items: AuftragReorderItem[] = orderedIds.map((id, i) => ({ id, queuePosition: i }));
+    qc.setQueryData<AuftragSummary[]>(['auftraege'], (old) => {
       if (!old) return old;
       const byId = new Map(old.map((a) => [a.id, a]));
-      const reordered = items.map((it, i) => ({
-        ...byId.get(it.id),
-        queuePosition: i,
-      }));
+      const reordered = items
+        .map((it, i) => {
+          const base = byId.get(it.id);
+          return base ? { ...base, queuePosition: i } : null;
+        })
+        .filter((x): x is AuftragSummary => x != null);
       const inProgress = old.filter((a) => a.status === 'in_progress');
       return [...reordered, ...inProgress];
     });
     reorderMut.mutate(items);
   }, [queue, qc, reorderMut]);
 
-  const startEntry = useCallback((entryId) => {
-    /* Local guard — backend has the same rule; this avoids a needless 409
-       round-trip when we already know we have an active Auftrag. */
+  const startEntry = useCallback((entryId?: UUID) => {
     if (current) {
       alert(
         'Du bearbeitest bereits einen Auftrag. ' +
@@ -332,14 +332,14 @@ export function useAppState() {
     if (target) startMut.mutate(target);
   }, [current, queue, startMut]);
 
-  const goToStep = useCallback((step) => {
+  const goToStep = useCallback((step: WorkflowStep) => {
     if (current?.id) progressMut.mutate({ id: current.id, payload: { step } });
   }, [current, progressMut]);
 
-  const setCurrentPalletIdx = useCallback((idx) => {
+  const setCurrentPalletIdx = useCallback((idx: number) => {
     if (!current?.id) return;
     const pId = current.parsed?.pallets?.[idx]?.id;
-    const palletTimings = { ...(current.palletTimings || {}) };
+    const palletTimings: PalletTimings = { ...(current.palletTimings ?? {}) };
     if (pId && !palletTimings[pId]) palletTimings[pId] = { startedAt: Date.now() };
     progressMut.mutate({
       id: current.id,
@@ -347,17 +347,13 @@ export function useAppState() {
     });
   }, [current, progressMut]);
 
-  const setCurrentItemIdx = useCallback((idx) => {
+  const setCurrentItemIdx = useCallback((idx: number) => {
     if (current?.id) {
       progressMut.mutate({ id: current.id, payload: { currentItemIdx: idx } });
     }
   }, [current, progressMut]);
 
-  /* "This position's Artikel-Code was copied" flag — persisted to
-     localStorage (per-device UX hint, no server roundtrip, no race
-     conditions with progressMut refetches). Key format mirrors the
-     local Set used by Focus: `${palletIdx}|${itemIdx}`. */
-  const markCodeCopied = useCallback((palletIdx, itemIdx) => {
+  const markCodeCopied = useCallback((palletIdx: number, itemIdx: number) => {
     if (!current?.id) return;
     const key = `${palletIdx}|${itemIdx}`;
     const prev = readCopiedKeys(current.id);
@@ -366,40 +362,28 @@ export function useAppState() {
     setCopiedKeysVersion((v) => v + 1);
   }, [current?.id]);
 
-  /* Mark current article fertig + advance. Returns true when last article
-     of the last pallet has been completed (UI uses this to auto-navigate).
-
-     Focus injects Phase-2 ESKU into pallet.items locally; state.jsx only
-     sees the parser's Mixed items. To keep advance/Fertig consistent, the
-     caller passes its EFFECTIVE items length and item — when present these
-     win over what state would derive from `current.parsed`. Without
-     overrides the function preserves the legacy single-call shape. */
-  const completeCurrentItem = useCallback((effectiveItemsCount, effectiveItem = null) => {
+  const completeCurrentItem = useCallback((effectiveItemsCount?: number, effectiveItem: unknown = null): boolean => {
     if (!current?.parsed) return false;
     const pallet = current.parsed.pallets[current.currentPalletIdx];
     if (!pallet) return false;
     const itemsLength = effectiveItemsCount ?? pallet.items.length;
-    const item = effectiveItem || pallet.items[current.currentItemIdx];
+    const item = (effectiveItem as { fnsku?: string; sku?: string } | null) || pallet.items[current.currentItemIdx];
     if (!item && effectiveItemsCount == null) return false;
-    // ESKU position falls outside parser's pallet.items. Use a synthetic
-    // code so the completedKeys row is unique and audit-traceable.
     const code = (item && (item.fnsku || item.sku))
       || `pos-${current.currentItemIdx}`;
     const key = `${pallet.id}|${current.currentItemIdx}|${code}`;
-    const completedKeys = { ...(current.completedKeys || {}), [key]: Date.now() };
+    const completedKeys: CompletedKeys = { ...(current.completedKeys ?? {}), [key]: Date.now() };
 
-    let palletTimings   = { ...(current.palletTimings || {}) };
-    let nextPalletIdx   = current.currentPalletIdx;
-    let nextItemIdx     = current.currentItemIdx + 1;
-    let didFinishAll    = false;
+    let palletTimings: PalletTimings = { ...(current.palletTimings ?? {}) };
+    let nextPalletIdx = current.currentPalletIdx;
+    let nextItemIdx   = current.currentItemIdx + 1;
+    let didFinishAll  = false;
 
     if (nextItemIdx >= itemsLength) {
+      const prevTiming = palletTimings[pallet.id] ?? { startedAt: Date.now() };
       palletTimings = {
         ...palletTimings,
-        [pallet.id]: {
-          ...(palletTimings[pallet.id] || { startedAt: Date.now() }),
-          finishedAt: Date.now(),
-        },
+        [pallet.id]: { ...prevTiming, finishedAt: Date.now() },
       };
       if (nextPalletIdx + 1 < current.parsed.pallets.length) {
         nextPalletIdx += 1;
@@ -433,7 +417,7 @@ export function useAppState() {
   }, [current, cancelMut]);
 
   const removeHistoryEntry = useCallback(
-    (id) => deleteHistMut.mutate(id),
+    (id: UUID) => deleteHistMut.mutate(id),
     [deleteHistMut],
   );
 
@@ -441,8 +425,7 @@ export function useAppState() {
     history.forEach((h) => deleteHistMut.mutate(h.id));
   }, [history, deleteHistMut]);
 
-  /* ── Public API — same shape as the old localStorage version ──────── */
-  return useMemo(() => ({
+  return useMemo<UseAppStateApi>(() => ({
     queue, current, history,
     addFiles, removeFromQueue, reorderQueue: reorderQueueAction, reorderQueueTo, clearQueue,
     startEntry, goToStep,
