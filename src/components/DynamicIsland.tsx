@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    DynamicIsland — fixed top-center morphing pill that always shows the
    single most-relevant fact for the current Marathon step. Inspired by
@@ -472,7 +471,7 @@ function ExpandedAbschluss({ data }) {
 }
 
 /* ─── Atoms (Marathon light theme) ──────────────────────────────────── */
-function Header({ title, sub, accentColor }) {
+function Header({ title, sub, accentColor }: { title?: any; sub?: any; accentColor?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <span style={{

@@ -1,4 +1,4 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
+// @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
 const fmt = (n) => {
   const r = Math.round(n * 10) / 10;
   return Number.isInteger(r) ? String(r) : r.toFixed(1);

@@ -1,4 +1,4 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
+// @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Edges } from '@react-three/drei';
 import { useMemo, useRef, useEffect } from 'react';

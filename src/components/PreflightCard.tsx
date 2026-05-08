@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    PreflightCard — surfaces a `PreflightBriefing` from preflightAnalyzer
    above the Pruefen pallet list. Replaces the previous two banners
@@ -184,7 +183,7 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
 }
 
 /* ─── Section / row ───────────────────────────────────────────────────── */
-function FlagSection({ title, flags, onJumpToPallet, onAction, mt, dim }) {
+function FlagSection({ title, flags, onJumpToPallet, onAction, mt, dim }: any) {
   return (
     <div style={{ marginTop: mt || 0 }}>
       <div style={{
@@ -278,7 +277,7 @@ function FlagRow({ flag, onJumpToPallet, onAction }) {
   );
 }
 
-function ActionChip({ label, onClick, href }) {
+function ActionChip({ label, onClick, href }: { label?: any; onClick?: any; href?: string }) {
   const handleClick = (e) => {
     if (href && !onClick) return; // let the anchor handle it
     e.preventDefault();

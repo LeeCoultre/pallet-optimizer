@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    ErrorBoundary — global last-line-of-defence wrapper that catches any
    uncaught render or lifecycle error in the React tree and renders a
@@ -29,21 +28,34 @@
    (e.g. so a Pruefen render crash doesn't blank the Sidebar+Topbar).
    ───────────────────────────────────────────────────────────────────────── */
 
-import { Component } from 'react';
+import React, { Component, type ErrorInfo, type ReactNode } from 'react';
+
+declare global {
+  interface Window {
+    Sentry?: { captureException?: (err: unknown, context?: unknown) => void };
+  }
+}
 
 const STORAGE_KEY = 'marathon.lastIncident';
 
-export default class ErrorBoundary extends Component {
-  constructor(props) {
+interface ErrorBoundaryProps { children?: ReactNode }
+interface ErrorBoundaryState {
+  error: Error | null;
+  errorInfo: ErrorInfo | null;
+  incidentId: string | null;
+}
+
+export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { error: null, errorInfo: null, incidentId: null };
   }
 
-  static getDerivedStateFromError(error) {
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { error };
   }
 
-  componentDidCatch(error, errorInfo) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     const incidentId = `INC-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
     this.setState({ errorInfo, incidentId });
 
@@ -147,7 +159,7 @@ export default class ErrorBoundary extends Component {
 /* Inline styles — Marathon's design tokens aren't available here
    (ErrorBoundary catches errors that may include T being undefined),
    so we use literal hex/rgb values matching the brand. */
-const fallbackStyles = {
+const fallbackStyles: Record<string, React.CSSProperties> = {
   root: {
     minHeight: '100vh',
     display: 'flex',

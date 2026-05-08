@@ -1,4 +1,4 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
+// @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
 /* PalletInterlude — proper pallet-completion checkpoint.
 
    This is NOT an auto-advance ceremony. It's a hard gate that forces

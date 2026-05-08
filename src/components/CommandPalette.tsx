@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Command Palette — Linear/Raycast-style ⌘K overlay.
 
    Two stacked sections:
@@ -233,7 +232,7 @@ function PaletteImpl({ onClose, onRoute }) {
         <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
           {actions.length > 0 && (
             <Section title="Aktionen">
-              {actions.map((a, i) => {
+              {actions.map((a: any, i) => {
                 const flatIdx = i;
                 return (
                   <Row
@@ -340,7 +339,7 @@ function Row({
   selected, disabled,
   onMouseEnter, onClick,
   icon, label, sub, rightHint, rightHintTone, mono,
-}) {
+}: any) {
   return (
     <button
       onMouseEnter={onMouseEnter}

@@ -1,4 +1,4 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
+// @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
 /* ─────────────────────────────────────────────────────────────────────────
    PalletMiniCard — compact summary tile for the "Übersicht" view-mode in
    Pruefen. 3 cards per row at 1180px content width, so 3-9 pallets fit

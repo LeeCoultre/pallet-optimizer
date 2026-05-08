@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { PALLET } from '../data/boxes';
 

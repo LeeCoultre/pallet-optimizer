@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Sidebar — Marathon navigation rail.
 
    Design ethos: subdued accent. The orange accent is reserved for
@@ -16,7 +15,7 @@
      • SidebarFooter    — UserSwitcher + Today pulse + sparkline + ⌘K iconlet
 */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useAppState } from '../state.jsx';
 import { useMe } from '../hooks/useMe.js';
 import { useApiHealth } from '../hooks/useApiHealth.js';
@@ -30,7 +29,7 @@ export const SIDEBAR_WIDTH = SIZES.expanded;
 
 const COLLAPSED_KEY = 'marathon.sidebar.collapsed.v1';
 
-function useCollapsedSidebar() {
+function useCollapsedSidebar(): [boolean, React.Dispatch<React.SetStateAction<boolean>>] {
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
   });

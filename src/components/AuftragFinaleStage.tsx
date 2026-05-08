@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* AuftragFinaleStage — final transition card when the last article of
    the last pallet has been completed.
 

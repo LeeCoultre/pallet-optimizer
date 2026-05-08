@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 import { useEffect, useRef } from 'react';
 import { BOX_BY_ID } from '../data/boxes';
 
