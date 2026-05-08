@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Abschluss — Schritt 04. Auftrag-Bilanz mit drei kopierbaren Schlüsselzahlen.
 
    Visual ethos shared with Upload + Pruefen + Focus:
@@ -21,7 +20,7 @@
      • All other levels                  →   500 EUR / Pal
 */
 
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAppState } from '../state.jsx';
 import {
   pruefenView, palletTimingRows, levelDistribution,
@@ -420,7 +419,7 @@ function Aufschluesselung({ bilanz }) {
   );
 }
 
-const numCell = {
+const numCell: React.CSSProperties = {
   textAlign: 'right',
   fontFamily: T.font.mono,
   fontSize: 13,
@@ -428,7 +427,7 @@ const numCell = {
   fontVariantNumeric: 'tabular-nums',
 };
 
-function BreakdownRow({ row }) {
+function BreakdownRow({ row }: { row: any }) {
   return (
     <div style={{
       display: 'grid',
@@ -493,7 +492,7 @@ function LevelLabel({ level, meta }) {
 /* ════════════════════════════════════════════════════════════════════════
    COPYABLE VALUE — big mono text, click to copy, brief flash on success.
    ════════════════════════════════════════════════════════════════════════ */
-function CopyableValue({ label, value, rawValue, sublabel, variant, mono }) {
+function CopyableValue({ label, value, rawValue, sublabel, variant, mono }: any) {
   const [copied, setCopied] = useState(false);
   const isPrimary = variant === 'primary';
   const handleCopy = (e) => {
@@ -867,7 +866,7 @@ function computeBilanz(pallets) {
     totalCount += 1;
   }
 
-  const breakdown = Object.values(buckets).sort((a, b) => a.level - b.level);
+  const breakdown = (Object.values(buckets) as any[]).sort((a: any, b: any) => a.level - b.level);
   return { totalSum, totalWeight, totalCount, breakdown };
 }
 

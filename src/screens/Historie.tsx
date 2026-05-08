@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Historie v2 — «Archiv & Performance».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live):
@@ -24,7 +23,7 @@
    lazy-fetched on row open via /api/auftraege/{id}.
 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '../state.jsx';
 import { getAuftrag, downloadAuftraegeXlsx } from '../marathonApi.js';
@@ -166,10 +165,10 @@ export default function HistorieScreen() {
   const onExport = useCallback(async () => {
     try {
       setExporting(true);
-      const params = {};
+      const params: { from?: string } = {};
       if (rangeStart) params.from = new Date(rangeStart).toISOString().slice(0, 10);
       await downloadAuftraegeXlsx(params);
-    } catch (err) {
+    } catch (err: any) {
       alert('Export fehlgeschlagen: ' + (err?.message || 'unbekannter Fehler'));
     } finally {
       setExporting(false);
@@ -361,12 +360,12 @@ function median(arr) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function sumUnitsFromTimings(/* h */) {
+function sumUnitsFromTimings(_h?: any): number | null {
   /* History Summary doesn't ship units; return null so the throughput
      falls back to articleCount-based estimate. */
   return null;
 }
-function estimateUnitsFromArticles(articleCount) {
+function estimateUnitsFromArticles(articleCount: number) {
   /* Conservative units-per-article default for archive throughput
      display only. The exact number is fine for the row badge — what
      matters is relative comparison, not absolute accuracy. */
@@ -491,7 +490,7 @@ function KpiStrip({ totals }) {
     </div>
   );
 }
-function Kpi({ label, value, accent }) {
+function Kpi({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
   return (
     <div>
       <div style={{
@@ -1048,7 +1047,7 @@ function RowCard({
 }) {
   const fba = entry.fbaCode || entry.fileName;
   const palTimings = useMemo(
-    () => Object.values(entry.palletTimings || {})
+    () => (Object.values(entry.palletTimings || {}) as Array<{ startedAt?: number; finishedAt?: number }>)
       .map((t) => (t.startedAt && t.finishedAt) ? Math.round((t.finishedAt - t.startedAt) / 1000) : null)
       .filter((v) => v != null),
     [entry.palletTimings],
@@ -1199,7 +1198,7 @@ function RowCard({
   );
 }
 
-function Stat({ label, value, accent }) {
+function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ color: T.text.faint }}>{label}</span>
@@ -1297,7 +1296,7 @@ function ChevronToggle({ open, onClick }) {
   );
 }
 
-function IconBtn({ children, onClick, title, danger }) {
+function IconBtn({ children, onClick, title, danger }: { children?: any; onClick?: any; title?: string; danger?: boolean }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -1326,7 +1325,7 @@ function IconBtn({ children, onClick, title, danger }) {
 /* ════════════════════════════════════════════════════════════════════════
    Expanded detail — Gantt timing + lazy article fetch
    ════════════════════════════════════════════════════════════════════════ */
-function ExpandedDetail({ entry }) {
+function ExpandedDetail({ entry, onClose }: { entry: any; onClose?: () => void }) {
   const detailQ = useQuery({
     queryKey: ['auftrag', entry.id],
     queryFn: () => getAuftrag(entry.id),
@@ -1355,7 +1354,7 @@ function ExpandedDetail({ entry }) {
     const pallets = detailQ.data?.parsed?.pallets || [];
     const lookup = new Map(pallets.map((p) => [p.id, p]));
     const rows = [];
-    for (const [id, t] of Object.entries(entry.palletTimings || {})) {
+    for (const [id, t] of Object.entries((entry.palletTimings || {}) as Record<string, { startedAt?: number; finishedAt?: number }>)) {
       if (!t.startedAt || !t.finishedAt) continue;
       const p = lookup.get(id);
       const items = p?.items || [];
@@ -1560,13 +1559,13 @@ function primaryLevelOf(items) {
     counts[lvl] = (counts[lvl] || 0) + (it.units || 0);
   }
   let best = 1, bestN = -1;
-  for (const [lvl, n] of Object.entries(counts)) {
+  for (const [lvl, n] of Object.entries(counts) as Array<[string, number]>) {
     if (n > bestN) { bestN = n; best = parseInt(lvl, 10); }
   }
   return best;
 }
 
-function SectionLabel({ title, sub }) {
+function SectionLabel({ title, sub }: { title?: any; sub?: any }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{
@@ -1593,7 +1592,7 @@ function SectionLabel({ title, sub }) {
   );
 }
 
-const articlesHeader = {
+const articlesHeader: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '90px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
   padding: '8px 14px',
@@ -1609,7 +1608,7 @@ const articlesHeader = {
   top: 0,
 };
 
-const articlesRow = {
+const articlesRow: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '90px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
   padding: '9px 14px',

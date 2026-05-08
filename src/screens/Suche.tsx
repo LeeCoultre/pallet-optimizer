@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Suche v2 — «Command Search».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live /
@@ -22,7 +21,7 @@
    Backend unchanged — uses /api/search and /api/auftraege/{id}.
 */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { searchAuftraege, getAuftrag } from '../marathonApi.js';
 import { useDebounced } from '../hooks/useDebounced.js';
@@ -1032,9 +1031,9 @@ function EmptyHero({
 /* ════════════════════════════════════════════════════════════════════════
    Insights strip
    ════════════════════════════════════════════════════════════════════════ */
-function InsightsStrip({ insights, total, totalUnfiltered }) {
-  const matchTotal = Object.values(insights.matchField).reduce((s, n) => s + n, 0) || 1;
-  const matchEntries = Object.entries(insights.matchField)
+function InsightsStrip({ insights, total, totalUnfiltered }: { insights: any; total: number; totalUnfiltered: number }) {
+  const matchTotal = (Object.values(insights.matchField) as number[]).reduce((s, n) => s + n, 0) || 1;
+  const matchEntries = (Object.entries(insights.matchField) as Array<[string, number]>)
     .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1]);
 
@@ -1142,7 +1141,7 @@ const MATCH_COLORS = {
   file_name: T.text.faint,
 };
 
-function KpiBox({ label, value, tone, accent }) {
+function KpiBox({ label, value, tone, accent }: { label?: any; value?: any; tone?: string | null; accent?: any }) {
   return (
     <div>
       <div style={{
@@ -1298,7 +1297,7 @@ function ResultCard({ hit, query, isSelected, onSelect, onOpen }) {
   );
 }
 
-function Stat({ label, value, accent }) {
+function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ color: T.text.faint }}>{label}</span>
@@ -1672,7 +1671,7 @@ function DetailModal({ id, onClose }) {
   );
 }
 
-function MetaCell({ label, value, mono, accent }) {
+function MetaCell({ label, value, mono, accent }: { label?: any; value?: any; mono?: boolean; accent?: boolean }) {
   return (
     <div>
       <div style={{
@@ -1767,7 +1766,7 @@ function primaryLevelOf(items) {
     counts[lvl] = (counts[lvl] || 0) + (it.units || 0);
   }
   let best = 1, bestN = -1;
-  for (const [lvl, n] of Object.entries(counts)) {
+  for (const [lvl, n] of Object.entries(counts) as Array<[string, number]>) {
     if (n > bestN) { bestN = n; best = parseInt(lvl, 10); }
   }
   return best;
@@ -1799,7 +1798,7 @@ function SectionLabel({ title, sub }) {
   );
 }
 
-const articlesHeader = {
+const articlesHeader: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: '90px minmax(0, 2.4fr) 1.2fr 1.2fr 70px',
   padding: '8px 14px',
