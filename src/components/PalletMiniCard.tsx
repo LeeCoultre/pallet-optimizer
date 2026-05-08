@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    PalletMiniCard — compact summary tile for the "Übersicht" view-mode in
    Pruefen. 3 cards per row at 1180px content width, so 3-9 pallets fit

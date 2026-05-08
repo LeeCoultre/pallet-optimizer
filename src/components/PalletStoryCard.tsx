@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    PalletStoryCard — Cinematic Hero + Data Cockpit redesign.
 

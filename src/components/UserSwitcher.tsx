@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Sidebar footer — Clerk-backed identity + sign-in.
 
    Signed out → "Anmelden" button opens Clerk's modal sign-in (email

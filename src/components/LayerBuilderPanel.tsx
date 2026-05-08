@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 import { useState, useEffect, useMemo } from 'react';
 import { singleLayerAPI } from '../api';
 

@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    PreflightCard — surfaces a `PreflightBriefing` from preflightAnalyzer
    above the Pruefen pallet list. Replaces the previous two banners

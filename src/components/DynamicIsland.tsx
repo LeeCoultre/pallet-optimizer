@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    DynamicIsland — fixed top-center morphing pill that always shows the
    single most-relevant fact for the current Marathon step. Inspired by

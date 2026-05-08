@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    ErrorBoundary — global last-line-of-defence wrapper that catches any
    uncaught render or lifecycle error in the React tree and renders a

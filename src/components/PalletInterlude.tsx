@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* PalletInterlude — proper pallet-completion checkpoint.
 
    This is NOT an auto-advance ceremony. It's a hard gate that forces

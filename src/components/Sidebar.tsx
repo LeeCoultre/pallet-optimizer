@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Sidebar — Marathon navigation rail.
 
    Design ethos: subdued accent. The orange accent is reserved for

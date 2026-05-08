@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Command Palette — Linear/Raycast-style ⌘K overlay.
 
    Two stacked sections:

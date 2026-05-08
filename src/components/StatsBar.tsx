@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 import { PALLET } from '../data/boxes';
 
 export default function StatsBar({ stats, quantities, mode }) {
