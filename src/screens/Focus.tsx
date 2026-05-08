@@ -109,9 +109,9 @@ export default function FocusScreen() {
   const item = rawItem ? focusItemView(rawItem) : null;
 
   /* ── view-only state ── */
-  const [wiederholt, setWiederholt] = useState(null);
-  const [flashUse,   setFlashUse]   = useState(null);
-  const [interlude,  setInterlude]  = useState(null);
+  const [wiederholt, setWiederholt] = useState<{ code?: string; units?: number; palletId?: string; name?: string } | null>(null);
+  const [flashUse,   setFlashUse]   = useState<unknown | null>(null);
+  const [interlude,  setInterlude]  = useState<{ id: string; itemCount: number; weightKg: unknown; volCm3: unknown; durationMs: number; nextPallet: unknown } | null>(null);
   const [finale,     setFinale]     = useState(false);
   /* «Zen»-Modus — Klick auf den freien Bereich (oder Z-Taste) blendet
      alles bis auf das Wesentliche aus: Artikelname, Menge, Codes. */
@@ -147,7 +147,7 @@ export default function FocusScreen() {
   /* Gating */
   const missingCopies = useMemo(() => {
     if (!rawPallet) return [];
-    const out = [];
+    const out: number[] = [];
     for (let i = 0; i < rawPallet.items.length; i++) {
       if (!copiedKeys.has(`${palletIdx}|${i}`)) out.push(i);
     }

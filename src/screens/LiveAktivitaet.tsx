@@ -121,8 +121,8 @@ export default function LiveAktivitaetScreen({ onRoute }: { onRoute?: (route: st
 
   /* Step distribution across active workers */
   const stepLane = useMemo(() => {
-    const c = { pruefen: 0, focus: 0, abschluss: 0 };
-    for (const w of workers) if (c[w.step] !== undefined) c[w.step] += 1;
+    const c: Record<string, number> = { pruefen: 0, focus: 0, abschluss: 0 };
+    for (const w of workers) if (w.step != null && c[w.step] !== undefined) c[w.step] += 1;
     return c;
   }, [workers]);
 
@@ -327,8 +327,10 @@ function computeKpis({ workers, events, liveNow }) {
   };
 }
 
+interface HourlyBucket { startMs: number; endMs: number; label: string; counts: { upload: number; start: number; complete: number; cancel: number; other: number }; total: number }
+
 function buildHourly(events, liveNow, hours) {
-  const buckets = [];
+  const buckets: HourlyBucket[] = [];
   const now = new Date(liveNow);
   /* Round DOWN to current hour, then walk back. */
   const cur = new Date(now);
@@ -364,8 +366,8 @@ function buildHourly(events, liveNow, hours) {
 
 function groupByHour(events) {
   /* Returns [{hourMs, label, events: [...]}] in incoming (newest-first) order. */
-  const map = new Map();
-  const order = [];
+  const map = new Map<number, { hourMs: number; label: string; events: unknown[] }>();
+  const order: number[] = [];
   for (const e of events) {
     const t = new Date(e.createdAt).getTime();
     if (Number.isNaN(t)) continue;
@@ -377,7 +379,7 @@ function groupByHour(events) {
       map.set(key, { hourMs: key, label, events: [] });
       order.push(key);
     }
-    map.get(key).events.push(e);
+    map.get(key)!.events.push(e);
   }
   return order.map((k) => map.get(k));
 }

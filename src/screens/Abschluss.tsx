@@ -50,6 +50,7 @@ export default function AbschlussScreen() {
   const data = useMemo(() => {
     if (!current?.parsed) return null;
     const view = pruefenView(current.parsed);
+    if (!view) return null;
     const pallets = current.parsed.pallets || [];
     const durationSec = current.startedAt
       ? Math.round((Date.now() - current.startedAt) / 1000)

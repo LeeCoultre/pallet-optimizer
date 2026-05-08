@@ -82,16 +82,18 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
 
   if (!briefing) return null;
 
-  const errors = briefing.flags.filter((f) => f.severity === 'error');
-  const warns  = briefing.flags.filter((f) => f.severity === 'warn');
-  const infos  = briefing.flags.filter((f) => f.severity === 'info');
+  const flags = briefing.flags ?? [];
+  const errors = flags.filter((f) => f.severity === 'error');
+  const warns  = flags.filter((f) => f.severity === 'warn');
+  const infos  = flags.filter((f) => f.severity === 'info');
+
+  const titleParts: string[] = [];
 
   const tone = briefing.worst === 'error' ? 'danger'
              : briefing.worst === 'warn'  ? 'warn'
              : 'success';
   const palette = T.status[tone] || T.status.success;
 
-  const titleParts = [];
   if (errors.length) titleParts.push(`${errors.length} Fehler`);
   if (warns.length)  titleParts.push(`${warns.length} Warnung${warns.length === 1 ? '' : 'en'}`);
   if (infos.length)  titleParts.push(`${infos.length} Hinweis${infos.length === 1 ? '' : 'e'}`);
@@ -151,7 +153,7 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
             {formatTotals(briefing.totals)}
           </div>
         </div>
-        {briefing.flags.length > 0 && (
+        {flags.length > 0 && (
           <span style={{
             color: palette.text,
             opacity: 0.7,
@@ -181,7 +183,7 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
       </div>
 
       {/* Body — flag details, only when expanded AND there are flags */}
-      {open && briefing.flags.length > 0 && (
+      {open && flags.length > 0 && (
         <div style={{
           background: T.bg.surface,
           borderTop: `1px solid ${T.border.primary}`,
