@@ -219,8 +219,11 @@ export function useAppState(): UseAppStateApi {
   const startMut   = useMutation({
     mutationFn: startAuftrag,
     onSuccess:  invalidateAll,
-    onError: (err: unknown) => {
-      if (err instanceof ApiError && err.status === 409) alert(err.message);
+    onError: (err: any) => {
+      /* Show ALL start errors, not just 409 — the previous instanceof-gated
+         alert was silently dropped when TanStack rewraps the error. */
+      const msg = err?.message || 'Auftrag konnte nicht gestartet werden.';
+      alert(msg);
       invalidateAll();
     },
   });
