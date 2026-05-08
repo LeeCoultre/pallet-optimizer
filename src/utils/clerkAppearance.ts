@@ -101,13 +101,20 @@ export const clerkAppearance = {
       '&:hover': { backgroundColor: 'var(--bg-surface-3)' },
     },
     userButtonPopoverActionButtonText: { color: 'inherit' },
-    userButtonPopoverFooter: {
-      borderTop: '1px solid var(--border-primary)',
-    },
+    /* userButtonPopoverFooter is hidden below — see footer chrome block. */
     /* Modal backdrop — slightly opaque so dark theme reads as a real dim. */
     modalBackdrop: {
       backgroundColor: 'rgba(0, 0, 0, 0.55)',
       backdropFilter: 'blur(4px)',
     },
+    /* Hide Clerk's footer chrome:
+       - The 'Secured by Clerk' badge (free-tier branding).
+       - The 'Development mode' ribbon (only renders with pk_test_*; goes
+         away automatically when the prod pk_live_* key is in use, but
+         workers see test mode in shared-prod testing).
+       Marathon is invite-only with no public sign-up, so the SignIn
+       modal's footer carries no functional links — safe to hide whole. */
+    footer: { display: 'none' },
+    userButtonPopoverFooter: { display: 'none' },
   },
 };

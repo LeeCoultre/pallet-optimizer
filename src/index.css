@@ -241,3 +241,20 @@ a { color: inherit; text-decoration: none; }
     to   { opacity: 1; }
   }
 }
+
+/* Clerk: hide free-tier branding + Development-mode ribbon globally.
+   The appearance.elements API in clerkAppearance.ts handles the named
+   slots; these selectors are a belt-and-suspenders fallback for the
+   handful of internal elements Clerk renders outside the named slot
+   tree (the floating dev-mode badge in particular). Selectors target
+   stable Clerk class prefixes that have survived multiple SDK majors.
+   Marathon is invite-only with no public sign-up, so removing the
+   secured-by surface costs us no functional UI. */
+.cl-internal-1dauvpw,
+.cl-internal-b3fm6y,
+[data-clerk-element="footer"],
+.cl-userButtonPopoverFooter,
+.cl-badge[data-localization-key*="developmentMode"],
+.cl-developmentModeBadge {
+  display: none !important;
+}
