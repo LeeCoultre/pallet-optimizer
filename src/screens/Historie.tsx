@@ -61,17 +61,18 @@ export default function HistorieScreen() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [exporting, setExporting] = useState(false);
 
-  const searchRef = useRef(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   /* Enrich each entry with throughput + comparison values. */
   const enriched = useMemo(
     () => history.map((h) => {
-      const minPerPallet  = h.palletCount  > 0 ? h.durationSec / h.palletCount  / 60 : null;
-      const minPerArticle = h.articleCount > 0 ? h.durationSec / h.articleCount / 60 : null;
-      const ehPerMin      = h.durationSec > 0
+      const dur = h.durationSec ?? 0;
+      const minPerPallet  = h.palletCount  > 0 && dur > 0 ? dur / h.palletCount  / 60 : null;
+      const minPerArticle = h.articleCount > 0 && dur > 0 ? dur / h.articleCount / 60 : null;
+      const ehPerMin      = dur > 0
         ? (sumUnitsFromTimings(h)
            ?? estimateUnitsFromArticles(h.articleCount))
-          / (h.durationSec / 60)
+          / (dur / 60)
         : null;
       return {
         ...h,
@@ -186,7 +187,7 @@ export default function HistorieScreen() {
         return;
       }
       if (e.key === 'Escape' && document.activeElement === searchRef.current) {
-        searchRef.current.blur();
+        searchRef.current?.blur();
         if (search) setSearch('');
         return;
       }
@@ -386,9 +387,11 @@ function computeRecords(enriched) {
   return { fastest, bestPerPallet, bestPerArticle };
 }
 
+interface TrendBucket { ms: number; label: string; shortDay: string; count: number; totalSec: number }
+
 function buildTrend(enriched, days) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
-  const buckets = [];
+  const buckets: TrendBucket[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(now.getDate() - i);
@@ -1354,7 +1357,7 @@ function ExpandedDetail({ entry, onClose }: { entry: { id: string; fileName?: st
     /* Build [{id, level, durSec, startMs, endMs}] in pallet order. */
     const pallets = detailQ.data?.parsed?.pallets || [];
     const lookup = new Map(pallets.map((p) => [p.id, p]));
-    const rows = [];
+    const rows: { id: string; level: number; durSec: number; startMs: number; endMs: number }[] = [];
     for (const [id, t] of Object.entries((entry.palletTimings || {}) as Record<string, { startedAt?: number; finishedAt?: number }>)) {
       if (!t.startedAt || !t.finishedAt) continue;
       const p = lookup.get(id);

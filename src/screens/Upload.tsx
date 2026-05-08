@@ -49,13 +49,24 @@ export default function UploadScreen({ onRoute }) {
 
   const [busy, setBusy]         = useState(false);
   const [over, setOver]         = useState(false);
-  const [batch, setBatch]       = useState([]); /* [{name, stage, fba, palletCount, articleCount, units, validation, entry, error}] */
-  const [batchDone, setBatchDone] = useState([]); /* persisted snapshot after busy=false */
-  const [parseError, setParseError] = useState(null);
-  const [countdown, setCountdown]   = useState(null);
-  const [duplicateConfirm, setDuplicateConfirm] = useState(null); /* {filesToConfirm: File[], dupes: [...]} */
+  type BatchItem = {
+    name: string;
+    stage: 'queued' | 'parsing' | 'ready' | 'done' | 'error';
+    fba?: string | null;
+    palletCount?: number;
+    articleCount?: number;
+    units?: number;
+    validation?: unknown;
+    entry?: import('@/types/state').LegacyAuftrag | null;
+    error?: string | null;
+  };
+  const [batch, setBatch]       = useState<BatchItem[]>([]);
+  const [batchDone, setBatchDone] = useState<BatchItem[]>([]);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [countdown, setCountdown]   = useState<{ auftragId: string; remaining: number } | null>(null);
+  const [duplicateConfirm, setDuplicateConfirm] = useState<{ files: File[]; dupes: unknown[] } | null>(null);
 
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const globalOver = useGlobalDragOverlay();
   const goSeqRef = useRef({ ts: 0 }); /* `g w` / `g h` sequence buffer */
 
@@ -95,11 +106,11 @@ export default function UploadScreen({ onRoute }) {
     /* Per-file serialised pipeline so the operator sees each row resolve
        in turn. addFiles parses + saves; we interpret the returned entry
        (or empty array on error). */
-    const built = [];
+    const built: import('@/types/state').LegacyAuftrag[] = [];
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       setBatch((prev) => prev.map((b, idx) => idx === i ? { ...b, stage: 'parsing' } : b));
-      let result = null;
+      let result: import('@/types/state').LegacyAuftrag | null = null;
       try {
         const created = await addFiles([f]);
         result = created[0] || null;
@@ -112,11 +123,11 @@ export default function UploadScreen({ onRoute }) {
           : b));
         continue;
       }
-      const meta = result.parsed?.meta || {};
+      const meta: Record<string, unknown> = result.parsed?.meta || {};
       const palletCount  = result.parsed?.pallets?.length || 0;
       const articleCount = (result.parsed?.pallets || []).reduce((s, p) => s + (p.items?.length || 0), 0);
-      const units        = meta.totalUnits || 0;
-      const fba          = meta.sendungsnummer || meta.fbaCode || null;
+      const units        = Number(meta.totalUnits) || 0;
+      const fba          = (meta.sendungsnummer as string | undefined) || (meta.fbaCode as string | undefined) || null;
       const isReady      = result.status === 'ready';
       setBatch((prev) => prev.map((b, idx) => idx === i ? {
         ...b,
@@ -127,7 +138,7 @@ export default function UploadScreen({ onRoute }) {
         units,
         validation: result.validation || null,
         entry: result,
-        error: isReady ? null : (result.errorMessage || 'Datei konnte nicht geparst werden.'),
+        error: isReady ? null : (result.error || 'Datei konnte nicht geparst werden.'),
       } : b));
 
       if (isReady) {
@@ -158,7 +169,7 @@ export default function UploadScreen({ onRoute }) {
     }
 
     if (files.length > 0 && successes.length === 0) {
-      setParseError(built[0]?.errorMessage || 'Keine Datei konnte verarbeitet werden.');
+      setParseError(built[0]?.error || 'Keine Datei konnte verarbeitet werden.');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addFiles, addRecent, current, queue.length, isOffline]);
@@ -182,7 +193,7 @@ export default function UploadScreen({ onRoute }) {
   const cancelDuplicates = () => setDuplicateConfirm(null);
 
   /* ── countdown logic ──────────────────────────────────────────── */
-  const countdownTimer = useRef(null);
+  const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const cancelCountdown = useCallback(() => {
     if (countdownTimer.current) {
       clearInterval(countdownTimer.current);
@@ -196,7 +207,7 @@ export default function UploadScreen({ onRoute }) {
     countdownTimer.current = setInterval(() => {
       remaining -= 1;
       if (remaining <= 0) {
-        clearInterval(countdownTimer.current);
+        if (countdownTimer.current != null) clearInterval(countdownTimer.current);
         countdownTimer.current = null;
         setCountdown(null);
         startEntry(auftragId);

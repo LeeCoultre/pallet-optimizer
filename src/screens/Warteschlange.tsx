@@ -62,8 +62,8 @@ export default function WarteschlangeScreen({ onRoute }) {
   const [dragFromIdx, setDragFromIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
 
-  const inputRef  = useRef(null);
-  const searchRef = useRef(null);
+  const inputRef  = useRef<HTMLInputElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   /* ── enrichment per entry ────────────────────────────────────── */
   const entries = useMemo(
@@ -178,7 +178,7 @@ export default function WarteschlangeScreen({ onRoute }) {
       }
       if (e.key === 'Escape') {
         if (document.activeElement === searchRef.current) {
-          searchRef.current.blur();
+          searchRef.current?.blur();
           if (searchQuery) setSearchQuery('');
           return;
         }
@@ -1327,7 +1327,7 @@ function QueueRowCard({
           variant={isFirst && !hasCurrent ? 'primary' : 'ghost'}
           onClick={onStart}
           disabled={isError || hasCurrent}
-          title={hasCurrent ? 'Aktiver Auftrag noch nicht abgeschlossen' : null}
+          title={hasCurrent ? 'Aktiver Auftrag noch nicht abgeschlossen' : undefined}
         >
           {isFirst && !hasCurrent ? 'Starten' : 'Wählen'}
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -1379,7 +1379,8 @@ function LevelBars({ lvlCounts }: { lvlCounts?: Record<string, number> }) {
 
 /* ──────────────────────────────────────────────────────────────────────── */
 function FingerprintFlags({ fp }) {
-  const flags = [];
+  type Flag = { key: string; label: string; tone: 'neutral' | 'accent' | 'warn' | 'success' };
+  const flags: Flag[] = [];
   if (fp.mixed > 0)
     flags.push({ key: 'mixed',  label: `${fp.mixed} Mixed`,           tone: 'neutral' });
   if (fp.singleSku > 0)

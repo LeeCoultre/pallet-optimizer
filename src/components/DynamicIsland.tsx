@@ -64,8 +64,8 @@ export default function DynamicIsland() {
   const [isHovering, setIsHovering] = useState(false);    // pin-open while cursor is inside
   const lastSignatureRef = useRef(briefing?.signature);
   const lastConnRef = useRef(conn.state);
-  const collapseTimerRef = useRef(null);
-  const predictiveTimerRef = useRef(null);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const predictiveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const reducedMotion = useReducedMotion();
 
   /* ─── Predictive expand: signature changes → pulse + brief expand ── */
@@ -124,7 +124,7 @@ export default function DynamicIsland() {
   }, [mode, briefing?.severity, conn.state, isHovering]);
 
   /* ─── Hover/click handlers (with debounce) ──────────────────────── */
-  const hoverTimerRef = useRef(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const handleMouseEnter = () => {
     clearTimeout(hoverTimerRef.current);
     setIsHovering(true);
@@ -144,7 +144,7 @@ export default function DynamicIsland() {
     });
   };
   // Click-outside collapses fully.
-  const islandRef = useRef(null);
+  const islandRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (mode !== 'expanded') return;
     const handler = (e) => {

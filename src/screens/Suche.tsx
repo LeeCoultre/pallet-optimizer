@@ -88,7 +88,7 @@ export default function SucheScreen({ initialQuery = '' }) {
   const [recent, setRecent] = useState(() => readRecent());
   const [saved,  setSaved]  = useState(() => readSaved());
 
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   /* CommandPalette → SucheScreen wiring: external query bumps mount. */
   useEffect(() => {
@@ -216,7 +216,7 @@ export default function SucheScreen({ initialQuery = '' }) {
       if (e.key === 'Escape') {
         if (openId) { setOpenId(null); return; }
         if (document.activeElement === inputRef.current) {
-          inputRef.current.blur();
+          inputRef.current?.blur();
           if (query) setQuery('');
           return;
         }
@@ -485,7 +485,7 @@ function tsOf(it) {
 function computeInsights(items) {
   const status = { completed: 0, in_progress: 0, queued: 0, error: 0 };
   const matchField = { fnsku: 0, sku: 0, ean: 0, sendungsnummer: 0, file_name: 0 };
-  let oldest = null, newest = null;
+  let oldest: number | null = null, newest: number | null = null;
   for (const it of items) {
     if (status[it.status] !== undefined) status[it.status] += 1;
     if (it.matchedField && matchField[it.matchedField] !== undefined) matchField[it.matchedField] += 1;
@@ -1353,7 +1353,7 @@ function Highlight({ text, query }) {
   /* Case-insensitive plain-text highlight; handles repeats. */
   const lower = t.toLowerCase();
   const ql = q.toLowerCase();
-  const out = [];
+  const out: React.ReactNode[] = [];
   let cursor = 0;
   let idx = lower.indexOf(ql);
   while (idx !== -1) {
@@ -1416,8 +1416,8 @@ function DetailModal({ id, onClose }) {
   const palletGantt = useMemo(() => {
     const pallets = a?.parsed?.pallets || [];
     const lookup = new Map(pallets.map((p) => [p.id, p]));
-    const rows = [];
-    for (const [pid, t] of Object.entries(a?.palletTimings || {})) {
+    const rows: { id: string; level: number; durSec: number; startMs: number }[] = [];
+    for (const [pid, t] of Object.entries(a?.palletTimings || {}) as Array<[string, { startedAt?: number; finishedAt?: number }]>) {
       if (!t.startedAt || !t.finishedAt) continue;
       const p = lookup.get(pid);
       const items = p?.items || [];

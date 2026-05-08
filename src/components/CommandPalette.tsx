@@ -35,10 +35,10 @@ function PaletteImpl({ onClose, onRoute }) {
   const me = useMe().data;
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState<import('@/types/api').SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(0);
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   /* Focus the input on mount so the user can type immediately. */
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -70,7 +70,8 @@ function PaletteImpl({ onClose, onRoute }) {
      Filtered by `query` substring (case-insensitive) so typing
      "his" pre-selects "Historie". */
   const actions = useMemo(() => {
-    const all = [
+    type Action = { id: string; label: string; sub?: string; kind: string; target: string; icon: React.ReactNode; disabled?: boolean };
+    const all: Action[] = ([
       { id: 'go-workspace', label: current ? 'Zum Workflow' : 'Zum Upload',
         sub: current ? 'Aktiver Auftrag' : 'Datei laden',
         kind: 'route', target: 'workspace', icon: <IconUpload /> },
@@ -104,7 +105,7 @@ function PaletteImpl({ onClose, onRoute }) {
         kind: 'start', target: entry.id, icon: <IconPlay />,
         disabled: !!current,
       })),
-    ].filter(Boolean);
+    ] as (Action | false)[]).filter((a): a is Action => Boolean(a));
 
     if (!query.trim()) return all;
     const needle = query.trim().toLowerCase();
@@ -117,7 +118,8 @@ function PaletteImpl({ onClose, onRoute }) {
   /* Combined list flatten — selection cycles through actions THEN
      search results, so ↓-arrow keeps working after the action list ends. */
   const flat = useMemo(() => {
-    const arr = [];
+    type Entry = { kind: 'action'; payload: typeof actions[number] } | { kind: 'hit'; payload: typeof results[number] };
+    const arr: Entry[] = [];
     actions.forEach((a) => arr.push({ kind: 'action', payload: a }));
     results.forEach((r) => arr.push({ kind: 'hit', payload: r }));
     return arr;

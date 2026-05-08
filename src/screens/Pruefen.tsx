@@ -1329,13 +1329,13 @@ function Kbd({ children }) {
    ════════════════════════════════════════════════════════════════════════ */
 function buildAuftragInsights(pallets, enrichedPallets, palletStates, eskuDist) {
   if (!pallets || pallets.length === 0) return [];
-  const out = [];
+  const out: { id: string; label: string; value: string }[] = [];
 
   /* Schwerste — by computed weightKg. We use enrichedPallets items
      because they carry real dim/weight data. */
-  let heaviest = null;
-  let mostVariety = null;
-  let tightest = null;
+  let heaviest: { id: string; weightKg: number } | null = null;
+  let mostVariety: { id: string; distinctArticles: number } | null = null;
+  let tightest: { id: string; fill: number } | null = null;
 
   for (const p of pallets) {
     const raw = enrichedPallets.find((r) => r.id === p.id);

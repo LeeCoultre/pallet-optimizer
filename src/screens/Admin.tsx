@@ -143,7 +143,7 @@ function AuftraegeTab() {
           { key: 'finished_at',  label: 'Abgeschl.', w: 140, render: r => r.finishedAt ? formatDateTime(r.finishedAt) : '—', sortable: true },
           { key: 'created_at',   label: 'Erstellt',  w: 140, render: r => formatDateTime(r.createdAt), sortable: true },
         ]}
-        items={q.data?.items}
+        items={q.data?.items ?? []}
         loading={q.isLoading}
         empty="Keine Aufträge gefunden."
         sortBy={sortBy}
@@ -207,7 +207,7 @@ function UsersTab() {
           ),
         },
       ]}
-      items={usersQ.data}
+      items={usersQ.data ?? []}
       loading={usersQ.isLoading}
       empty="Keine Benutzer."
     />
@@ -262,7 +262,7 @@ function AuditTab() {
           { key: 'auftrag', label: 'Auftrag',  w: 200, render: r => r.auftragFileName || '—', mono: true },
           { key: 'meta',    label: 'Meta',     w: 300, render: r => <MetaCell meta={r.meta} /> },
         ]}
-        items={q.data?.items}
+        items={q.data?.items ?? []}
         loading={q.isLoading}
         empty="Keine Einträge."
       />
@@ -303,6 +303,7 @@ function KpiTab() {
   if (q.isError)   return <PadCenter>Fehler beim Laden.</PadCenter>;
 
   const s = q.data;
+  if (!s) return <PadCenter>Keine Daten.</PadCenter>;
   return (
     <div>
       {/* Live status */}
@@ -631,7 +632,7 @@ function DataTable<R extends { id?: string | number } = { id?: string | number }
                     maxWidth: c.w,
                   }}
                 >
-                  {c.render(r, i)}
+                  {c.render?.(r, i) ?? null}
                 </td>
               ))}
             </tr>

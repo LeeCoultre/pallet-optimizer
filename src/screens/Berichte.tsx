@@ -52,13 +52,13 @@ export default function BerichteScreen() {
   const [from, setFrom] = useState(isoDate(startOfMonth(today)));
   const [to,   setTo]   = useState(todayIso);
   const [format, setFormat] = useState('xlsx');
-  const [operatorFilter, setOperatorFilter] = useState(null);
+  const [operatorFilter, setOperatorFilter] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [recentOpen,  setRecentOpen]  = useState(false);
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useState<{ kind: 'pending' | 'success' | 'error'; message: string } | null>(null);
   const [recent, setRecent] = useState(() => readRecent());
 
-  const fromInputRef = useRef(null);
+  const fromInputRef = useRef<HTMLInputElement | null>(null);
 
   /* ── data ─────────────────────────────────────────────────── */
   const historyQ = useQuery({
@@ -177,7 +177,7 @@ export default function BerichteScreen() {
         return next;
       });
     } catch (e) {
-      setStatus({ kind: 'error', message: e?.message || 'Download fehlgeschlagen' });
+      setStatus({ kind: 'error', message: (e instanceof Error ? e.message : null) || 'Download fehlgeschlagen' });
     }
   }, [format, from, to, items, activePreset]);
 
@@ -356,7 +356,7 @@ function KpiStrip({ current, previous }) {
 function Kpi({ label, value, prev, rawValue, compareAs, accent }: { label?: React.ReactNode; value?: React.ReactNode; prev?: number | null; rawValue?: number; compareAs?: 'pct' | 'abs' | 'duration'; accent?: boolean }) {
   const cur = typeof rawValue === 'number' ? rawValue : (typeof value === 'number' ? value : 0);
   const showComparison = prev != null && (cur > 0 || prev > 0);
-  const delta = prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null;
+  const delta = (prev != null && prev > 0) ? Math.round(((cur - prev) / prev) * 100) : null;
   /* For duration metrics, less = better — flip the success/warn tone. */
   const positive = compareAs === 'duration' ? (delta != null && delta < 0) : (delta != null && delta > 0);
 
@@ -1284,10 +1284,12 @@ function buildDaily(items, fromMs, toMs) {
   return buildDailyExplicit(items, fromMs, toMs);
 }
 
+interface DailyBucket { ms: number; label: string; count: number; totalSec: number; avgSec: number }
+
 function buildDailyExplicit(items, fromMs, toMs) {
   const start = new Date(fromMs); start.setHours(0, 0, 0, 0);
   const end   = new Date(toMs);   end.setHours(0, 0, 0, 0);
-  const buckets = [];
+  const buckets: DailyBucket[] = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const ms = d.getTime();
     buckets.push({
