@@ -71,7 +71,7 @@ const CATEGORY_TO_LEVEL = {
    tooltips, parsing, and matching. */
 export function formatItemTitle(title) {
   if (!title) return '—';
-  let size = null;
+  let size: string | null = null;
   const sz = title.match(/\((\d+(?:[.,]\d+)?)\s*(ml|l|kg|g)\)/i);
   if (sz) {
     const num = parseFloat(sz[1].replace(',', '.'));
@@ -1025,10 +1025,10 @@ function pickPallet(carton, states) {
     // Score every eligible pallet, then pick best with FREE-VOLUME tie-break.
     // Without the tie-break the first pallet in iteration order won the
     // toss whenever scores matched, leading to lopsided placements.
-    let best = null;
+    let best: typeof eligible[number] | null = null;
     let bestScore = -Infinity;
     let bestFree = -Infinity;
-    let bestBreakdown = null;
+    let bestBreakdown: Record<string, boolean | number> | null = null;
     for (const ps of candidates) {
       const { score, breakdown } = scorePallet(carton, ps);
       const free = PALLET_VOL_CM3 - ps.volCm3;
@@ -1075,7 +1075,7 @@ function pickPallet(carton, states) {
 }
 
 function predictOverload(carton, ps) {
-  const flags = [];
+  const flags: string[] = [];
   if (ps.weightKg + carton.weightKg > PALLET_WEIGHT_KG) flags.push('OVERLOAD-W');
   if (ps.volCm3 + carton.volCm3 > PALLET_VOL_CM3) flags.push('OVERLOAD-V');
   // Capacity fraction — empirical max cartons of THIS format on THIS
@@ -1116,7 +1116,7 @@ export async function enrichItemDims(items, lookupFn) {
   const lookups = res?.lookups || {};
   return items.map((it) => {
     const useId = extractUseItemId(it.useItem);
-    let dim = null, source = null;
+    let dim: unknown = null, source: string | null = null;
     if (lookups[it.fnsku])      { dim = lookups[it.fnsku]; source = 'fnsku'; }
     else if (lookups[it.sku])   { dim = lookups[it.sku];   source = 'sku'; }
     else if (lookups[it.ean])   { dim = lookups[it.ean];   source = 'ean'; }

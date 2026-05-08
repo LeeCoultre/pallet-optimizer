@@ -293,12 +293,11 @@ export function useAppState(): UseAppStateApi {
     qc.setQueryData<AuftragSummary[]>(['auftraege'], (old) => {
       if (!old) return old;
       const byId = new Map(old.map((a) => [a.id, a]));
-      const reordered = items
-        .map((it, i) => {
-          const base = byId.get(it.id);
-          return base ? { ...base, queuePosition: i } : null;
-        })
-        .filter((x): x is AuftragSummary => x != null);
+      const reordered: AuftragSummary[] = [];
+      items.forEach((it, i) => {
+        const base = byId.get(it.id);
+        if (base) reordered.push({ ...base, queuePosition: i });
+      });
       const inProgress = old.filter((a) => a.status === 'in_progress');
       return [...reordered, ...inProgress];
     });
@@ -318,12 +317,11 @@ export function useAppState(): UseAppStateApi {
     qc.setQueryData<AuftragSummary[]>(['auftraege'], (old) => {
       if (!old) return old;
       const byId = new Map(old.map((a) => [a.id, a]));
-      const reordered = items
-        .map((it, i) => {
-          const base = byId.get(it.id);
-          return base ? { ...base, queuePosition: i } : null;
-        })
-        .filter((x): x is AuftragSummary => x != null);
+      const reordered: AuftragSummary[] = [];
+      items.forEach((it, i) => {
+        const base = byId.get(it.id);
+        if (base) reordered.push({ ...base, queuePosition: i });
+      });
       const inProgress = old.filter((a) => a.status === 'in_progress');
       return [...reordered, ...inProgress];
     });

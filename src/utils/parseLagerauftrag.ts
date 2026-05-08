@@ -61,7 +61,7 @@ export function parseTitleMeta(title) {
   //       "10x Thermorollen…" — common in supplier titles where the
   //       Einheit count is written as the very first token. Only used
   //       when (a) does not match, so explicit "(N Rollen)" still wins.
-  let rollen = null;
+  let rollen: number | null = null;
   const explicit = cleanTitle.match(/(\d+)\s*(?:Stck|Stk|Rollen|Rolls|Stück|Pcs|Pieces|er[\s-]+Pack)\b\.?/i);
   if (explicit) rollen = parseInt(explicit[1], 10);
   if (rollen == null) {
@@ -280,7 +280,7 @@ function parseItemColumns(rest) {
 }
 
 function parseItemsFromBlock(block, palletId) {
-  const items = [];
+  const items: ReturnType<typeof parseItemColumns>[] = [];
   // Normalize NBSP and collapse stray spaces inside cells (but keep tabs).
   const lines = block.split('\n').map((l) => l.replace(/ /g, ' ').trim());
   const startRe = makePalletItemRegex(palletId);
@@ -316,7 +316,7 @@ function parseItemsFromBlock(block, palletId) {
      Zu verwendender Artikel: ...
    ───────────────────────────────────────────────────────────────────────── */
 function parseEinzelneSkuSection(tail) {
-  const items = [];
+  const items: ReturnType<typeof parseEinzelneSkuItemLine>[] = [];
   if (!tail) return items;
   const lines = tail.split('\n').map((l) => l.replace(/ /g, ' ').trim());
   const achtungRe =
@@ -363,7 +363,7 @@ function parseEinzelneSkuItemLine(line, allLines, lineIdx, achtung) {
     itemsPerPack: achtung.Y,
     effectiveRollen: achtung.X * achtung.Y,
     contentLabel: achtung.contentLabel,
-    cartonsCount: Math.max(1, Math.ceil(parsed.units / achtung.X)),
+    cartonsCount: Math.max(1, Math.ceil((parsed.units ?? 0) / achtung.X)),
   };
   return parsed;
 }
@@ -383,7 +383,7 @@ function parseStandard(rawText) {
 
   const palletRe = makePalletHeaderRe(true);
   const matches = [...text.matchAll(palletRe)];
-  const pallets = [];
+  const pallets: { number: number; id: string; hasFourSideWarning: boolean; items: ReturnType<typeof parseItemsFromBlock> }[] = [];
 
   matches.forEach((m, idx) => {
     const number = parseInt(m[1], 10);
@@ -470,7 +470,7 @@ function parseSchilder(rawText) {
   // next ~6 non-empty lines and pull out fnsku/integer/gewicht by pattern.
   const lines = text.split('\n').map((l) => l.replace(/ /g, ' ').trim());
 
-  const items = [];
+  const items: Array<Record<string, unknown>> = [];
   let totalUnits = 0;
   let totalWeight = 0;
 
@@ -480,7 +480,7 @@ function parseSchilder(rawText) {
     const sku = line;
 
     // Collect up to 8 following non-empty lines (5 fields + safety margin)
-    const tokens = [];
+    const tokens: string[] = [];
     for (let j = i + 1; j < lines.length && tokens.length < 8; j++) {
       const v = lines[j];
       if (!v) continue;
@@ -491,8 +491,9 @@ function parseSchilder(rawText) {
       tokens.push(v);
     }
 
-    let fnsku = null, nonAmz = null, menge = null, gewicht = null, kartonNr = null;
-    const integers = [];
+    let fnsku: string | null = null, nonAmz: string | null = null;
+    let menge: number | null = null, gewicht: number | null = null, kartonNr: number | null = null;
+    const integers: number[] = [];
     for (const t of tokens) {
       const kind = classifySchilderField(t);
       if (kind === 'fnsku' && !fnsku) fnsku = t.toUpperCase();
@@ -605,7 +606,7 @@ export function parseLagerauftragText(rawText) {
    ───────────────────────────────────────────────────────────────────────── */
 export function validateParsing(rawText, parsed) {
   const text = rawText.replace(/\r/g, '');
-  const issues = [];
+  const issues: Array<{ severity: string; kind: string; msg: string; palletId?: string }> = [];
 
   if (parsed.format === 'schilder') {
     // For Schilder we just sanity-check: every SKU-pattern line yielded an item.

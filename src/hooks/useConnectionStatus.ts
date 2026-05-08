@@ -38,7 +38,7 @@ export function useConnectionStatus() {
   const [backendOk, setBackendOk] = useState(true);
   const [probing, setProbing] = useState(false);
   const [hasFailures, setHasFailures] = useState(false);     // surfaced for render
-  const [lastError, setLastError] = useState(null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const consecutiveFailures = useRef(0);
 
   /* ── Browser-level online/offline events ───────────────────────── */

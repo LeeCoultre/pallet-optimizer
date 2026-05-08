@@ -28,7 +28,7 @@ const queryClient = new QueryClient({
   },
 })
 
-createRoot(document.getElementById('root')).render(
+createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {/* ErrorBoundary wraps everything — even ClerkProvider init can throw
         (e.g. on a malformed publishable key) so the fallback UI must

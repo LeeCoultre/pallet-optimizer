@@ -1106,7 +1106,7 @@ function DimensionEditModal({ row, onClose, onSave, saving }: DimensionEditModal
     }
     // Pallet load is OPTIONAL — empty stays null. Reject only on
      // non-empty non-positive integer.
-    let palletLoadMax = null;
+    let palletLoadMax: number | null = null;
     const rawPL = String(form.palletLoadMax || '').trim();
     if (rawPL) {
       const n = parseInt(rawPL, 10);
@@ -1219,7 +1219,7 @@ function primaryKey(r) {
 }
 
 function keyTypeSummary(r) {
-  const parts = [];
+  const parts: string[] = [];
   if (r.fnskus.length) parts.push(`${r.fnskus.length} FNSKU`);
   if (r.skus.length)   parts.push(`${r.skus.length} SKU`);
   if (r.eans.length)   parts.push(`${r.eans.length} EAN`);
@@ -1249,8 +1249,8 @@ function computeStats(items) {
 }
 
 function parseKeyList(text) {
-  const seen = new Set();
-  const out = [];
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const part of String(text || '').split(/[,;\n]/)) {
     const s = part.trim();
     if (s && !seen.has(s)) { seen.add(s); out.push(s); }

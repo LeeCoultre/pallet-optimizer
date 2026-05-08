@@ -1056,7 +1056,7 @@ function Sparkline7({ days, max }) {
 function buildDailyCounts(history, n) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const buckets = [];
+  const buckets: { key: number; label: string; count: number }[] = [];
   for (let i = n - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);

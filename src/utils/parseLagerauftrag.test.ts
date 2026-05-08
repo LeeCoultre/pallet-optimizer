@@ -144,9 +144,9 @@ describe('validateParsing', () => {
   // Build a minimal parsed shape — we don't need to drive the full
   // parser to test the validator.
   const minimalParsed = ({
-    pallets = [],
-    einzelneSkuItems = [],
-    meta = {},
+    pallets = [] as Array<{ id: string; items: Array<Record<string, unknown>> }>,
+    einzelneSkuItems = [] as Array<Record<string, unknown>>,
+    meta = {} as Record<string, unknown>,
   } = {}) => ({
     format: 'standard',
     meta: { totalUnits: 0, totalSkus: 0, ...meta },
@@ -173,7 +173,7 @@ describe('validateParsing', () => {
     const v = validateParsing('any', parsed);
     const unitFlag = v.issues.find((i) => i.kind === 'unit-mismatch');
     expect(unitFlag).toBeDefined();
-    expect(unitFlag.severity).toBe('error');
+    expect(unitFlag?.severity).toBe('error');
   });
 
   it('flags missing-asin as warn (not error)', () => {

@@ -54,7 +54,7 @@ function ActiveAuftragPill({ route, onRoute }) {
   if (PILL_SUPPRESSED.has(route)) return null;
 
   const fba = current.fbaCode || current.fileName || '—';
-  const stepLabel = STEP_LABEL[current.step] || 'Workflow';
+  const stepLabel = (current.step ? STEP_LABEL[current.step] : null) || 'Workflow';
   const stepDestination = current.step === 'upload'
     ? 'Auftrag öffnen'
     : `Zurück zu ${stepLabel}`;

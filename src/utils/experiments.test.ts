@@ -69,7 +69,7 @@ describe('getExperiment / setExperiment round-trip', () => {
   it('setExperiment writes valid JSON to localStorage', () => {
     setExperiment('dynamicIsland', true);
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    expect(JSON.parse(raw)).toMatchObject({ dynamicIsland: true });
+    expect(JSON.parse(raw ?? '{}')).toMatchObject({ dynamicIsland: true });
   });
 
   it('falls back to default when stored JSON is corrupt', () => {

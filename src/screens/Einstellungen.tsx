@@ -71,10 +71,10 @@ export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: str
 
   const [search, setSearch] = useState('');
   const [accent, setAccent] = useState(getStoredAccent);
-  const [previewAccent, setPreviewAccent] = useState(null);
+  const [previewAccent, setPreviewAccent] = useState<string | null>(null);
   const [storageBytes, setStorageBytes] = useState(() => measureStorage());
 
-  const searchRef = useRef(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   /* When the user hovers a preset, repaint live without committing.
      Click commits via apply(). On unmount restore the last committed
@@ -100,7 +100,7 @@ export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: str
         e.preventDefault();
         searchRef.current?.focus();
       } else if (e.key === 'Escape' && document.activeElement === searchRef.current) {
-        searchRef.current.blur();
+        searchRef.current?.blur();
         if (search) setSearch('');
       }
     };
@@ -716,7 +716,7 @@ function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }: The
 
       {/* Right: live preview pane */}
       <ThemePreviewPane
-        accentLabel={previewAccent ? findPreset(previewAccent)?.label : activePreset?.label}
+        accentLabel={(previewAccent ? findPreset(previewAccent)?.label : activePreset?.label) ?? ''}
         isPreviewing={!!previewAccent}
       />
     </div>
@@ -1283,7 +1283,7 @@ function DataRow({ label, value, mono, action, isLast }: { label: ReactNode; val
 }
 
 function BackupRow({ onExport, onImport, isLast }: { onExport: () => void; onImport: (file: File) => void; isLast?: boolean }) {
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   return (
     <div style={{
       display: 'flex',
@@ -1366,7 +1366,7 @@ async function importLocalSettings(file) {
     throw new Error('Datei hat falsches Format.');
   }
   /* Wipe the marathon.* namespace first so removed keys don't linger. */
-  const toRemove = [];
+  const toRemove: string[] = [];
   for (let i = 0; i < window.localStorage.length; i++) {
     const k = window.localStorage.key(i);
     if (k && k.startsWith('marathon.')) toRemove.push(k);

@@ -332,7 +332,7 @@ export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }: { ac
               clickable={clickable}
               isBlocked={isBlocked}
               shortcut={i + 1}
-              onClick={clickable ? () => onNavigate(s.id) : undefined}
+              onClick={clickable && onNavigate ? () => onNavigate(s.id) : undefined}
             />
           );
         })}

@@ -279,7 +279,7 @@ describe('primaryLevel', () => {
 
 /* ════════════════════════════════════════════════════════════════════ */
 describe('distributeEinzelneSku — hard constraints', () => {
-  function mkPallet({ id, items = [], hasFourSideWarning = false }) {
+  function mkPallet({ id, items = [] as Array<Record<string, unknown>>, hasFourSideWarning = false }: { id: string; items?: Array<Record<string, unknown>>; hasFourSideWarning?: boolean }) {
     return { id, items, hasFourSideWarning };
   }
 
