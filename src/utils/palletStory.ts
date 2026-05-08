@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    palletStory — pure rule-based generator that turns a pallet's structural
    features (level mix, weight/volume, 4-Seiten flag, ESKU presence,

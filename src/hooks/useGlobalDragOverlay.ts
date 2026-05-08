@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Detects drag-over the entire window so an overlay can render.
 
    Browser quirks:

@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    Pre-flight Auftrag analyzer — pure synchronous rule-based analysis that
    surfaces parsing / capacity / structural / coverage issues BEFORE the

@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 import { PALLET, BOX_BY_ID } from '../data/boxes';
 import { packPallet } from './packing';
 import { tryPackColumns } from './packColumns';

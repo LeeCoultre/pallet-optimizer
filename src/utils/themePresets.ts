@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Theme presets — curated accent palettes for the Einstellungen Studio.
    Each preset is just an accent hex; deriveAccent() in accent.js
    handles the 5-shade derivation, so adding a new theme is one line.

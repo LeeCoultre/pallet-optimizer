@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Vitest — preflightAnalyzer.js briefing-engine tests.
 
    Verifies the rule-based flag generator's behaviour for each kind:

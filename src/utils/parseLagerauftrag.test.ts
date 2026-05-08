@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Vitest — pure-function tests for parseLagerauftrag.js
    Focus on the two highest-leverage helpers (`parseTitleMeta` +
    `classifyItem`) plus the validation severity pass. Full-document

@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Listens for a window-level paste event and forwards any files in
    the clipboard to the consumer.
 

@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Vitest — experiments.js opt-in feature-flag store. */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';

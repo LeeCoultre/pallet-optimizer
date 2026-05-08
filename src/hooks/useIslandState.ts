@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    useIslandState — pure derivation hook that turns Marathon's app-state
    into a normalized briefing for the DynamicIsland component.

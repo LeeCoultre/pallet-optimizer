@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Vitest — auftragHelpers.js critical-path tests.
 
    Covers:

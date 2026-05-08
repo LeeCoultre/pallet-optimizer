@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Vitest — palletStory.js story-engine tests.
 
    Covers the headline-rule order (first match wins), narrative
