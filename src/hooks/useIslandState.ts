@@ -18,8 +18,8 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../state.jsx';
-import { LEVEL_META } from '../utils/auftragHelpers.js';
+import { useAppState } from '@/state.jsx';
+import { LEVEL_META } from '@/utils/auftragHelpers.js';
 
 const TICK_MS = 1000;   // 1Hz "now" tick for elapsed-time fields
 

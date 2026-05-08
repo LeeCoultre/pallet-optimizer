@@ -21,7 +21,11 @@
     "strictNullChecks": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src/**/*", "src/**/*.json"],
   "exclude": ["node_modules", "dist"]

@@ -25,12 +25,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAppState } from '../state.jsx';
-import { getAuftrag, downloadAuftraegeXlsx } from '../marathonApi.js';
+import { useAppState } from '@/state.jsx';
+import { getAuftrag, downloadAuftraegeXlsx } from '@/marathonApi.js';
 import {
   Page, Topbar, Card, Eyebrow, Lead, EmptyState, Button, Badge, T,
-} from '../components/ui.jsx';
-import { LEVEL_META, getDisplayLevel } from '../utils/auftragHelpers.js';
+} from '@/components/ui.jsx';
+import { LEVEL_META, getDisplayLevel } from '@/utils/auftragHelpers.js';
 
 const RANGE_PRESETS = [
   { id: 'today', label: 'Heute' },

@@ -7,17 +7,17 @@ import {
   Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { useMe } from '../hooks/useMe.js';
+import { useMe } from '@/hooks/useMe.js';
 import {
   adminListAuftraege,
   adminListUsers,
   adminChangeUserRole,
   adminListAudit,
   adminGetStats,
-} from '../marathonApi.js';
+} from '@/marathonApi.js';
 import {
   Page, Topbar, Card, SectionHeader, Eyebrow, PageH1, Lead, Badge, Kpi, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 import DimensionsTab from './admin/DimensionsTab.jsx';
 
 const TABS = [

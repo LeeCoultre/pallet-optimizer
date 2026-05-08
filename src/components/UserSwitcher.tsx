@@ -13,7 +13,7 @@ import {
   UserButton,
   useUser,
 } from '@clerk/clerk-react';
-import { getMe } from '../marathonApi.js';
+import { getMe } from '@/marathonApi.js';
 import { T } from './ui.jsx';
 
 function FooterShell({ children, collapsed }) {

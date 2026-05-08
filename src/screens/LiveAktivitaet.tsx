@@ -18,11 +18,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getActivityLive } from '../marathonApi.js';
-import { useMe } from '../hooks/useMe.js';
+import { getActivityLive } from '@/marathonApi.js';
+import { useMe } from '@/hooks/useMe.js';
 import {
   Page, Topbar, Card, Eyebrow, Lead, EmptyState, Button, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 
 const POLL_MS = 10_000;
 const IDLE_THRESHOLD_SEC = 5 * 60;

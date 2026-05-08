@@ -28,10 +28,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { downloadAuftraegeXlsx, getHistory } from '../marathonApi.js';
+import { downloadAuftraegeXlsx, getHistory } from '@/marathonApi.js';
 import {
   Page, Topbar, Eyebrow, Lead, StudioFrame, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 
 const RECENT_KEY = 'marathon.berichte.recent';
 const RECENT_MAX = 8;

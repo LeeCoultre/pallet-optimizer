@@ -17,14 +17,14 @@
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../state.jsx';
+import { useAppState } from '@/state.jsx';
 import {
   Page, Topbar, Card, Eyebrow, PageH1, Lead,
   Badge, Button, EmptyState, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 import {
   estimateOrderSeconds, getDisplayLevel, LEVEL_META,
-} from '../utils/auftragHelpers.js';
+} from '@/utils/auftragHelpers.js';
 
 /* ════════════════════════════════════════════════════════════════════════ */
 const SORT_MODES = [

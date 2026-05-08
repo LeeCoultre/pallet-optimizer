@@ -11,7 +11,7 @@
 
 import PalletStackViz from './PalletStackViz.jsx';
 import { T } from './ui.jsx';
-import { LEVEL_META } from '../utils/auftragHelpers.js';
+import { LEVEL_META } from '@/utils/auftragHelpers.js';
 
 const TONE_BORDER = {
   warn:    T.status.warn.border,

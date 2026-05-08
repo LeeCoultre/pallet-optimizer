@@ -15,8 +15,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { toLegacy, toLegacyHistory } from './state';
-import type { AuftragDetail, AuftragSummary } from './types/api';
+import { toLegacy, toLegacyHistory } from '@/state';
+import type { AuftragDetail, AuftragSummary } from '@/types/api';
 
 const baseSummary: AuftragSummary = {
   id: '00000000-0000-0000-0000-000000000001',

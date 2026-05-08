@@ -23,12 +23,12 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { searchAuftraege, getAuftrag } from '../marathonApi.js';
-import { useDebounced } from '../hooks/useDebounced.js';
+import { searchAuftraege, getAuftrag } from '@/marathonApi.js';
+import { useDebounced } from '@/hooks/useDebounced.js';
 import {
   Page, Topbar, Card, Eyebrow, Lead, Button, Badge, T,
-} from '../components/ui.jsx';
-import { LEVEL_META, getDisplayLevel } from '../utils/auftragHelpers.js';
+} from '@/components/ui.jsx';
+import { LEVEL_META, getDisplayLevel } from '@/utils/auftragHelpers.js';
 
 const PAGE_SIZE = 50;
 const RECENT_MAX = 8;

@@ -3,8 +3,8 @@
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-react';
-import { getMe } from '../marathonApi';
-import type { UserResponse } from '../types/api';
+import { getMe } from '@/marathonApi';
+import type { UserResponse } from '@/types/api';
 
 export function useMe(): UseQueryResult<UserResponse, Error> {
   const { isSignedIn } = useAuth();

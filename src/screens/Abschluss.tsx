@@ -21,16 +21,16 @@
 */
 
 import React, { useMemo, useState } from 'react';
-import { useAppState } from '../state.jsx';
+import { useAppState } from '@/state.jsx';
 import {
   pruefenView, palletTimingRows, levelDistribution,
   primaryLevel, itemTotalWeightKg, LEVEL_META,
-} from '../utils/auftragHelpers.js';
+} from '@/utils/auftragHelpers.js';
 import {
   Page, Topbar, StepperBar,
   Card, SectionHeader, Eyebrow, PageH1, Lead,
   Badge, Button, Kpi, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 
 /* Per-pallet pricing by primary level (mirrors the warehouse clipboard).
    Tacho-Rollen (L6) are also "Rollen" — same rate as Thermo. */

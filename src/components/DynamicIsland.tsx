@@ -29,8 +29,8 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 import { useEffect, useRef, useState } from 'react';
-import { useIslandState } from '../hooks/useIslandState.js';
-import { useConnectionStatus } from '../hooks/useConnectionStatus.js';
+import { useIslandState } from '@/hooks/useIslandState.js';
+import { useConnectionStatus } from '@/hooks/useConnectionStatus.js';
 import { T } from './ui.jsx';
 
 const SPRING = 'cubic-bezier(0.34, 1.56, 0.64, 1)';

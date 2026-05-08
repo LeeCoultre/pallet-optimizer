@@ -16,10 +16,10 @@
 */
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../state.jsx';
-import { useMe } from '../hooks/useMe.js';
-import { useApiHealth } from '../hooks/useApiHealth.js';
-import { useMyShift } from '../hooks/useMyShift.js';
+import { useAppState } from '@/state.jsx';
+import { useMe } from '@/hooks/useMe.js';
+import { useApiHealth } from '@/hooks/useApiHealth.js';
+import { useMyShift } from '@/hooks/useMyShift.js';
 import { Mark } from './Logo.jsx';
 import { T } from './ui.jsx';
 import { UserSwitcher } from './UserSwitcher.jsx';

@@ -12,7 +12,7 @@
    ───────────────────────────────────────────────────────────────────────── */
 
 import { Sidebar, SIDEBAR_WIDTH } from './Sidebar.jsx';
-import { useAppState } from '../state.jsx';
+import { useAppState } from '@/state.jsx';
 import { T } from './ui.jsx';
 
 const STEP_LABEL = {

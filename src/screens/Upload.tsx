@@ -29,14 +29,14 @@
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../state.jsx';
-import { useApiHealth } from '../hooks/useApiHealth.js';
-import { useRecentUploads } from '../hooks/useRecentUploads.js';
-import { useGlobalDragOverlay } from '../hooks/useGlobalDragOverlay.js';
-import { usePasteFile } from '../hooks/usePasteFile.js';
+import { useAppState } from '@/state.jsx';
+import { useApiHealth } from '@/hooks/useApiHealth.js';
+import { useRecentUploads } from '@/hooks/useRecentUploads.js';
+import { useGlobalDragOverlay } from '@/hooks/useGlobalDragOverlay.js';
+import { usePasteFile } from '@/hooks/usePasteFile.js';
 import {
   Page, Topbar, StepperBar, Badge, CornerMarks, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 
 const COUNTDOWN_SEC = 3;
 

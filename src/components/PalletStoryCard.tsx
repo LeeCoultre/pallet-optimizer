@@ -16,7 +16,7 @@
 import { useState } from 'react';
 import {
   formatItemTitle, getDisplayLevel, LEVEL_META,
-} from '../utils/auftragHelpers.js';
+} from '@/utils/auftragHelpers.js';
 import PalletStackViz from './PalletStackViz.jsx';
 import { T } from './ui.jsx';
 

@@ -23,21 +23,21 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAppState } from '../state.jsx';
+import { useAppState } from '@/state.jsx';
 import {
   pruefenView, distributeEinzelneSku, enrichItemDims,
   levelDistribution, sortItemsForPallet, LEVEL_META,
   itemTotalWeightKg,
-} from '../utils/auftragHelpers.js';
-import { lookupSkuDimensions } from '../marathonApi.js';
+} from '@/utils/auftragHelpers.js';
+import { lookupSkuDimensions } from '@/marathonApi.js';
 import {
   Page, Topbar, StepperBar, StudioFrame, Button, T,
-} from '../components/ui.jsx';
-import PreflightCard from '../components/PreflightCard.jsx';
-import PalletStoryCard from '../components/PalletStoryCard.jsx';
-import PalletMiniCard from '../components/PalletMiniCard.jsx';
-import { analyzeAuftrag } from '../utils/preflightAnalyzer.js';
-import { buildPalletStory, rankPallets } from '../utils/palletStory.js';
+} from '@/components/ui.jsx';
+import PreflightCard from '@/components/PreflightCard.jsx';
+import PalletStoryCard from '@/components/PalletStoryCard.jsx';
+import PalletMiniCard from '@/components/PalletMiniCard.jsx';
+import { analyzeAuftrag } from '@/utils/preflightAnalyzer.js';
+import { buildPalletStory, rankPallets } from '@/utils/palletStory.js';
 
 const AUTO_OVERVIEW_THRESHOLD = 15;
 

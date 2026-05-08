@@ -30,16 +30,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAppState } from '../state.jsx';
+import { useAppState } from '@/state.jsx';
 import {
   focusItemView, sortItemsForPallet, distributeEinzelneSku,
   enrichItemDims, getDisplayLevel, LEVEL_META,
-} from '../utils/auftragHelpers.js';
-import { lookupSkuDimensions } from '../marathonApi.js';
-import { detectWiederholt } from '../utils/wiederholtLogic.js';
-import { Page, Topbar, Button, Badge, StudioFrame, T } from '../components/ui.jsx';
-import PalletInterlude, { resetSkipCount } from '../components/PalletInterlude.jsx';
-import AuftragFinaleStage from '../components/AuftragFinaleStage.jsx';
+} from '@/utils/auftragHelpers.js';
+import { lookupSkuDimensions } from '@/marathonApi.js';
+import { detectWiederholt } from '@/utils/wiederholtLogic.js';
+import { Page, Topbar, Button, Badge, StudioFrame, T } from '@/components/ui.jsx';
+import PalletInterlude, { resetSkipCount } from '@/components/PalletInterlude.jsx';
+import AuftragFinaleStage from '@/components/AuftragFinaleStage.jsx';
 
 const SCHNELL_KEY = 'marathon.focus.schnellmodus';
 

@@ -11,7 +11,7 @@
 */
 
 import { useState, useId } from 'react';
-import { LEVEL_META } from '../utils/auftragHelpers.js';
+import { LEVEL_META } from '@/utils/auftragHelpers.js';
 import { T } from './ui.jsx';
 
 const PALLET_VOL_M3   = 1.59;

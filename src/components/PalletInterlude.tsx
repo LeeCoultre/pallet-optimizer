@@ -18,7 +18,7 @@
 
 import { useEffect } from 'react';
 import { Button, T } from './ui.jsx';
-import { LEVEL_META, getDisplayLevel } from '../utils/auftragHelpers.js';
+import { LEVEL_META, getDisplayLevel } from '@/utils/auftragHelpers.js';
 
 export default function PalletInterlude({
   pallet,            // { id, itemCount, weightKg, volCm3, durationMs }

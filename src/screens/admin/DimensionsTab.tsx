@@ -26,8 +26,8 @@ import {
   adminCreateSkuDimension,
   adminUpdateSkuDimension,
   adminDeleteSkuDimension,
-} from '../../marathonApi.js';
-import { Card, T } from '../../components/ui.jsx';
+} from '@/marathonApi.js';
+import { Card, T } from '@/components/ui.jsx';
 
 const PAGE_SIZE = 50;
 

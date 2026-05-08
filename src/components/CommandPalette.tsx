@@ -18,9 +18,9 @@
    Pruefen/Focus work. */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useAppState } from '../state.jsx';
-import { useMe } from '../hooks/useMe.js';
-import { searchAuftraege } from '../marathonApi.js';
+import { useAppState } from '@/state.jsx';
+import { useMe } from '@/hooks/useMe.js';
+import { searchAuftraege } from '@/marathonApi.js';
 import { T } from './ui.jsx';
 
 const PALETTE_WIDTH = 640;

@@ -23,20 +23,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { UserButton, useUser } from '@clerk/clerk-react';
-import { useAppState } from '../state.jsx';
-import { useMe } from '../hooks/useMe.js';
-import { useMyShift } from '../hooks/useMyShift.js';
-import { useApiHealth } from '../hooks/useApiHealth.js';
+import { useAppState } from '@/state.jsx';
+import { useMe } from '@/hooks/useMe.js';
+import { useMyShift } from '@/hooks/useMyShift.js';
+import { useApiHealth } from '@/hooks/useApiHealth.js';
 import {
   applyAccent, getStoredAccent, setStoredAccent, resetAccent, DEFAULT_ACCENT,
-} from '../utils/accent.js';
-import { THEME_PRESETS, findPreset } from '../utils/themePresets.js';
+} from '@/utils/accent.js';
+import { THEME_PRESETS, findPreset } from '@/utils/themePresets.js';
 import {
   EXPERIMENT_META, EXPERIMENT_DEFAULTS, useExperiment,
-} from '../utils/experiments.js';
+} from '@/utils/experiments.js';
 import {
   Page, Topbar, Card, Eyebrow, Lead, Button, Badge, T,
-} from '../components/ui.jsx';
+} from '@/components/ui.jsx';
 
 const BUILD_VERSION = '2.x';
 const BUILD_MODE = (typeof import.meta !== 'undefined' && import.meta.env?.PROD)

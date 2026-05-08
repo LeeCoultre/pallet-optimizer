@@ -11,8 +11,8 @@
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-react';
-import { getMyShift } from '../marathonApi';
-import type { ShiftInfo } from '../types/api';
+import { getMyShift } from '@/marathonApi';
+import type { ShiftInfo } from '@/types/api';
 
 export function useMyShift(): UseQueryResult<ShiftInfo, Error> {
   const { isSignedIn } = useAuth();
