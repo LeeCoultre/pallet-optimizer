@@ -202,7 +202,7 @@ export default function DynamicIsland() {
           width: size.width,
           height: size.height,
           maxHeight: size.maxHeight,
-          background: 'rgba(255, 255, 255, 0.92)',
+          background: 'var(--bg-glass-strong)',
           color: T.text.primary,
           borderRadius: size.radius,
           border: `1px solid ${T.border.primary}`,

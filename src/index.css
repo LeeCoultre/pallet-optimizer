@@ -53,6 +53,16 @@
   --shadow-raised: 0 2px 8px rgba(0,0,0,0.06);
   --shadow-modal:  0 12px 40px rgba(0,0,0,0.15);
 
+  /* Translucent overlays for sticky bars, pills, glass cards. They mimic
+     the surface color but let the page below bleed through under blur.
+     Listed in increasing opacity. */
+  --bg-glass-soft:    rgba(255, 255, 255, 0.65);
+  --bg-glass-medium:  rgba(255, 255, 255, 0.85);
+  --bg-glass-strong:  rgba(255, 255, 255, 0.94);
+  --bg-glass-edge:    rgba(15, 23, 42, 0.04);   /* hairlines on glass */
+  --bg-glass-on-accent:        rgba(255, 255, 255, 0.18);
+  --bg-glass-on-accent-border: rgba(255, 255, 255, 0.30);
+
   /* Accent — five derived shades, all set at runtime by applyAccent(). */
   --accent:        #FF5B1F;
   --accent-hover:  #E04E15;
@@ -77,48 +87,60 @@
    Status palettes use translucent overlays of the brand color so the
    light tints don't glow on a dark surface. */
 [data-theme="dark"] {
-  --bg:        #0B0E14;
-  --bg-2:      #0F1218;
-  --bg-3:      #1A1F2A;
-  --bg-4:      #232938;
-  --line:      #1F242F;
-  --line-2:    #2A2F3A;
-  --line-3:    #3F4554;
-  --ink:       #F1F5F9;
-  --ink-2:     #CBD5E1;
-  --ink-3:     #94A3B8;
-  --ink-4:     #64748B;
-  --ink-5:     #475569;
+  /* Near-black palette. Page is pure black; surface lifts to #0E0F12
+     for one-step elevation. Borders are very subtle so the chrome
+     reads as quiet, not boxed. */
+  --bg:        #000000;
+  --bg-2:      #050608;
+  --bg-3:      #0E0F12;
+  --bg-4:      #14161B;
+  --line:      #14161B;
+  --line-2:    #1F222A;
+  --line-3:    #2E323D;
+  --ink:       #F4F6FA;
+  --ink-2:     #CBD2DC;
+  --ink-3:     #8E96A4;
+  --ink-4:     #5E6573;
+  --ink-5:     #3D4350;
 
-  --bg-page:        #0B0E14;
-  --bg-surface:     #131720;
-  --bg-surface-2:   #0F1218;
-  --bg-surface-3:   #1A1F2A;
-  --border-primary: #2A2F3A;
-  --border-subtle:  #1A1F2A;
-  --border-strong:  #3A4050;
-  --text-primary:   #F1F5F9;
-  --text-secondary: #CBD5E1;
-  --text-muted:     #94A3B8;
-  --text-subtle:    #94A3B8;
-  --text-faint:     #64748B;
+  --bg-page:        #000000;
+  --bg-surface:     #0E0F12;
+  --bg-surface-2:   #06070A;
+  --bg-surface-3:   #14161B;
+  --border-primary: #1F222A;
+  --border-subtle:  #14161B;
+  --border-strong:  #2E323D;
+  --text-primary:   #F4F6FA;
+  --text-secondary: #CBD2DC;
+  --text-muted:     #8E96A4;
+  --text-subtle:    #8E96A4;
+  --text-faint:     #5E6573;
 
   --status-success-main:   #10B981;
-  --status-success-bg:     rgba(16, 185, 129, 0.10);
+  --status-success-bg:     rgba(16, 185, 129, 0.12);
   --status-success-text:   #6EE7B7;
-  --status-success-border: rgba(16, 185, 129, 0.35);
+  --status-success-border: rgba(16, 185, 129, 0.40);
   --status-warn-main:      #F59E0B;
-  --status-warn-bg:        rgba(245, 158, 11, 0.10);
+  --status-warn-bg:        rgba(245, 158, 11, 0.12);
   --status-warn-text:      #FCD34D;
-  --status-warn-border:    rgba(245, 158, 11, 0.35);
+  --status-warn-border:    rgba(245, 158, 11, 0.40);
   --status-danger-main:    #EF4444;
-  --status-danger-bg:      rgba(239, 68, 68, 0.10);
+  --status-danger-bg:      rgba(239, 68, 68, 0.12);
   --status-danger-text:    #FCA5A5;
-  --status-danger-border:  rgba(239, 68, 68, 0.35);
+  --status-danger-border:  rgba(239, 68, 68, 0.40);
 
-  --shadow-card:   0 1px 2px rgba(0,0,0,0.30);
-  --shadow-raised: 0 4px 14px rgba(0,0,0,0.45);
-  --shadow-modal:  0 16px 48px rgba(0,0,0,0.60);
+  --shadow-card:   0 1px 2px rgba(0,0,0,0.50);
+  --shadow-raised: 0 6px 20px rgba(0,0,0,0.65);
+  --shadow-modal:  0 24px 64px rgba(0,0,0,0.80);
+
+  /* Translucent fills inverted: we want black-tint glass on dark, not
+     white. Sticky topbar / bottom-bar / pills pick these up. */
+  --bg-glass-soft:    rgba(8, 9, 12, 0.65);
+  --bg-glass-medium:  rgba(8, 9, 12, 0.85);
+  --bg-glass-strong:  rgba(8, 9, 12, 0.94);
+  --bg-glass-edge:    rgba(255, 255, 255, 0.06);
+  --bg-glass-on-accent:        rgba(255, 255, 255, 0.14);
+  --bg-glass-on-accent-border: rgba(255, 255, 255, 0.22);
 
   color-scheme: dark;
 }

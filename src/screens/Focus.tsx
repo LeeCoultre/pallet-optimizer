@@ -948,7 +948,7 @@ function FocusStickyBar({
       left: 0,
       right: 0,
       zIndex: 50,
-      background: zen ? 'rgba(255, 255, 255, 0.65)' : 'rgba(255, 255, 255, 0.94)',
+      background: zen ? 'var(--bg-glass-soft)' : 'var(--bg-glass-strong)',
       backdropFilter: 'blur(14px)',
       WebkitBackdropFilter: 'blur(14px)',
       borderTop: zen ? '1px solid transparent' : `1px solid ${T.border.primary}`,
@@ -956,7 +956,7 @@ function FocusStickyBar({
       transition: 'background 240ms ease, border-color 240ms ease',
     }}>
       {/* 2px overall progress hairline */}
-      <div style={{ height: 2, background: 'rgba(15,23,42,0.04)' }}>
+      <div style={{ height: 2, background: 'var(--bg-glass-edge)' }}>
         <div style={{
           height: '100%',
           width: `${Math.max(0, Math.min(1, overallPct)) * 100}%`,
@@ -1638,8 +1638,8 @@ function Kbd({ children, onPrimary }: { children?: React.ReactNode; onPrimary?: 
       padding: '0 5px',
       fontSize: 10, fontFamily: T.font.mono, fontWeight: 600,
       color: onPrimary ? '#fff' : T.text.subtle,
-      background: onPrimary ? 'rgba(255,255,255,0.18)' : T.bg.surface,
-      border: `1px solid ${onPrimary ? 'rgba(255,255,255,0.30)' : T.border.primary}`,
+      background: onPrimary ? 'var(--bg-glass-on-accent)' : T.bg.surface,
+      border: `1px solid ${onPrimary ? 'var(--bg-glass-on-accent-border)' : T.border.primary}`,
       borderRadius: 3,
       lineHeight: 1,
       letterSpacing: '0.04em',

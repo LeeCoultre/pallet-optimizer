@@ -1204,8 +1204,8 @@ function Kbd({ children, onPrimary }: { children?: React.ReactNode; onPrimary?: 
       fontSize: 10.5,
       fontFamily: T.font.mono,
       color: onPrimary ? '#fff' : T.text.secondary,
-      background: onPrimary ? 'rgba(255,255,255,0.18)' : T.bg.surface3,
-      border: `1px solid ${onPrimary ? 'rgba(255,255,255,0.28)' : T.border.primary}`,
+      background: onPrimary ? 'var(--bg-glass-on-accent)' : T.bg.surface3,
+      border: `1px solid ${onPrimary ? 'var(--bg-glass-on-accent-border)' : T.border.primary}`,
       borderRadius: 3,
       lineHeight: 1,
     }}>

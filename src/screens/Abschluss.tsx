@@ -793,7 +793,7 @@ function StickyBar({ queueRemaining, onSaveAndNext }) {
       right: 0,
       zIndex: 50,
       padding: '14px 32px',
-      background: 'rgba(255, 255, 255, 0.92)',
+      background: 'var(--bg-glass-strong)',
       backdropFilter: 'blur(14px)',
       WebkitBackdropFilter: 'blur(14px)',
       borderTop: `1px solid ${T.border.primary}`,

@@ -80,7 +80,7 @@ function ActiveAuftragPill({ route, onRoute }) {
         right: 24,
         zIndex: 100,
         padding: '10px 16px 12px',
-        background: 'rgba(255, 255, 255, 0.96)',
+        background: 'var(--bg-glass-strong)',
         backdropFilter: 'blur(14px)',
         WebkitBackdropFilter: 'blur(14px)',
         border: `1px solid ${T.border.primary}`,

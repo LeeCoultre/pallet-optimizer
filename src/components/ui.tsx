@@ -130,7 +130,7 @@ export function Topbar({ crumbs = [], right }: { crumbs?: Crumb[]; right?: React
       zIndex: 10,
       height: 60,
       padding: '0 40px',
-      background: 'rgba(255, 255, 255, 0.85)',
+      background: 'var(--bg-glass-medium)',
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
       borderBottom: `1px solid ${T.border.primary}`,

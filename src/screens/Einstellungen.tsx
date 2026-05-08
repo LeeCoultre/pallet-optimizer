@@ -525,7 +525,7 @@ function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }: { 
       zIndex: 5,
       marginBottom: 24,
       padding: '12px 16px',
-      background: 'rgba(255, 255, 255, 0.85)',
+      background: 'var(--bg-glass-medium)',
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
       border: `1px solid ${T.border.primary}`,
