@@ -18,6 +18,11 @@ COPY src ./src
 ARG VITE_CLERK_PUBLISHABLE_KEY
 ENV VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
 
+# Sentry DSN — optional. When unset the SDK init is skipped at runtime
+# (see src/main.tsx). Set it on Railway service variables to enable.
+ARG VITE_SENTRY_DSN
+ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
+
 # Empty VITE_API_URL → api.js uses relative URLs → same origin as backend.
 ENV VITE_API_URL=""
 RUN npm run build

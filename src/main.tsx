@@ -2,10 +2,33 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ClerkProvider } from '@clerk/clerk-react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import * as Sentry from '@sentry/react'
 import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { applyAccent, getStoredAccent } from './utils/accent.js'
+
+/* Sentry — only initialised when a DSN is configured (VITE_SENTRY_DSN).
+   Locally we leave it off so dev console stays quiet; on Railway prod
+   the env var is set and ErrorBoundary's window.Sentry hook starts
+   flowing. The freeze-week test surface is the most important time
+   to capture runtime errors, so this lights up immediately on deploy.
+   Sample rate is 1.0 (every error) — five users, low traffic, no quota
+   pressure. Performance/replay are off (tracesSampleRate=0) until we
+   have a reason to enable them. */
+const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN
+if (SENTRY_DSN) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    environment: import.meta.env.MODE,
+    release: 'marathon@2.2.0',
+    tracesSampleRate: 0,
+    sendDefaultPii: false,
+  })
+  // ErrorBoundary already calls window.Sentry?.captureException — wire
+  // the SDK into that hook so the existing fallback UI participates.
+  ;(window as unknown as { Sentry?: typeof Sentry }).Sentry = Sentry
+}
 
 /* Apply the user's saved accent color before React mounts so the first
    paint already has the right palette (no flash of the default orange). */

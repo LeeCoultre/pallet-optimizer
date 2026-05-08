@@ -4,12 +4,22 @@ Tests run against the live Railway PostgreSQL via the same engine the
 app uses. `clean_db` (autouse) TRUNCATEs every Marathon table before
 each test, so order doesn't matter.
 
+⚠️  SAFETY GUARD: because the test fixtures TRUNCATE the live database
+the app reads, an accidental `pytest` invocation during work hours
+would wipe a worker's in-progress Auftrag mid-flow. To prevent this
+the suite refuses to run unless the operator has explicitly opted in
+via `MARATHON_TESTS_OK_TO_WIPE_DB=yes`. Set it from the shell that
+launches pytest, never bake it into a config that runs on save.
+
 Auth: instead of issuing real Clerk JWTs, we override get_current_user
 (and require_admin transitively) via FastAPI's dependency_overrides.
 The `as_user(user)` fixture flips the active identity inside a single
 test, so we can simulate "user A starts → user B tries to progress".
 """
 
+import os
+
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
@@ -18,6 +28,24 @@ from backend.database import AsyncSessionLocal, engine
 from backend.deps import get_current_user
 from backend.main import app
 from backend.orm import User, UserRole
+
+
+def pytest_configure(config):
+    """Refuse to start if the operator hasn't acknowledged that the
+    suite TRUNCATEs the shared prod database before every test.
+
+    Bypass: `MARATHON_TESTS_OK_TO_WIPE_DB=yes pytest …`
+    """
+    if os.environ.get("MARATHON_TESTS_OK_TO_WIPE_DB") != "yes":
+        pytest.exit(
+            "\n\n"
+            "  Tests are blocked: this suite runs against the SHARED prod\n"
+            "  database and TRUNCATES every Marathon table before each test.\n"
+            "  Running it during work hours wipes any in-progress Auftrag.\n\n"
+            "  If you're sure no warehouse worker is mid-flow, opt in:\n\n"
+            "    MARATHON_TESTS_OK_TO_WIPE_DB=yes .venv/bin/pytest\n\n",
+            returncode=2,
+        )
 
 
 @pytest_asyncio.fixture
