@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Live-Aktivität v2 — «Schicht-Puls».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Warteschlange):
@@ -606,7 +605,7 @@ function KpiStrip({ kpis }) {
   );
 }
 
-function Kpi({ label, value, accent, success }) {
+function Kpi({ label, value, accent, success }: { label?: any; value?: any; accent?: boolean; success?: boolean }) {
   const color = accent ? T.accent.text : success ? T.status.success.text : T.text.primary;
   return (
     <div>
@@ -687,7 +686,7 @@ function StundenpulsCard({ hourly }) {
   );
 }
 
-function HourBar({ bucket, barHeight }) {
+function HourBar({ bucket, barHeight }: any) {
   const [hover, setHover] = useState(false);
   /* Stack segments by action color, proportional to count */
   const stacked = STACK_ORDER

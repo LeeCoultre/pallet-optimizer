@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Pruefen — Schritt 02. "Priority-driven hierarchy" redesign.
 
    Operator priorities, in order:
@@ -728,9 +727,9 @@ function FillMetric({ pct }) {
   );
 }
 
-function LevelsDisclosure({ pallets, open, onToggle }) {
-  const distribution = useMemo(() => levelDistribution(pallets), [pallets]);
-  const grand = distribution.reduce((s, d) => s + d.units, 0);
+function LevelsDisclosure({ pallets, open, onToggle }: any) {
+  const distribution: any[] = useMemo(() => levelDistribution(pallets), [pallets]);
+  const grand = distribution.reduce((s: number, d: any) => s + d.units, 0);
   if (grand === 0) return null;
   const filled = distribution.filter((d) => d.units > 0).length;
 

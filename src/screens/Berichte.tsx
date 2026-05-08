@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Berichte v2 — «Report Studio».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live /
@@ -354,7 +353,7 @@ function KpiStrip({ current, previous }) {
   );
 }
 
-function Kpi({ label, value, prev, rawValue, compareAs, accent }) {
+function Kpi({ label, value, prev, rawValue, compareAs, accent }: any) {
   const cur = typeof rawValue === 'number' ? rawValue : (typeof value === 'number' ? value : 0);
   const showComparison = prev != null && (cur > 0 || prev > 0);
   const delta = prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null;
@@ -1194,7 +1193,7 @@ function KbdHints() {
   );
 }
 
-function Kbd({ children, onPrimary }) {
+function Kbd({ children, onPrimary }: { children?: any; onPrimary?: boolean }) {
   return (
     <span style={{
       display: 'inline-flex',

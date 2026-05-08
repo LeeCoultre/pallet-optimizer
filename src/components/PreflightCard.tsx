@@ -41,7 +41,7 @@ const CHECK_GROUPS = [
   { kind: 'coverage',     label: 'ESKU' },
 ];
 
-export default function PreflightCard({ briefing, onJumpToPallet, onAction, defaultOpen = false }) {
+export default function PreflightCard({ briefing, onJumpToPallet, onAction, defaultOpen = false }: any) {
   // Collapsed by default — header tone (red/amber/green) already conveys
   // status at a glance; user clicks to drill into specific flags.
   // Pruefen passes defaultOpen=true when there are flags so the operator

@@ -68,7 +68,10 @@ export interface Parsed {
   [extra: string]: unknown;
 }
 
-export type Validation = Record<string, unknown>;
+/* The parser's validation report — shape owned by validateParsing in
+ * parseLagerauftrag.js. `any` here because the producer is JS-typed
+ * and consumers depend on dynamic field access. */
+export type Validation = any;
 
 /* `${palletIdx}|${itemIdx}|${key}` → unix-ms timestamp | true */
 export type CompletedKeys = Record<string, number | true>;
