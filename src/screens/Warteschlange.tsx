@@ -186,7 +186,20 @@ export default function WarteschlangeScreen({ onRoute }) {
       if (inField) return;
       if (!visible.length) return;
 
-      if (e.key === 'j' || e.key === 'ArrowDown') {
+      /* Meta/Ctrl+Arrow checks MUST come before plain arrow keys —
+         otherwise the plain branch swallows the keydown and the meta
+         variant becomes dead code (caught by no-dupe-else-if). */
+      if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowDown') {
+        e.preventDefault();
+        const target = visible[selectedIdx];
+        const idx = queue.findIndex((q) => q.id === target?.id);
+        if (idx >= 0 && idx < queue.length - 1) reorderQueue(idx, idx + 1);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowUp') {
+        e.preventDefault();
+        const target = visible[selectedIdx];
+        const idx = queue.findIndex((q) => q.id === target?.id);
+        if (idx > 0) reorderQueue(idx, idx - 1);
+      } else if (e.key === 'j' || e.key === 'ArrowDown') {
         e.preventDefault();
         setSelectedIdx((i) => Math.min(visible.length - 1, i + 1));
       } else if (e.key === 'k' || e.key === 'ArrowUp') {
@@ -203,16 +216,6 @@ export default function WarteschlangeScreen({ onRoute }) {
         e.preventDefault();
         const target = visible[selectedIdx];
         if (target) removeFromQueue(target.id);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowDown') {
-        e.preventDefault();
-        const target = visible[selectedIdx];
-        const idx = queue.findIndex((q) => q.id === target?.id);
-        if (idx >= 0 && idx < queue.length - 1) reorderQueue(idx, idx + 1);
-      } else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowUp') {
-        e.preventDefault();
-        const target = visible[selectedIdx];
-        const idx = queue.findIndex((q) => q.id === target?.id);
-        if (idx > 0) reorderQueue(idx, idx - 1);
       }
     };
     window.addEventListener('keydown', onKey);

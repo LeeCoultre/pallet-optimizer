@@ -1,5 +1,11 @@
+/* eslint-disable no-irregular-whitespace */
 /* ─────────────────────────────────────────────────────────────────────────
    Lagerauftrag parsing — pure functions, testable in Node.
+
+   NOTE: the file contains intentional NBSP (U+00A0) and other
+   invisible whitespace — .docx files emit them and the parser MUST
+   match literally. eslint's irregular-whitespace rule is disabled
+   above for that reason.
 
    Two formats supported:
      - "standard"  Lagerauftrag with PALETTE markers + tab-separated rows
@@ -162,7 +168,7 @@ function parseMetaCommon(text) {
 
   if (meta.name) {
     const dm = meta.name.match(
-      /\((\d{1,2})[\/.](\d{1,2})[\/.](\d{2,4})\s+(\d{1,2}):(\d{2})\)/
+      /\((\d{1,2})[/.](\d{1,2})[/.](\d{2,4})\s+(\d{1,2}):(\d{2})\)/
     );
     if (dm) {
       const [, dd, mm, yy, h, m] = dm;
@@ -219,7 +225,7 @@ function fixGluedSkuTitle(line) {
   // Only intervene when head obviously contains both SKU and prose (arrow,
   // bracket, parenthesis, asterisk, etc.). A bare SKU possibly followed by
   // trailing whitespace contains only word/space/hyphen — leave it alone.
-  if (!/[^\w\s\-]/.test(head)) return line;
+  if (!/[^\w\s-]/.test(head)) return line;
   const m = head.match(SKU_HEAD_RE);
   if (!m) return line;
   const rest = line.slice(tabIdx);

@@ -80,7 +80,7 @@ export function formatItemTitle(title) {
          : unit === 'kg' ? `${num} kg`
          : `${num} ${unit}`;
   }
-  let core = title
+  const core = title
     .replace(/\s+(g\.g\.A\.?|100\s*%|vegan|kaltgepresst|gepresst)\b.*$/i, '')
     .replace(/\s*\(\d+(?:[.,]\d+)?\s*(ml|l|kg|g)\)/gi, '')
     .replace(/\s*[-–]\s*$/, '')
