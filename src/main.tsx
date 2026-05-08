@@ -8,6 +8,7 @@ import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { applyAccent, getStoredAccent } from './utils/accent.js'
 import { applyTheme, getStoredTheme } from './utils/theme'
+import { clerkAppearance } from './utils/clerkAppearance'
 
 /* Sentry — only initialised when a DSN is configured (VITE_SENTRY_DSN).
    Locally we leave it off so dev console stays quiet; on Railway prod
@@ -61,7 +62,7 @@ createRoot(document.getElementById('root')!).render(
         (e.g. on a malformed publishable key) so the fallback UI must
         sit one level above it. */}
     <ErrorBoundary>
-      <ClerkProvider publishableKey={CLERK_KEY}>
+      <ClerkProvider publishableKey={CLERK_KEY} appearance={clerkAppearance}>
         <QueryClientProvider client={queryClient}>
           <App />
         </QueryClientProvider>
