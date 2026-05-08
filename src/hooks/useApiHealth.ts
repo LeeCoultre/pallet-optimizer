@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Lightweight API health probe — feeds the WorkspaceHeader pulse dot.
 
    Polls /api/health every 20s. The endpoint is process-only (no DB

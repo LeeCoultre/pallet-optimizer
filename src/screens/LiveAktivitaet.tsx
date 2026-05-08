@@ -64,7 +64,7 @@ const TONE_TO_PALETTE = {
 };
 
 /* ════════════════════════════════════════════════════════════════════════ */
-export default function LiveAktivitaetScreen({ onRoute }) {
+export default function LiveAktivitaetScreen({ onRoute }: { onRoute?: (route: string) => void }) {
   const meQ = useMe();
   const me = meQ.data;
 

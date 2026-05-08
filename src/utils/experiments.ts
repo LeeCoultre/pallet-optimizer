@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    experiments — opt-in feature flags persisted in localStorage.
 

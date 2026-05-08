@@ -1,4 +1,4 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
+// @ts-nocheck — legacy pallet-optimizer API client (pre-Marathon); not actively used
 /* API client for FastAPI backend.
  *
  * Deployment:

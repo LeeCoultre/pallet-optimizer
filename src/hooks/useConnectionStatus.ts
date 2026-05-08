@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    useConnectionStatus — derives a coarse online/offline/reconnecting
    signal from two independent sources:

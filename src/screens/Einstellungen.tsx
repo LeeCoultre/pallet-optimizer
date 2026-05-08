@@ -59,7 +59,7 @@ const SECTIONS = [
 ];
 
 /* ════════════════════════════════════════════════════════════════════════ */
-export default function EinstellungenScreen({ onRoute }) {
+export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: string) => void }) {
   const { queue, history, clearQueue, clearHistory } = useAppState();
   const meQ = useMe();
   const me = meQ.data;

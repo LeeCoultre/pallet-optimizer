@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    useIslandState — pure derivation hook that turns Marathon's app-state
    into a normalized briefing for the DynamicIsland component.
@@ -241,7 +240,7 @@ function derivePalletLevel(pallet) {
       || (it.title?.toLowerCase().includes('tacho') ? 6 : 1);
     counts[lvl] = (counts[lvl] || 0) + (it.units || 1);
   }
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const top = (Object.entries(counts) as Array<[string, number]>).sort((a, b) => b[1] - a[1])[0];
   return top ? parseInt(top[0], 10) : 1;
 }
 function shortenTitle(title, max) {

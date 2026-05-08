@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Marathon root — wraps content in AppShell (with persistent sidebar)
    and routes between Workspace (Upload/Pruefen/Focus/Abschluss based on
    current Auftrag step), Historie, and Einstellungen. */

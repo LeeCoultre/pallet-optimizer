@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed, strict typing pending
 /* Returns the value AFTER it has been stable for `delay` ms.
 
    Standard pattern for typed search inputs — keep the latest user input
