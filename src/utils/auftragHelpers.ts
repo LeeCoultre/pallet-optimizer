@@ -31,9 +31,10 @@ export function getLevel(item) {
   if (/\btacho/.test(t)) return 6;                                  // Tachorollen
   if (/(kürbis|kernöl)/.test(t)) return 5;                          // Kernöl
   // Produktion: explicit phrasing OR known TK-THERMALKING product line
-  // (sandbags, fillers and other "wird produziert"-grade items often
-  // ship without that exact phrase but belong to the same physical class).
-  if (/(wird (von .* )?produziert|tk\s+thermalking|sandsäcke|sandsack|sandsaecke)/.test(t)) return 4;
+  // OR any of the packaging-material keywords that classifyItem already
+  // recognises as Produktion (big bags, sandbags, fillers, packing tapes).
+  // klebeband is intentionally NOT included here — it has its own L3.
+  if (/(wird (von .* )?produziert|tk\s+thermalking|big\s*bag|silosack|sandsack|sandsäcke|sandsaecke|säcke|bauschutt|holzsack|paketband|packband|absperrband|holzwolle|füllmaterial)/.test(t)) return 4;
   if (/(klebeband|fragile|bruchgefahr)/.test(t)) return 3;          // Klebeband / Fragile
   // L2 ÖKO Thermorollen — ONLY explicit "öko" branding. `phenolfrei`
   // is a paper spec (BPA-free analog) that regular L1 thermorolls also

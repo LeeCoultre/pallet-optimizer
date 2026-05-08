@@ -44,3 +44,4 @@ public/test-orders/
 
 # Test coverage reports
 coverage/
+.claude/scheduled_tasks.lock
