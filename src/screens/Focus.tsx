@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Focus — Schritt 03. Single-article workflow.
 
    Visual ethos: the page does NOT scroll. One hero card holds every
@@ -470,7 +469,6 @@ export default function FocusScreen() {
           <div style={{
             padding: '14px 18px',
             background: T.bg.surface,
-            border: `1px solid ${T.border.primary}`,
             borderRadius: 14,
             boxShadow: '0 1px 3px rgba(17,24,39,0.03)',
             display: 'flex',
@@ -847,7 +845,7 @@ function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse }) {
   );
 }
 
-function CodeRow({ label, kbd, value, copied, onCopy, size, accent }) {
+function CodeRow({ label, kbd, value, copied, onCopy, size, accent }: any) {
   const isDominant = size === 'dominant';
   const valueFont = isDominant
     ? 'clamp(30px, 3.6vw, 46px)'
@@ -1073,7 +1071,7 @@ function PalletFlow({
   pallets, palletStates, currentIdx, itemIdx,
   copiedKeys, allPalletCopied,
   onPickPallet, onPickItem,
-}) {
+}: any) {
   if (!pallets?.length) return null;
   return (
     <div style={{
@@ -1616,7 +1614,7 @@ function ShellToggle({ on, onToggle }) {
   );
 }
 
-function Kbd({ children, onPrimary }) {
+function Kbd({ children, onPrimary }: { children?: any; onPrimary?: boolean }) {
   return (
     <kbd style={{
       display: 'inline-flex',

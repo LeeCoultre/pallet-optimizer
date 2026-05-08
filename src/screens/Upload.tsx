@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Upload v2 — «Drop Studio».
 
    Magazine-spread design (matches Pruefen / Focus / Live / Historie /
@@ -164,8 +163,8 @@ export default function UploadScreen({ onRoute }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addFiles, addRecent, current, queue.length, isOffline]);
 
-  const acceptFiles = useCallback((fl) => {
-    const arr = Array.from(fl || []).filter((f) => /\.docx$/i.test(f.name));
+  const acceptFiles = useCallback((fl: FileList | File[] | null) => {
+    const arr = Array.from(fl || []).filter((f: File) => /\.docx$/i.test(f.name));
     if (!arr.length) return;
     const dupes = detectDupes(arr);
     if (dupes.length > 0) {
@@ -1461,7 +1460,7 @@ function KpiStripV2({ history, queue, current }) {
   );
 }
 
-function KpiBox({ label, value, accent, success }) {
+function KpiBox({ label, value, accent, success }: { label?: any; value?: any; accent?: boolean; success?: boolean }) {
   const color = accent ? T.accent.text : success ? T.status.success.text : T.text.primary;
   return (
     <div>
@@ -1807,7 +1806,7 @@ function Kbd({ children }) {
   );
 }
 
-function DropIcon({ accent, size = 28 }) {
+function DropIcon({ accent, size = 28 }: { accent?: boolean; size?: number }) {
   const color = accent ? T.accent.main : T.text.subtle;
   return (
     <span style={{
