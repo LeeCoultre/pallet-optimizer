@@ -13,8 +13,6 @@ import {
   detectFormat,
   normalizeHeight,
   detectCodeType,
-  categoryRank,
-  CATEGORY_ORDER,
 } from './parseLagerauftrag.js';
 
 describe('parseTitleMeta', () => {
@@ -132,13 +130,6 @@ describe('normalizeHeight + detectCodeType', () => {
   });
 });
 
-describe('categoryRank', () => {
-  it('orders by CATEGORY_ORDER, unknown lands last', () => {
-    const ranks = CATEGORY_ORDER.map(categoryRank);
-    expect(ranks).toEqual([0, 1, 2, 3, 4, 5]);
-    expect(categoryRank('not-a-category')).toBe(99);
-  });
-});
 
 describe('validateParsing', () => {
   // Build a minimal parsed shape — we don't need to drive the full

@@ -14,24 +14,19 @@
    The detector picks one based on header keywords; both formats expose the
    same shape: { format, meta, pallets, einzelneSkuItems, schilderItems? }.
 
-   Heights config (admin-configurable inner/outer roll diameter equivalence)
-   is injected via setHeightsConfig — defaults are baked in for unit tests
-   and for the very first parse before AdminPanel hydrates.
+   Heights config — inner/outer roll diameter equivalence used to normalise
+   parsed heights to a canonical bucket. Static for now.
    ───────────────────────────────────────────────────────────────────────── */
 
-/* ── Heights config (admin-configurable) ────────────────────────────────── */
+/* ── Heights config ─────────────────────────────────────────────────────── */
 const DEFAULT_HEIGHTS = [
   { from: 9, to: 30 },
   { from: 14, to: 35 },
   { from: 18, to: 40 },
 ];
-let _heights = DEFAULT_HEIGHTS;
-export function setHeightsConfig(heights) {
-  _heights = Array.isArray(heights) && heights.length ? heights : DEFAULT_HEIGHTS;
-}
 export function normalizeHeight(h) {
   if (h == null) return h;
-  for (const e of _heights) if (e.from === h || e.to === h) return e.to;
+  for (const e of DEFAULT_HEIGHTS) if (e.from === h || e.to === h) return e.to;
   return h;
 }
 
@@ -101,34 +96,6 @@ export function classifyItem(title) {
   return { isThermo, isVeit, isHeipa, isTacho, isProduktion, category };
 }
 
-export const CATEGORY_ORDER = [
-  'thermorollen',
-  'heipa',
-  'veit',
-  'tachographenrollen',
-  'produktion',
-  'sonstige',
-];
-export const CATEGORY_LABELS = {
-  thermorollen: 'Thermorollen',
-  heipa: 'Heipa',
-  veit: 'Veit',
-  tachographenrollen: 'Tachographenrollen',
-  produktion: 'Produktion',
-  sonstige: 'Sonstige',
-};
-export const CATEGORY_COLORS = {
-  thermorollen: '#2563EB',
-  heipa: '#0891B2',
-  veit: '#7C3AED',
-  tachographenrollen: '#D97706',
-  produktion: '#65A30D',
-  sonstige: '#6B6560',
-};
-export function categoryRank(cat) {
-  const i = CATEGORY_ORDER.indexOf(cat);
-  return i < 0 ? 99 : i;
-}
 
 /* ── Regex char classes ─────────────────────────────────────────────────── */
 // All dash variants we've seen between P# and B# in pallet IDs

@@ -328,9 +328,8 @@ function fmt(ms) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/* Legacy exports kept as no-ops — Focus.jsx imports `resetSkipCount`
-   from this module. The auto-advance heuristic is gone, but the import
-   stays for backwards compatibility. */
-/* eslint-disable react-refresh/only-export-components -- legacy no-op exports */
-export function bumpSkipCount() { /* deprecated */ }
+/* Legacy export kept as a no-op — Focus.tsx still imports `resetSkipCount`.
+   The auto-advance heuristic is gone, but the import + call site remain
+   so we don't have to touch the Focus screen during freeze week. */
+/* eslint-disable react-refresh/only-export-components -- legacy no-op export */
 export function resetSkipCount() { /* deprecated */ }
