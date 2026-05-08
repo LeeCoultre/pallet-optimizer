@@ -20,7 +20,8 @@
    Backend unchanged. Reuses /api/me, /api/activity/shift, /api/health.
 */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import type { UseQueryResult } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { UserButton, useUser } from '@clerk/clerk-react';
 import { useAppState } from '@/state.jsx';
@@ -276,14 +277,14 @@ export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: str
             />
             <BackupRow
               onExport={() => exportLocalSettings()}
-              onImport={(file) => importLocalSettings(file).then(() => {
+              onImport={(file: File) => { importLocalSettings(file).then(() => {
                 /* Re-read accent from localStorage after import. */
                 const next = getStoredAccent();
                 setAccent(next);
                 applyAccent(next);
                 setStorageBytes(measureStorage());
                 alert('Einstellungen importiert.');
-              }).catch((err) => alert('Import fehlgeschlagen: ' + (err?.message || 'unbekannter Fehler')))}
+              }).catch((err: Error) => alert('Import fehlgeschlagen: ' + (err?.message || 'unbekannter Fehler'))); }}
               isLast
             />
           </SettingsCard>
@@ -365,7 +366,11 @@ function filterSections(sections, q) {
 /* ════════════════════════════════════════════════════════════════════════
    Identity hero
    ════════════════════════════════════════════════════════════════════════ */
-function IdentityHero({ me, clerkUser, shiftQ }: any) {
+interface MeShape { id?: string; name?: string; email?: string; role?: string }
+interface ShiftQ { data?: { durationSec?: number; completedToday?: number } }
+interface ClerkUserShape { createdAt?: number | string | Date | null }
+
+function IdentityHero({ me, clerkUser, shiftQ }: { me: MeShape | null | undefined; clerkUser: ClerkUserShape | null | undefined; shiftQ: ShiftQ }) {
   const initial = (me?.name || me?.email || '·').trim().charAt(0).toUpperCase();
   const isAdmin = me?.role === 'admin';
   const joinedAt = clerkUser?.createdAt;
@@ -487,7 +492,7 @@ function IdentityHero({ me, clerkUser, shiftQ }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Search bar
    ════════════════════════════════════════════════════════════════════════ */
-function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }: any) {
+function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }: { search: string; onSearch: (v: string) => void; searchRef: React.RefObject<HTMLInputElement | null>; visibleCount: number; totalCount: number }) {
   return (
     <div style={{
       position: 'sticky',
@@ -561,7 +566,7 @@ function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }: an
 /* ════════════════════════════════════════════════════════════════════════
    Settings card wrapper
    ════════════════════════════════════════════════════════════════════════ */
-function SettingsCard({ id, title, subtitle, children, isLast }: any) {
+function SettingsCard({ id, title, subtitle, children, isLast }: { id?: string; title: ReactNode; subtitle?: ReactNode; children?: ReactNode; isLast?: boolean }) {
   return (
     <section id={id} style={{ marginBottom: isLast ? 0 : 20 }}>
       <div style={{ marginBottom: 14 }}>
@@ -597,13 +602,21 @@ function SettingsCard({ id, title, subtitle, children, isLast }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Theme studio — preset gallery + custom picker + live preview pane
    ════════════════════════════════════════════════════════════════════════ */
-function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }: any) {
+interface ThemeStudioProps {
+  accent: string;
+  previewAccent: string | null;
+  onApply: (hex: string) => void;
+  onPreview: (hex: string | null) => void;
+  onReset: () => void;
+}
+
+function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }: ThemeStudioProps) {
   const [hex, setHex] = useState(accent);
 
   /* Keep input in sync if accent changes from outside (preset click). */
   useEffect(() => { setHex(accent); }, [accent]);
 
-  const onHexChange = (raw) => {
+  const onHexChange = (raw: string) => {
     const next = raw.startsWith('#') ? raw : `#${raw}`;
     setHex(next.toUpperCase());
     if (/^#[0-9a-fA-F]{6}$/.test(next)) onApply(next.toUpperCase());
@@ -710,13 +723,15 @@ function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }: any
   );
 }
 
-function PresetCard({ preset, active, onApply, onHover, onLeave }: any) {
+interface ThemePreset { id: string; label: string; hex: string; emoji?: string }
+
+function PresetCard({ preset, active, onApply, onHover, onLeave }: { preset: ThemePreset; active: boolean; onApply: (hex: string) => void; onHover: (hex: string) => void; onLeave: () => void }) {
   const [hover, setHover] = useState(false);
   return (
     <button
       type="button"
-      onClick={onApply}
-      onMouseEnter={() => { setHover(true); onHover(); }}
+      onClick={() => onApply(preset.hex)}
+      onMouseEnter={() => { setHover(true); onHover(preset.hex); }}
       onMouseLeave={() => { setHover(false); onLeave(); }}
       style={{
         position: 'relative',
@@ -786,7 +801,7 @@ function PresetCard({ preset, active, onApply, onHover, onLeave }: any) {
   );
 }
 
-function ThemePreviewPane({ accentLabel, isPreviewing }: any) {
+function ThemePreviewPane({ accentLabel, isPreviewing }: { accentLabel: string; isPreviewing: boolean }) {
   /* Mini-mock UI built entirely from var(--accent) so it repaints
      instantly when applyAccent() runs. Mirrors the real Marathon UI
      vocabulary so users see exactly how their accent will land. */
@@ -920,7 +935,7 @@ function ThemePreviewPane({ accentLabel, isPreviewing }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Experiments
    ════════════════════════════════════════════════════════════════════════ */
-function ExperimentRow({ flag, isLast }: any) {
+function ExperimentRow({ flag, isLast }: { flag: string; isLast?: boolean }) {
   const [enabled, setEnabled] = useExperiment(flag);
   const meta = EXPERIMENT_META[flag] || { label: flag, description: '' };
   return (
@@ -957,7 +972,7 @@ function ExperimentRow({ flag, isLast }: any) {
   );
 }
 
-function Toggle({ checked, onChange, ariaLabel }: any) {
+function Toggle({ checked, onChange, ariaLabel }: { checked: boolean; onChange: (next: boolean) => void; ariaLabel?: string }) {
   return (
     <button
       type="button"
@@ -996,16 +1011,23 @@ function Toggle({ checked, onChange, ariaLabel }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Diagnostics
    ════════════════════════════════════════════════════════════════════════ */
-function DiagnosticGrid({ healthQ, clerkUser, onClearCache }: any) {
-  const status = healthQ.data?.status || (healthQ.isError ? 'offline' : 'unknown');
+interface HealthQ {
+  data?: { status?: string; elapsedMs?: number | null };
+  isError?: boolean;
+  dataUpdatedAt?: number;
+}
+
+function DiagnosticGrid({ healthQ, clerkUser, onClearCache }: { healthQ: HealthQ; clerkUser: { lastSignInAt?: number | string | Date | null } | null | undefined; onClearCache: () => void }) {
+  const status: string = healthQ.data?.status || (healthQ.isError ? 'offline' : 'unknown');
   const elapsed = healthQ.data?.elapsedMs;
 
-  const statusMeta = {
+  const statusMetaMap: Record<string, { label: string; tone: { text: string }; dot: string }> = {
     ok:        { label: 'Online',    tone: T.status.success, dot: T.status.success.main },
     degraded:  { label: 'Degraded',  tone: T.status.warn,    dot: T.status.warn.main },
     offline:   { label: 'Offline',   tone: T.status.danger,  dot: T.status.danger.main },
     unknown:   { label: 'Unbekannt', tone: { text: T.text.faint }, dot: T.text.faint },
-  }[status];
+  };
+  const statusMeta = statusMetaMap[status] || statusMetaMap.unknown;
 
   const lastFetched = healthQ.dataUpdatedAt
     ? new Date(healthQ.dataUpdatedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -1206,7 +1228,7 @@ function ValuesGrid() {
   );
 }
 
-function ValueLine({ label, value, isLast }: any) {
+function ValueLine({ label, value, isLast }: { label: ReactNode; value: ReactNode; isLast?: boolean }) {
   return (
     <div style={{
       display: 'flex',
@@ -1233,7 +1255,7 @@ function ValueLine({ label, value, isLast }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Data row + backup
    ════════════════════════════════════════════════════════════════════════ */
-function DataRow({ label, value, mono, action, isLast }: any) {
+function DataRow({ label, value, mono, action, isLast }: { label: ReactNode; value: ReactNode; mono?: boolean; action?: ReactNode; isLast?: boolean }) {
   return (
     <div style={{
       display: 'flex',
@@ -1260,7 +1282,7 @@ function DataRow({ label, value, mono, action, isLast }: any) {
   );
 }
 
-function BackupRow({ onExport, onImport, isLast }: any) {
+function BackupRow({ onExport, onImport, isLast }: { onExport: () => void; onImport: (file: File) => void; isLast?: boolean }) {
   const inputRef = useRef(null);
   return (
     <div style={{
@@ -1370,7 +1392,7 @@ function fmtHm(sec) {
   return `${m}m`;
 }
 
-function Kbd({ children, inline }: any) {
+function Kbd({ children, inline }: { children?: ReactNode; inline?: boolean }) {
   return (
     <span style={{
       display: 'inline-flex',

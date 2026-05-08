@@ -102,10 +102,10 @@ export default function WarteschlangeScreen({ onRoute }) {
 
   /* ── totals for the hero KPI strip ───────────────────────────── */
   const totals = useMemo(
-    () => entries.reduce((acc: { pallets: number; articles: number; units: number; etaSec: number }, e: any) => ({
+    () => entries.reduce((acc: { pallets: number; articles: number; units: number; etaSec: number }, e) => ({
       pallets:  acc.pallets  + e._palletCount,
       articles: acc.articles + e._articleCount,
-      units:    acc.units    + e._units,
+      units:    acc.units    + Number(e._units || 0),
       etaSec:   acc.etaSec   + e._etaSec,
     }), { pallets: 0, articles: 0, units: 0, etaSec: 0 }),
     [entries],
@@ -628,7 +628,7 @@ function KpiStrip({ entries, totals }) {
   );
 }
 
-function Kpi({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
+function Kpi({ label, value, accent }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean }) {
   return (
     <div>
       <div style={{
@@ -698,7 +698,7 @@ function Toolbar({ sortMode, onSortMode, queueLen, onClear }) {
   );
 }
 
-function SortPill({ children, active, onClick, title }: { children?: any; active?: boolean; onClick?: any; title?: string }) {
+function SortPill({ children, active, onClick, title }: { children?: React.ReactNode; active?: boolean; onClick?: () => void; title?: string }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -1408,7 +1408,7 @@ function FingerprintFlags({ fp }) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
+function Stat({ label, value, accent }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ color: T.text.faint }}>{label}</span>
@@ -1423,7 +1423,7 @@ function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boo
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function IconBtn({ onClick, disabled, title, children }: { onClick?: any; disabled?: boolean; title?: string; children?: any }) {
+function IconBtn({ onClick, disabled, title, children }: { onClick?: (e: React.MouseEvent) => void; disabled?: boolean; title?: string; children?: React.ReactNode }) {
   const [hover, setHover] = useState(false);
   return (
     <button

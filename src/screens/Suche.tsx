@@ -1033,7 +1033,14 @@ function EmptyHero({
 /* ════════════════════════════════════════════════════════════════════════
    Insights strip
    ════════════════════════════════════════════════════════════════════════ */
-function InsightsStrip({ insights, total, totalUnfiltered }: { insights: any; total: number; totalUnfiltered: number }) {
+interface SuchInsights {
+  status: { completed: number; in_progress: number; queued: number; error: number };
+  matchField: { fnsku: number; sku: number; ean: number; sendungsnummer: number; file_name: number };
+  oldest: number | null;
+  newest: number | null;
+}
+
+function InsightsStrip({ insights, total, totalUnfiltered }: { insights: SuchInsights; total: number; totalUnfiltered: number }) {
   const matchTotal = (Object.values(insights.matchField) as number[]).reduce((s, n) => s + n, 0) || 1;
   const matchEntries = (Object.entries(insights.matchField) as Array<[string, number]>)
     .filter(([, n]) => n > 0)
@@ -1143,7 +1150,7 @@ const MATCH_COLORS = {
   file_name: T.text.faint,
 };
 
-function KpiBox({ label, value, tone, accent }: { label?: any; value?: any; tone?: string | null; accent?: any }) {
+function KpiBox({ label, value, tone, accent }: { label?: React.ReactNode; value?: React.ReactNode; tone?: string | null; accent?: React.ReactNode }) {
   return (
     <div>
       <div style={{
@@ -1299,7 +1306,7 @@ function ResultCard({ hit, query, isSelected, onSelect, onOpen }) {
   );
 }
 
-function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
+function Stat({ label, value, accent }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ color: T.text.faint }}>{label}</span>
@@ -1673,7 +1680,7 @@ function DetailModal({ id, onClose }) {
   );
 }
 
-function MetaCell({ label, value, mono, accent }: { label?: any; value?: any; mono?: boolean; accent?: boolean }) {
+function MetaCell({ label, value, mono, accent }: { label?: React.ReactNode; value?: React.ReactNode; mono?: boolean; accent?: boolean }) {
   return (
     <div>
       <div style={{

@@ -17,7 +17,7 @@
      [Pagination]
    */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode, type CSSProperties, type ChangeEvent, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   adminListSkuDimensions,
@@ -28,6 +28,32 @@ import {
   adminDeleteSkuDimension,
 } from '@/marathonApi.js';
 import { Card, T } from '@/components/ui.jsx';
+import type {
+  SkuDimensionRead,
+  SkuDimensionUpsert,
+  SkuDimensionImportResult,
+} from '@/types/api';
+
+type DimRow = SkuDimensionRead;
+
+interface ImportBannerSuccess extends SkuDimensionImportResult {
+  kind: 'success';
+}
+interface ImportBannerError {
+  kind: 'error';
+  message: string;
+}
+type ImportBannerState = ImportBannerSuccess | ImportBannerError;
+
+interface DimStats {
+  withFnsku: number;
+  multiKey: number;
+  manual: number;
+  xlsx: number;
+  incomplete: number;
+  avgWeight: number;
+  avgVolume: number;
+}
 
 const PAGE_SIZE = 50;
 
@@ -38,8 +64,8 @@ export default function DimensionsTab() {
   const [sortBy, setSortBy] = useState('updated');
   const [sortDir, setSortDir] = useState('desc');
   const [filter, setFilter] = useState('all');     // all | manual | xlsx | multi | incomplete
-  const [importBanner, setImportBanner] = useState(null);
-  const [editing, setEditing] = useState(null);     // row | 'new' | null
+  const [importBanner, setImportBanner] = useState<ImportBannerState | null>(null);
+  const [editing, setEditing] = useState<DimRow | 'new' | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
@@ -85,7 +111,7 @@ export default function DimensionsTab() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: any }) => adminUpdateSkuDimension(id, payload),
+    mutationFn: ({ id, payload }: { id: number; payload: Partial<SkuDimensionUpsert> }) => adminUpdateSkuDimension(id, payload),
     onSuccess: () => {
       setEditing(null);
       qc.invalidateQueries({ queryKey: ['admin', 'sku-dimensions'] });
@@ -252,7 +278,7 @@ export default function DimensionsTab() {
 /* ════════════════════════════════════════════════════════════════════════
    Quick stats card
    ════════════════════════════════════════════════════════════════════════ */
-function QuickStats({ stats, total, loading }: any) {
+function QuickStats({ stats, total, loading }: { stats: DimStats; total: number; loading: boolean }) {
   const items = [
     { label: 'Einträge gesamt',  value: loading ? '…' : total, mono: true },
     { label: 'Mit FNSKU',         value: loading ? '…' : stats.withFnsku, mono: true },
@@ -297,7 +323,16 @@ function QuickStats({ stats, total, loading }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Action bar (Add / Import / Export)
    ════════════════════════════════════════════════════════════════════════ */
-function ActionBar({ importPending, exportPending, canExport, onAddNew, onFile, onExport }: any) {
+interface ActionBarProps {
+  importPending: boolean;
+  exportPending: boolean;
+  canExport: boolean;
+  onAddNew: () => void;
+  onFile: (e: ChangeEvent<HTMLInputElement>) => void;
+  onExport: () => void;
+}
+
+function ActionBar({ importPending, exportPending, canExport, onAddNew, onFile, onExport }: ActionBarProps) {
   return (
     <div style={{
       display: 'flex',
@@ -328,7 +363,7 @@ function ActionBar({ importPending, exportPending, canExport, onAddNew, onFile, 
 /* ════════════════════════════════════════════════════════════════════════
    Import banner
    ════════════════════════════════════════════════════════════════════════ */
-function ImportBanner({ banner }: any) {
+function ImportBanner({ banner }: { banner: ImportBannerState }) {
   const ok = banner.kind === 'success';
   return (
     <div style={{
@@ -479,7 +514,7 @@ function FilterBar({
 /* ════════════════════════════════════════════════════════════════════════
    Empty state
    ════════════════════════════════════════════════════════════════════════ */
-function EmptyState({ isLoading, isEmpty, isFiltered, onAddNew }: any) {
+function EmptyState({ isLoading, isEmpty, isFiltered, onAddNew }: { isLoading: boolean; isEmpty: boolean; isFiltered: boolean; onAddNew: () => void }) {
   if (isLoading) return (
     <div style={{ padding: 24 }}>
       {[0,1,2,3].map((i) => (
@@ -599,7 +634,20 @@ function DimensionsTable({
   );
 }
 
-function Th({ children, sortKey, sortBy, sortDir, onSort, w, align = 'left', mono, center, hint }: any) {
+interface ThProps {
+  children?: ReactNode;
+  sortKey?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc' | string;
+  onSort?: (key: string) => void;
+  w?: number | string;
+  align?: 'left' | 'right' | 'center';
+  mono?: boolean;
+  center?: boolean;
+  hint?: string;
+}
+
+function Th({ children, sortKey, sortBy, sortDir, onSort, w, align = 'left', mono, center, hint }: ThProps) {
   const sortable = !!sortKey && !!onSort;
   const isSorted = sortable && sortBy === sortKey;
   return (
@@ -633,7 +681,19 @@ function Th({ children, sortKey, sortBy, sortDir, onSort, w, align = 'left', mon
   );
 }
 
-function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, onToggleExpand, onEdit, onDelete }: any) {
+interface DimRowProps {
+  row: DimRow;
+  index: number;
+  isLast: boolean;
+  isExpanded: boolean;
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  onToggleExpand: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, onToggleExpand, onEdit, onDelete }: DimRowProps) {
   const totalKeys = row.fnskus.length + row.skus.length + row.eans.length;
   const updated = formatRelative(row.updatedAt);
   return (
@@ -757,7 +817,7 @@ function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, on
   );
 }
 
-function Td({ children, center, align = 'left', mono, w }: any) {
+function Td({ children, center, align = 'left', mono, w }: { children?: ReactNode; center?: boolean; align?: 'left' | 'right' | 'center'; mono?: boolean; w?: number | string }) {
   return (
     <td style={{
       padding: '10px 12px',
@@ -778,7 +838,7 @@ function Td({ children, center, align = 'left', mono, w }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Expanded row — full keys, audit, computed numbers
    ════════════════════════════════════════════════════════════════════════ */
-function DimRowExpansion({ row, updated }: any) {
+function DimRowExpansion({ row, updated }: { row: DimRow; updated: { short: string; full: string } }) {
   const volumeCm3 = row.lengthCm * row.widthCm * row.heightCm;
   const volumeL = volumeCm3 / 1000;
   const density = volumeCm3 > 0 ? row.weightKg / (volumeCm3 / 1e6) : 0;  // kg/m³
@@ -843,7 +903,7 @@ function DimRowExpansion({ row, updated }: any) {
   );
 }
 
-function SectionLabel({ children, style }: any) {
+function SectionLabel({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   return (
     <div style={{
       fontSize: 10.5,
@@ -857,7 +917,7 @@ function SectionLabel({ children, style }: any) {
   );
 }
 
-function KeyGroup({ label, items, accent }: any) {
+function KeyGroup({ label, items }: { label: string; items: string[]; accent?: typeof T.accent }) {
   const arr = items || [];
   return (
     <div style={{ marginBottom: 12 }}>
@@ -883,9 +943,9 @@ function KeyGroup({ label, items, accent }: any) {
   );
 }
 
-function KeyChip({ value }: any) {
+function KeyChip({ value }: { value: string }) {
   const [flash, setFlash] = useState(false);
-  const onCopy = async (e) => {
+  const onCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(value);
@@ -931,7 +991,7 @@ function KeyChip({ value }: any) {
   );
 }
 
-function DimMetric({ label, value, hint, mono }: any) {
+function DimMetric({ label, value, hint, mono }: { label: string; value: ReactNode; hint?: string; mono?: boolean }) {
   return (
     <div style={{
       display: 'grid',
@@ -954,12 +1014,12 @@ function DimMetric({ label, value, hint, mono }: any) {
   );
 }
 
-function SourceBadge({ source }: any) {
-  const map = {
+function SourceBadge({ source }: { source: string | null }) {
+  const map: Record<string, { label: string; color: string; bg: string; border: string }> = {
     manual:      { label: 'Manuell',  color: T.accent.text, bg: T.accent.bg, border: T.accent.border },
     xlsx_import: { label: 'xlsx',     color: T.text.muted, bg: T.bg.surface3, border: T.border.primary },
   };
-  const m = map[source] || { label: source || '—', color: T.text.muted, bg: T.bg.surface3, border: T.border.primary };
+  const m = (source && map[source]) || { label: source || '—', color: T.text.muted, bg: T.bg.surface3, border: T.border.primary };
   return (
     <span style={{
       fontSize: 10.5,
@@ -978,7 +1038,7 @@ function SourceBadge({ source }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Pagination
    ════════════════════════════════════════════════════════════════════════ */
-function Pagination({ page, total, limit, onPage }: any) {
+function Pagination({ page, total, limit, onPage }: { page: number; total: number; limit: number; onPage: (next: number) => void }) {
   const pageCount = Math.max(1, Math.ceil(total / limit));
   if (total <= limit) return null;
   return (
@@ -1000,7 +1060,14 @@ function Pagination({ page, total, limit, onPage }: any) {
 /* ════════════════════════════════════════════════════════════════════════
    Edit modal — full create/update form
    ════════════════════════════════════════════════════════════════════════ */
-function DimensionEditModal({ row, onClose, onSave, saving }: any) {
+interface DimensionEditModalProps {
+  row: DimRow | null;
+  onClose: () => void;
+  onSave: (payload: SkuDimensionUpsert) => void;
+  saving: boolean;
+}
+
+function DimensionEditModal({ row, onClose, onSave, saving }: DimensionEditModalProps) {
   const isNew = !row;
   const [form, setForm] = useState({
     fnskus: (row?.fnskus || []).join(', '),
@@ -1016,12 +1083,12 @@ function DimensionEditModal({ row, onClose, onSave, saving }: any) {
 
   // Esc closes the modal
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const submit = (e) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     const fnskus = parseKeyList(form.fnskus);
     const skus = parseKeyList(form.skus);
@@ -1052,10 +1119,10 @@ function DimensionEditModal({ row, onClose, onSave, saving }: any) {
     onSave({
       fnskus, skus, eans,
       title: form.title || null,
-      lengthCm: parseFloat(form.lengthCm),
-      widthCm: parseFloat(form.widthCm),
-      heightCm: parseFloat(form.heightCm),
-      weightKg: parseFloat(form.weightKg),
+      lengthCm: parseFloat(String(form.lengthCm)),
+      widthCm: parseFloat(String(form.widthCm)),
+      heightCm: parseFloat(String(form.heightCm)),
+      weightKg: parseFloat(String(form.weightKg)),
       palletLoadMax,
     });
   };
@@ -1115,7 +1182,7 @@ function DimensionEditModal({ row, onClose, onSave, saving }: any) {
   );
 }
 
-function FieldInput({ label, value, onChange, type = 'text', step, placeholder }: any) {
+function FieldInput({ label, value, onChange, type = 'text', step, placeholder }: { label: string; value: string | number; onChange: (v: string) => void; type?: string; step?: string; placeholder?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{

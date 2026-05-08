@@ -168,8 +168,9 @@ export default function HistorieScreen() {
       const params: { from?: string } = {};
       if (rangeStart) params.from = new Date(rangeStart).toISOString().slice(0, 10);
       await downloadAuftraegeXlsx(params);
-    } catch (err: any) {
-      alert('Export fehlgeschlagen: ' + (err?.message || 'unbekannter Fehler'));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'unbekannter Fehler';
+      alert('Export fehlgeschlagen: ' + msg);
     } finally {
       setExporting(false);
     }
@@ -360,7 +361,7 @@ function median(arr) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function sumUnitsFromTimings(_h?: any): number | null {
+function sumUnitsFromTimings(_h?: unknown): number | null {
   /* History Summary doesn't ship units; return null so the throughput
      falls back to articleCount-based estimate. */
   return null;
@@ -490,7 +491,7 @@ function KpiStrip({ totals }) {
     </div>
   );
 }
-function Kpi({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
+function Kpi({ label, value, accent }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean }) {
   return (
     <div>
       <div style={{
@@ -1198,7 +1199,7 @@ function RowCard({
   );
 }
 
-function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
+function Stat({ label, value, accent }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ color: T.text.faint }}>{label}</span>
@@ -1296,7 +1297,7 @@ function ChevronToggle({ open, onClick }) {
   );
 }
 
-function IconBtn({ children, onClick, title, danger }: { children?: any; onClick?: any; title?: string; danger?: boolean }) {
+function IconBtn({ children, onClick, title, danger }: { children?: React.ReactNode; onClick?: (e: React.MouseEvent) => void; title?: string; danger?: boolean }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -1325,7 +1326,7 @@ function IconBtn({ children, onClick, title, danger }: { children?: any; onClick
 /* ════════════════════════════════════════════════════════════════════════
    Expanded detail — Gantt timing + lazy article fetch
    ════════════════════════════════════════════════════════════════════════ */
-function ExpandedDetail({ entry, onClose }: { entry: any; onClose?: () => void }) {
+function ExpandedDetail({ entry, onClose }: { entry: { id: string; fileName?: string | null; palletCount?: number; articleCount?: number; durationSec?: number | null; palletTimings?: Record<string, { startedAt?: number; finishedAt?: number }> }; onClose?: () => void }) {
   const detailQ = useQuery({
     queryKey: ['auftrag', entry.id],
     queryFn: () => getAuftrag(entry.id),
@@ -1565,7 +1566,7 @@ function primaryLevelOf(items) {
   return best;
 }
 
-function SectionLabel({ title, sub }: { title?: any; sub?: any }) {
+function SectionLabel({ title, sub }: { title?: React.ReactNode; sub?: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 10 }}>
       <div style={{
