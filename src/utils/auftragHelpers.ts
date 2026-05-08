@@ -675,7 +675,7 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
         // group across pallets if any one fills up. Aggregate the
         // resulting placements per pallet for the UI.
         const totalCartons = Math.max(1, e.cartons || 1);
-        const splits: Record<string, { count: number; result: any }> = {};
+        const splits: Record<string, { count: number; result: ReturnType<typeof pickPallet> }> = {};
         for (let i = 0; i < totalCartons; i++) {
           const result = pickPallet(e, states);
           const target = result.target;
@@ -895,7 +895,7 @@ function passesHardConstraints(carton, ps) {
 }
 
 function scorePallet(carton, ps) {
-  const breakdown: Record<string, any> = {
+  const breakdown: Record<string, boolean | number> = {
     useItemMatch: false, formatMatch: false, brandMatch: false,
     fnskuMatch: false, levelMatch: false,
     monoLevelConflict: false, multiLevelMismatch: false,

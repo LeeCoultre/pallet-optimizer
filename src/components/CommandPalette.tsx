@@ -232,7 +232,7 @@ function PaletteImpl({ onClose, onRoute }) {
         <div style={{ maxHeight: '52vh', overflowY: 'auto' }}>
           {actions.length > 0 && (
             <Section title="Aktionen">
-              {actions.map((a: any, i) => {
+              {actions.map((a: { id: string; label: string; sub?: string; kind: string; target: string; icon: React.ReactNode; disabled?: boolean }, i) => {
                 const flatIdx = i;
                 return (
                   <Row
@@ -339,7 +339,7 @@ function Row({
   selected, disabled,
   onMouseEnter, onClick,
   icon, label, sub, rightHint, rightHintTone, mono,
-}: any) {
+}: { selected?: boolean; disabled?: boolean; onMouseEnter?: () => void; onClick?: () => void; icon?: React.ReactNode; label?: React.ReactNode; sub?: React.ReactNode; rightHint?: React.ReactNode; rightHintTone?: 'success' | 'warn' | 'danger' | 'neutral'; mono?: boolean }) {
   return (
     <button
       onMouseEnter={onMouseEnter}

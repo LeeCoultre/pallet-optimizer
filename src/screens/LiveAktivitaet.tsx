@@ -605,7 +605,7 @@ function KpiStrip({ kpis }) {
   );
 }
 
-function Kpi({ label, value, accent, success }: { label?: any; value?: any; accent?: boolean; success?: boolean }) {
+function Kpi({ label, value, accent, success }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean; success?: boolean }) {
   const color = accent ? T.accent.text : success ? T.status.success.text : T.text.primary;
   return (
     <div>
@@ -686,7 +686,7 @@ function StundenpulsCard({ hourly }) {
   );
 }
 
-function HourBar({ bucket, barHeight }: any) {
+function HourBar({ bucket, barHeight, max }: { bucket: { counts: Record<string, number>; total: number; hour?: number; label?: string }; barHeight: number; max?: number }) {
   const [hover, setHover] = useState(false);
   /* Stack segments by action color, proportional to count */
   const stacked = STACK_ORDER

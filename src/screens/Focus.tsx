@@ -845,7 +845,7 @@ function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse }) {
   );
 }
 
-function CodeRow({ label, kbd, value, copied, onCopy, size, accent }: any) {
+function CodeRow({ label, kbd, value, copied, onCopy, size, accent }: { label: React.ReactNode; kbd?: string; value: string; copied?: boolean; onCopy: () => void; size?: 'dominant' | 'compact' | 'quiet'; accent?: boolean }) {
   const isDominant = size === 'dominant';
   const valueFont = isDominant
     ? 'clamp(30px, 3.6vw, 46px)'
@@ -1067,11 +1067,25 @@ function FocusStickyBar({
    Stepper-style hairline connectors between nodes turn green as the
    worker crosses each pallet, so the chain itself reads as progress.
    ════════════════════════════════════════════════════════════════════════ */
+interface PalletStateInfo { anyEsku?: boolean; overloadFlags?: Set<string>; [k: string]: unknown }
+interface FocusPalletItem { level?: number; placementMeta?: { flags?: unknown[] }; [k: string]: unknown }
+interface PalletFlowProps {
+  pallets: Array<{ id: string; items?: FocusPalletItem[]; [k: string]: unknown }>;
+  palletStates?: Record<string, PalletStateInfo>;
+  palletTimings?: unknown;
+  currentIdx: number;
+  itemIdx: number;
+  copiedKeys: Set<string>;
+  allPalletCopied: boolean;
+  onPickPallet: (idx: number) => void;
+  onPickItem: (palletIdx: number, itemIdx: number) => void;
+}
+
 function PalletFlow({
   pallets, palletStates, currentIdx, itemIdx,
   copiedKeys, allPalletCopied,
   onPickPallet, onPickItem,
-}: any) {
+}: PalletFlowProps) {
   if (!pallets?.length) return null;
   return (
     <div style={{
@@ -1614,7 +1628,7 @@ function ShellToggle({ on, onToggle }) {
   );
 }
 
-function Kbd({ children, onPrimary }: { children?: any; onPrimary?: boolean }) {
+function Kbd({ children, onPrimary }: { children?: React.ReactNode; onPrimary?: boolean }) {
   return (
     <kbd style={{
       display: 'inline-flex',

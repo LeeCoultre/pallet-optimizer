@@ -353,7 +353,7 @@ function KpiStrip({ current, previous }) {
   );
 }
 
-function Kpi({ label, value, prev, rawValue, compareAs, accent }: any) {
+function Kpi({ label, value, prev, rawValue, compareAs, accent }: { label?: React.ReactNode; value?: React.ReactNode; prev?: number | null; rawValue?: number; compareAs?: 'pct' | 'abs' | 'duration'; accent?: boolean }) {
   const cur = typeof rawValue === 'number' ? rawValue : (typeof value === 'number' ? value : 0);
   const showComparison = prev != null && (cur > 0 || prev > 0);
   const delta = prev > 0 ? Math.round(((cur - prev) / prev) * 100) : null;
@@ -1193,7 +1193,7 @@ function KbdHints() {
   );
 }
 
-function Kbd({ children, onPrimary }: { children?: any; onPrimary?: boolean }) {
+function Kbd({ children, onPrimary }: { children?: React.ReactNode; onPrimary?: boolean }) {
   return (
     <span style={{
       display: 'inline-flex',

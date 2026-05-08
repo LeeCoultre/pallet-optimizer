@@ -40,7 +40,27 @@ const CHECK_GROUPS = [
   { kind: 'coverage',     label: 'ESKU' },
 ];
 
-export default function PreflightCard({ briefing, onJumpToPallet, onAction, defaultOpen = false }: any) {
+interface PreflightFlag {
+  kind: string;
+  code?: string;
+  severity: 'ok' | 'info' | 'warn' | 'error';
+  message: string;
+  detail?: string;
+  target?: { palletId?: string; itemKey?: string };
+  actionLabel?: string;
+  actionHref?: string;
+  [k: string]: unknown;
+}
+
+interface PreflightBriefing {
+  totals?: { palletCount?: number; itemCount?: number; units?: number; eskuGroupCount?: number; eskuItemCount?: number; fourSideCount?: number };
+  flags?: PreflightFlag[];
+  forecast?: { byPallet?: unknown; summary?: unknown };
+  coverage?: { totalDistinct?: number; missingDims?: number; missingPct?: number; topMissing?: unknown[] };
+  worst?: string;
+}
+
+export default function PreflightCard({ briefing, onJumpToPallet, onAction, defaultOpen = false }: { briefing: PreflightBriefing; onJumpToPallet?: (palletId: string) => void; onAction?: (flag: PreflightFlag) => void; defaultOpen?: boolean }) {
   // Collapsed by default — header tone (red/amber/green) already conveys
   // status at a glance; user clicks to drill into specific flags.
   // Pruefen passes defaultOpen=true when there are flags so the operator
@@ -183,7 +203,7 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
 }
 
 /* ─── Section / row ───────────────────────────────────────────────────── */
-function FlagSection({ title, flags, onJumpToPallet, onAction, mt, dim }: any) {
+function FlagSection({ title, flags, onJumpToPallet, onAction, mt, dim }: { title: string; flags: PreflightFlag[]; onJumpToPallet?: (palletId: string) => void; onAction?: (flag: PreflightFlag) => void; mt?: number; dim?: boolean }) {
   return (
     <div style={{ marginTop: mt || 0 }}>
       <div style={{
@@ -277,7 +297,7 @@ function FlagRow({ flag, onJumpToPallet, onAction }) {
   );
 }
 
-function ActionChip({ label, onClick, href }: { label?: any; onClick?: any; href?: string }) {
+function ActionChip({ label, onClick, href }: { label?: React.ReactNode; onClick?: () => void; href?: string }) {
   const handleClick = (e) => {
     if (href && !onClick) return; // let the anchor handle it
     e.preventDefault();

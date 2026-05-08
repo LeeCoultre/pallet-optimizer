@@ -154,7 +154,7 @@ function grabField(text, label, captureRe = '([^\\n\\t]+)') {
 }
 
 function parseMetaCommon(text) {
-  const meta: any = {};
+  const meta: Record<string, unknown> = {};
   const sn = grabField(text, 'Sendungsnummer');
   if (sn && sn !== 'KARTON NR.' && /[A-Z0-9]/i.test(sn)) meta.sendungsnummer = sn;
   const nn = grabField(text, 'Name');
@@ -166,7 +166,7 @@ function parseMetaCommon(text) {
   const eh = grabField(text, 'Einheiten insgesamt', '(\\d+)');
   if (eh) meta.totalUnits = parseInt(eh, 10);
 
-  if (meta.name) {
+  if (typeof meta.name === 'string') {
     const dm = meta.name.match(
       /\((\d{1,2})[/.](\d{1,2})[/.](\d{2,4})\s+(\d{1,2}):(\d{2})\)/
     );
@@ -177,7 +177,7 @@ function parseMetaCommon(text) {
       meta.createdDate = `${dd.padStart(2, '0')}.${mm.padStart(2, '0')}.${yyyy}`;
       meta.createdTime = `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
     }
-    const destMatch = meta.name.match(/-([A-Z]{2,5}\d?)\s*$/);
+    const destMatch = (meta.name as string).match(/-([A-Z]{2,5}\d?)\s*$/);
     if (destMatch && !meta.destination) meta.destination = destMatch[1];
   }
   return meta;
@@ -198,12 +198,12 @@ function normalizePalletId(rawId) {
 }
 
 /* ── Item-line regex ───────────────────────────────────────────────────── */
-function makePalletItemRegex(palletId, opts: any = {}) {
+function makePalletItemRegex(palletId, opts: { anchorStart?: boolean; global?: boolean } = {}) {
   const { anchorStart = true, global = false } = opts;
   // palletId is normalized "P1-B1"; on item lines we accept the same with
   // any dash variant and any arrow / non-word separator before the SKU.
   // Item-line format: "P1-B1 <arrow> <SKU>\t<title>\t..."
-  const m = palletId.match(/^([A-Z]+)(\d+)-(B\d+)$/i);
+  const m = String(palletId).match(/^([A-Z]+)(\d+)-(B\d+)$/i);
   if (!m) return null;
   const [, prefix, num, b] = m;
   // Tolerate typos like "B1-B5" instead of "P1-B5" — match any [A-Z]+ prefix
@@ -347,7 +347,7 @@ function parseEinzelneSkuSection(tail) {
 }
 
 function parseEinzelneSkuItemLine(line, allLines, lineIdx, achtung) {
-  const parsed: any = parseItemColumns(line);
+  const parsed: Record<string, unknown> & { units?: number; isEinzelneSku?: boolean; einzelneSku?: unknown } | null = parseItemColumns(line);
   if (!parsed) return null;
 
   // Look forward for "Zu verwendender Artikel"
@@ -442,7 +442,7 @@ function classifySchilderField(value) {
 
 function parseSchilder(rawText) {
   const text = rawText.replace(/\r/g, '');
-  const meta: any = {};
+  const meta: Record<string, unknown> = {};
 
   // Karton spec
   const km = text.match(SCHILDER_KARTON_RE);
@@ -463,7 +463,7 @@ function parseSchilder(rawText) {
 
   // Try to extract a SN-like FBA code from the document title or any FBA code
   const fbaMatch = text.match(/\bFBA\d[A-Z0-9]+\b/i);
-  if (fbaMatch && !meta.sendungsnummer?.startsWith('FBA'))
+  if (fbaMatch && !(typeof meta.sendungsnummer === 'string' && meta.sendungsnummer.startsWith('FBA')))
     meta.fbaCode = fbaMatch[0].toUpperCase();
 
   // Parse rows. Strategy: find every SKU-pattern line; for each, look at the

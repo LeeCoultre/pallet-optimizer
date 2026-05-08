@@ -24,7 +24,7 @@ import {
 } from './auftragHelpers.js';
 
 /* ─── Helpers to build minimal items ───────────────────────────────── */
-function mkMixed({ title, units = 10, dim = null, rollen = null, fnsku = 'X-FAKE' }: any): any {
+function mkMixed({ title, units = 10, dim = null, rollen = null, fnsku = 'X-FAKE' }: { title: string; units?: number; dim?: unknown; rollen?: unknown; fnsku?: string }): Record<string, unknown> {
   return {
     title,
     units,
@@ -35,7 +35,7 @@ function mkMixed({ title, units = 10, dim = null, rollen = null, fnsku = 'X-FAKE
     isEinzelneSku: false,
   };
 }
-function mkEsku({ title, cartons = 5, packsPerCarton = 10, fnsku = 'X-ESKU' }: any): any {
+function mkEsku({ title, cartons = 5, packsPerCarton = 10, fnsku = 'X-ESKU' }: { title: string; cartons?: number; packsPerCarton?: number; fnsku?: string }): Record<string, unknown> {
   return {
     title,
     fnsku,

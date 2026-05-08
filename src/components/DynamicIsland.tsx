@@ -471,7 +471,7 @@ function ExpandedAbschluss({ data }) {
 }
 
 /* ─── Atoms (Marathon light theme) ──────────────────────────────────── */
-function Header({ title, sub, accentColor }: { title?: any; sub?: any; accentColor?: string }) {
+function Header({ title, sub, accentColor }: { title?: React.ReactNode; sub?: React.ReactNode; accentColor?: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <span style={{

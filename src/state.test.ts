@@ -160,7 +160,7 @@ describe('toLegacyHistory', () => {
   });
 
   it('defaults palletTimings to empty object', () => {
-    const r = toLegacyHistory({ ...baseHistory, palletTimings: undefined as any });
+    const r = toLegacyHistory({ ...baseHistory, palletTimings: undefined as unknown as Record<string, never> });
     expect(r.palletTimings).toEqual({});
   });
 

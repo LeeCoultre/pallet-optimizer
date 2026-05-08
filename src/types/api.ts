@@ -69,9 +69,15 @@ export interface Parsed {
 }
 
 /* The parser's validation report — shape owned by validateParsing in
- * parseLagerauftrag.js. `any` here because the producer is JS-typed
- * and consumers depend on dynamic field access. */
-export type Validation = any;
+ * parseLagerauftrag.ts. Loose because the producer's contract isn't
+ * tight; consumers do dynamic field access on issues/counts. */
+export type Validation = {
+  ok?: boolean;
+  errorCount?: number;
+  warningCount?: number;
+  issues?: Array<{ severity?: string; message?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+};
 
 /* `${palletIdx}|${itemIdx}|${key}` → unix-ms timestamp | true */
 export type CompletedKeys = Record<string, number | true>;

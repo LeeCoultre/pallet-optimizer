@@ -1460,7 +1460,7 @@ function KpiStripV2({ history, queue, current }) {
   );
 }
 
-function KpiBox({ label, value, accent, success }: { label?: any; value?: any; accent?: boolean; success?: boolean }) {
+function KpiBox({ label, value, accent, success }: { label?: React.ReactNode; value?: React.ReactNode; accent?: boolean; success?: boolean }) {
   const color = accent ? T.accent.text : success ? T.status.success.text : T.text.primary;
   return (
     <div>

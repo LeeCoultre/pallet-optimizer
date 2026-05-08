@@ -176,10 +176,10 @@ function UsersTab() {
   const roleMut = useMutation({
     mutationFn: ({ id, role }: { id: string; role: 'admin' | 'user' }) => adminChangeUserRole(id, role),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
-    onError: (err: any) => alert(err?.message || 'Fehler beim Ändern der Rolle'),
+    onError: (err: unknown) => alert((err instanceof Error ? err.message : null) || 'Fehler beim Ändern der Rolle'),
   });
 
-  const onToggle = (u: any) => {
+  const onToggle = (u: { id: string; name: string; role: string }) => {
     const next = u.role === 'admin' ? 'user' : 'admin';
     if (!confirm(`Rolle für ${u.name} ändern: ${u.role} → ${next}?`)) return;
     roleMut.mutate({ id: u.id, role: next });
@@ -547,7 +547,18 @@ function Pagination({ page, total, limit, onPage }) {
   );
 }
 
-function DataTable({ columns, items, loading, empty, flat, sortBy, sortDir, onSort }: any) {
+interface DataTableColumn<R = Record<string, unknown>> {
+  key: string;
+  label: string;
+  w?: number | string;
+  render?: (row: R, idx?: number) => React.ReactNode;
+  sortKey?: string;
+  sortable?: boolean;
+  align?: React.CSSProperties['textAlign'];
+  mono?: boolean;
+}
+
+function DataTable<R extends { id?: string | number } = { id?: string | number }>({ columns, items, loading, empty, flat, sortBy, sortDir, onSort }: { columns: DataTableColumn<R>[]; items: R[]; loading?: boolean; empty?: React.ReactNode; flat?: boolean; sortBy?: string; sortDir?: string; onSort?: (key: string) => void }) {
   if (loading && !items) return <PadCenter>Lade…</PadCenter>;
   if (!items || items.length === 0) {
     return <PadCenter>{empty}</PadCenter>;
@@ -599,7 +610,7 @@ function DataTable({ columns, items, loading, empty, flat, sortBy, sortDir, onSo
         <tbody>
           {items.map((r, i) => (
             <tr
-              key={r.id || i}
+              key={String(r.id ?? i)}
               style={{
                 borderBottom: i < items.length - 1 ? `1px solid ${T.border.subtle}` : 'none',
               }}

@@ -727,9 +727,11 @@ function FillMetric({ pct }) {
   );
 }
 
-function LevelsDisclosure({ pallets, open, onToggle }: any) {
-  const distribution: any[] = useMemo(() => levelDistribution(pallets), [pallets]);
-  const grand = distribution.reduce((s: number, d: any) => s + d.units, 0);
+interface LevelDist { level: number; units: number; pct: number; meta: { name: string; shortName?: string; color: string }; [k: string]: unknown }
+
+function LevelsDisclosure({ pallets, open, onToggle }: { pallets: unknown[]; open: boolean; onToggle: () => void }) {
+  const distribution: LevelDist[] = useMemo(() => levelDistribution(pallets), [pallets]);
+  const grand = distribution.reduce((s: number, d) => s + d.units, 0);
   if (grand === 0) return null;
   const filled = distribution.filter((d) => d.units > 0).length;
 

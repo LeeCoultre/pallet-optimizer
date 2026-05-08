@@ -427,7 +427,16 @@ const numCell: React.CSSProperties = {
   fontVariantNumeric: 'tabular-nums',
 };
 
-function BreakdownRow({ row }: { row: any }) {
+interface BreakdownBucket {
+  level: number;
+  meta: { name?: string; shortName?: string; color?: string };
+  count: number;
+  sum: number;
+  weight: number;
+  pricePerPallet: number;
+}
+
+function BreakdownRow({ row }: { row: BreakdownBucket }) {
   return (
     <div style={{
       display: 'grid',
@@ -492,7 +501,7 @@ function LevelLabel({ level, meta }) {
 /* ════════════════════════════════════════════════════════════════════════
    COPYABLE VALUE — big mono text, click to copy, brief flash on success.
    ════════════════════════════════════════════════════════════════════════ */
-function CopyableValue({ label, value, rawValue, sublabel, variant, mono }: any) {
+function CopyableValue({ label, value, rawValue, sublabel, variant, mono }: { label?: React.ReactNode; value?: React.ReactNode; rawValue?: string | number; sublabel?: React.ReactNode; variant?: 'default' | 'hero' | 'primary'; mono?: boolean }) {
   const [copied, setCopied] = useState(false);
   const isPrimary = variant === 'primary';
   const handleCopy = (e) => {
@@ -866,7 +875,7 @@ function computeBilanz(pallets) {
     totalCount += 1;
   }
 
-  const breakdown = (Object.values(buckets) as any[]).sort((a: any, b: any) => a.level - b.level);
+  const breakdown = (Object.values(buckets) as BreakdownBucket[]).sort((a, b) => a.level - b.level);
   return { totalSum, totalWeight, totalCount, breakdown };
 }
 
