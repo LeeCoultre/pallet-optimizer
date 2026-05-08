@@ -56,7 +56,9 @@ const SORT_OPTIONS = [
   { id: 'longest',   label: 'Längste Dauer' },
 ];
 
-const STATUS_META = {
+import type { Tone } from '@/components/ui';
+
+const STATUS_META: Record<string, { label: string; tone: Tone }> = {
   completed:   { label: 'Fertig',  tone: 'success' },
   in_progress: { label: 'Aktiv',   tone: 'warn'    },
   queued:      { label: 'Queue',   tone: 'neutral' },

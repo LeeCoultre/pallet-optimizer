@@ -645,7 +645,7 @@ function StatusBadge({ status }) {
 function RoleBadge({ role }) {
   return role === 'admin'
     ? <Badge tone="accent">Admin</Badge>
-    : <Badge tone="subtle">Mitarbeiter</Badge>;
+    : <Badge tone="neutral">Mitarbeiter</Badge>;
 }
 
 function ActionBadge({ action }) {

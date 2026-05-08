@@ -1,8 +1,25 @@
 /* Marathon · Design System v3 — переиспользуемые атомы.
    Spec: DESIGN.md. */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, type ReactNode, type CSSProperties, type ButtonHTMLAttributes } from 'react';
 import { Wordmark } from './Logo.jsx';
+
+/* ─── Shared types ───────────────────────────────────────────────────── */
+export interface Crumb {
+  label: ReactNode;
+  muted?: boolean;
+  onClick?: () => void;
+  title?: string;
+}
+
+export interface Step {
+  n: number;
+  id: string;
+  label: string;
+  sub?: string;
+}
+
+export type Tone = 'success' | 'warn' | 'danger' | 'accent' | 'neutral';
 
 /* ─── Tokens ─────────────────────────────────────────────────────────── */
 export const T = {
@@ -52,7 +69,7 @@ export const T = {
 
 /* ─── Page shell ─────────────────────────────────────────────────────── */
 /* Page-level wrapper — sets canvas bg, font and reset */
-export function Page({ children, style }: { children?: any; style?: React.CSSProperties }) {
+export function Page({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   return (
     <div style={{
       background: T.bg.page,
@@ -71,7 +88,7 @@ export function Page({ children, style }: { children?: any; style?: React.CSSPro
    crumbs: [{ label, muted?, onClick?, title? }, ...]
    If a crumb has onClick → renders as clickable Crumb (hover lift,
    accent on hover). The last crumb stays passive even if onClick set. */
-export function Topbar({ crumbs = [], right }: { crumbs?: any[]; right?: any }) {
+export function Topbar({ crumbs = [], right }: { crumbs?: Crumb[]; right?: ReactNode }) {
   return (
     <header style={{
       position: 'sticky',
@@ -99,7 +116,7 @@ export function Topbar({ crumbs = [], right }: { crumbs?: any[]; right?: any }) 
   );
 }
 
-function Crumb({ crumb, isLast }: { crumb: any; isLast: boolean }) {
+function Crumb({ crumb, isLast }: { crumb: Crumb; isLast: boolean }) {
   const [hover, setHover] = useState(false);
   const interactive = !!crumb.onClick && !isLast;
   const baseColor = isLast
@@ -180,13 +197,13 @@ export const STEPS = [
    When `onNavigate` is provided, also installs Alt+1..4 shortcuts at
    document level so the worker can jump tabs without leaving the
    keyboard. The shortcut handler is auto-cleaned on unmount. */
-export function StepperBar({ active, steps = STEPS, onNavigate, canNavigate }: { active: string; steps?: any[]; onNavigate?: (id: string) => void; canNavigate?: (id: string) => boolean }) {
+export function StepperBar({ active, steps = STEPS, onNavigate, canNavigate }: { active: string; steps?: Step[]; onNavigate?: (id: string) => void; canNavigate?: (id: string) => boolean }) {
   // Alt+1..4 keyboard navigation — only when onNavigate is wired.
   useEffect(() => {
     if (!onNavigate) return undefined;
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (!e.altKey) return;
-      const t = e.target;
+      const t = e.target as (HTMLElement | null);
       if (t?.tagName === 'INPUT' || t?.tagName === 'TEXTAREA') return;
       if (t?.isContentEditable) return;
       const idx = parseInt(e.key, 10) - 1;
@@ -242,7 +259,7 @@ function StepperKeyframes() {
   );
 }
 
-export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }: { active: string; steps?: any[]; onNavigate?: (id: string) => void; canNavigate?: (id: string) => boolean }) {
+export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }: { active: string; steps?: Step[]; onNavigate?: (id: string) => void; canNavigate?: (id: string) => boolean }) {
   const activeIdx = steps.findIndex((s) => s.id === active);
   const n = steps.length;
 
@@ -324,10 +341,20 @@ export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }: { ac
   );
 }
 
+interface StepCellProps {
+  step: Step;
+  state: 'done' | 'current' | 'todo';
+  mountDelayMs?: number;
+  clickable?: boolean;
+  isBlocked?: boolean;
+  shortcut?: number | null;
+  onClick?: () => void;
+}
+
 function StepCell({
   step, state, mountDelayMs = 0,
   clickable = false, isBlocked = false, shortcut = null, onClick,
-}: any) {
+}: StepCellProps) {
   const isDone = state === 'done';
   const isCurrent = state === 'current';
   const [hover, setHover] = useState(false);
@@ -351,11 +378,11 @@ function StepCell({
   const labelWeight = isCurrent ? 600 : 500;
   const subColor = (isCurrent || isDone) ? T.text.subtle : T.text.faint;
 
-  const Wrapper: any = clickable ? 'button' : 'div';
-  const wrapperProps = clickable ? {
+  const Wrapper = (clickable ? 'button' : 'div') as React.ElementType;
+  const wrapperProps: Record<string, unknown> = clickable ? {
     type: 'button',
     onClick,
-    onMouseDown: (e) => e.preventDefault(),
+    onMouseDown: (e: React.MouseEvent) => e.preventDefault(),
     onMouseEnter: () => setHover(true),
     onMouseLeave: () => setHover(false),
     title: `Zu ${step.label}` + (shortcut ? ` (Alt+${shortcut})` : ''),
@@ -484,12 +511,25 @@ function StepCell({
    Children render INSIDE the frame and SHOULD NOT carry their own
    border / shadow / borderRadius — StudioFrame supplies them. Use
    `padding` prop to control inner space. */
+interface StudioFrameProps {
+  children?: ReactNode;
+  label?: ReactNode;
+  status?: ReactNode;
+  accent?: boolean;
+  padding?: string | number;
+  bare?: boolean;
+  gap?: number;
+  zen?: boolean;
+  style?: CSSProperties;
+  contentStyle?: CSSProperties;
+}
+
 export function StudioFrame({
   children, label, status, accent = true,
   padding = '32px 36px', bare = false, gap = 14,
   zen = false,
   style, contentStyle,
-}: any) {
+}: StudioFrameProps) {
   const accentColor = accent ? T.accent.main : T.text.faint;
   const eyebrow = (label || status) ? (
     <div style={{
@@ -611,7 +651,7 @@ export function CornerMarks({ stroke, long }: { stroke?: string; long?: boolean 
 }
 
 /* ─── Card ───────────────────────────────────────────────────────────── */
-export function Card({ children, style, padding }: { children?: any; style?: React.CSSProperties; padding?: string | number }) {
+export function Card({ children, style, padding }: { children?: ReactNode; style?: CSSProperties; padding?: string | number }) {
   return (
     <div style={{
       background: T.bg.surface,
@@ -627,7 +667,7 @@ export function Card({ children, style, padding }: { children?: any; style?: Rea
 }
 
 /* ─── Section header ─────────────────────────────────────────────────── */
-export function SectionHeader({ title, sub, right }: { title?: any; sub?: any; right?: any }) {
+export function SectionHeader({ title, sub, right }: { title?: ReactNode; sub?: ReactNode; right?: ReactNode }) {
   return (
     <div style={{
       marginBottom: 14,
@@ -662,7 +702,7 @@ export function SectionHeader({ title, sub, right }: { title?: any; sub?: any; r
 }
 
 /* ─── Eyebrow (мини-метка над H1) ────────────────────────────────────── */
-export function Eyebrow({ children }: { children?: any }) {
+export function Eyebrow({ children }: { children?: ReactNode }) {
   return (
     <div style={{
       display: 'inline-flex',
@@ -680,7 +720,7 @@ export function Eyebrow({ children }: { children?: any }) {
 }
 
 /* ─── H1 / Lead ──────────────────────────────────────────────────────── */
-export function PageH1({ children }: { children?: any }) {
+export function PageH1({ children }: { children?: ReactNode }) {
   return (
     <h1 style={{
       fontFamily: T.font.ui,
@@ -696,7 +736,7 @@ export function PageH1({ children }: { children?: any }) {
   );
 }
 
-export function Lead({ children, style }: { children?: any; style?: React.CSSProperties }) {
+export function Lead({ children, style }: { children?: ReactNode; style?: CSSProperties }) {
   return (
     <p style={{
       marginTop: 12,
@@ -713,7 +753,7 @@ export function Lead({ children, style }: { children?: any; style?: React.CSSPro
 }
 
 /* ─── Label (uppercase mini-meta) ────────────────────────────────────── */
-export function Label({ children }: { children?: any }) {
+export function Label({ children }: { children?: ReactNode }) {
   return (
     <span style={{
       fontSize: 11.5,
@@ -728,7 +768,7 @@ export function Label({ children }: { children?: any }) {
 }
 
 /* ─── Meta (label + value pair) ──────────────────────────────────────── */
-export function Meta({ label, value, mono }: { label?: any; value?: any; mono?: boolean }) {
+export function Meta({ label, value, mono }: { label?: ReactNode; value?: ReactNode; mono?: boolean }) {
   return (
     <div>
       <div style={{ fontSize: 11.5, color: T.text.subtle, fontWeight: 500, marginBottom: 4 }}>
@@ -747,18 +787,19 @@ export function Meta({ label, value, mono }: { label?: any; value?: any; mono?: 
 }
 
 /* ─── Badge / Pill ───────────────────────────────────────────────────── */
-export function Badge({ children, tone, color, bg, text }: { children?: any; tone?: string; color?: string; bg?: string; text?: string }) {
-  let styles;
+export function Badge({ children, tone, color, bg, text }: { children?: ReactNode; tone?: Tone; color?: string; bg?: string; text?: string }) {
+  let styles: { background?: string; color?: string; borderColor?: string };
   if (color) {
     styles = { background: bg, color: text, borderColor: color + '40' };
   } else {
-    styles = {
+    const tones: Record<Tone, { background: string; color: string; borderColor: string }> = {
       success: { background: T.status.success.bg, color: T.status.success.text, borderColor: T.status.success.border },
       warn:    { background: T.status.warn.bg,    color: T.status.warn.text,    borderColor: T.status.warn.border },
       danger:  { background: T.status.danger.bg,  color: T.status.danger.text,  borderColor: T.status.danger.border },
       accent:  { background: T.accent.bg,         color: T.accent.text,         borderColor: T.accent.border },
       neutral: { background: T.bg.surface3,       color: T.text.secondary,      borderColor: T.border.primary },
-    }[tone] || { background: T.bg.surface3, color: T.text.secondary, borderColor: T.border.primary };
+    };
+    styles = (tone && tones[tone]) || { background: T.bg.surface3, color: T.text.secondary, borderColor: T.border.primary };
   }
   return (
     <span style={{
@@ -796,14 +837,21 @@ const baseBtn = {
   whiteSpace: 'nowrap',
 };
 
-export function Button({ variant = 'primary', size = 'md', children, style, disabled, ...rest }: any) {
-  const sizeStyle = size === 'sm'
+interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'style'> {
+  variant?: 'primary' | 'ghost' | 'danger' | 'subtle';
+  size?: 'sm' | 'md' | 'lg';
+  children?: ReactNode;
+  style?: CSSProperties;
+}
+
+export function Button({ variant = 'primary', size = 'md', children, style, disabled, ...rest }: ButtonProps) {
+  const sizeStyle: CSSProperties = size === 'sm'
     ? { height: 36, padding: '0 14px', fontSize: 13.5 }
     : size === 'lg'
     ? { height: 48, padding: '0 26px', fontSize: 16 }
     : {};
 
-  let variantStyle;
+  let variantStyle: CSSProperties = {};
   if (variant === 'primary') {
     variantStyle = {
       background: T.accent.main,
@@ -833,7 +881,7 @@ export function Button({ variant = 'primary', size = 'md', children, style, disa
     };
   }
 
-  const onMouseEnter = (e) => {
+  const onMouseEnter = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (disabled) return;
     if (variant === 'primary') e.currentTarget.style.background = T.accent.hover;
     else if (variant === 'ghost') {
@@ -843,7 +891,7 @@ export function Button({ variant = 'primary', size = 'md', children, style, disa
     else if (variant === 'danger') e.currentTarget.style.background = T.status.danger.bg;
     else if (variant === 'subtle') e.currentTarget.style.color = T.text.secondary;
   };
-  const onMouseLeave = (e) => {
+  const onMouseLeave = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (variant === 'primary') e.currentTarget.style.background = T.accent.main;
     else if (variant === 'ghost') {
       e.currentTarget.style.background = T.bg.surface;
@@ -873,7 +921,7 @@ export function Button({ variant = 'primary', size = 'md', children, style, disa
 }
 
 /* ─── KPI card ───────────────────────────────────────────────────────── */
-export function Kpi({ label, value, sub, tone }: { label?: any; value?: any; sub?: any; tone?: string }) {
+export function Kpi({ label, value, sub, tone }: { label?: ReactNode; value?: ReactNode; sub?: ReactNode; tone?: 'accent' | 'danger' | 'warn' | 'success' }) {
   const valueColor = tone === 'accent'  ? T.accent.main
     : tone === 'danger'  ? T.status.danger.main
     : tone === 'warn'    ? T.status.warn.main
@@ -910,8 +958,8 @@ export function Kpi({ label, value, sub, tone }: { label?: any; value?: any; sub
 }
 
 /* ─── Validation banner ──────────────────────────────────────────────── */
-export function ValidationBanner({ tone = 'success', title, sub, action }: { tone?: 'success' | 'warn' | 'danger'; title?: any; sub?: any; action?: any }) {
-  const palette = (T.status as any)[tone] || T.status.success;
+export function ValidationBanner({ tone = 'success', title, sub, action }: { tone?: 'success' | 'warn' | 'danger'; title?: ReactNode; sub?: ReactNode; action?: ReactNode }) {
+  const palette = T.status[tone] || T.status.success;
   const icon = tone === 'success' ? (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <path d="M5 12.5l5 5 9-11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>
@@ -964,7 +1012,7 @@ export function ValidationBanner({ tone = 'success', title, sub, action }: { ton
 }
 
 /* ─── Empty state ────────────────────────────────────────────────────── */
-export function EmptyState({ icon, title, description, action }: { icon?: any; title?: any; description?: any; action?: any }) {
+export function EmptyState({ icon, title, description, action }: { icon?: ReactNode; title?: ReactNode; description?: ReactNode; action?: ReactNode }) {
   return (
     <div style={{
       padding: '64px 32px',
