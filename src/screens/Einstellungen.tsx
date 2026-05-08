@@ -33,6 +33,12 @@ import {
 } from '@/utils/accent.js';
 import { THEME_PRESETS, findPreset } from '@/utils/themePresets.js';
 import {
+  applyTheme as applyThemeMode,
+  getStoredTheme,
+  setStoredTheme,
+  type ThemeMode,
+} from '@/utils/theme';
+import {
   EXPERIMENT_META, EXPERIMENT_DEFAULTS, useExperiment,
 } from '@/utils/experiments.js';
 import {
@@ -50,6 +56,7 @@ const API_BASE = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_AP
    and German-only so the matcher stays simple. */
 const SECTIONS = [
   { id: 'identity',   label: 'Identität',          keywords: 'identität rolle name email user clerk session profil avatar' },
+  { id: 'appearance', label: 'Erscheinungsbild',   keywords: 'erscheinungsbild appearance dark mode hell dunkel light theme nacht tag schwarz weiss' },
   { id: 'theme',      label: 'Theme-Studio',       keywords: 'theme akzent farbe palette branding marathon orange indigo forest preset preview vorschau hex' },
   { id: 'experiments',label: 'Experimente',        keywords: 'experimente experiment feature flag dynamic island opt-in' },
   { id: 'diagnostic', label: 'Verbindung',         keywords: 'verbindung diagnose backend api health latency status connection cache' },
@@ -73,6 +80,7 @@ export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: str
   const [accent, setAccent] = useState(getStoredAccent);
   const [previewAccent, setPreviewAccent] = useState<string | null>(null);
   const [storageBytes, setStorageBytes] = useState(() => measureStorage());
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredTheme);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
 
@@ -116,6 +124,12 @@ export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: str
     setStoredAccent(hex);
     setPreviewAccent(null);
     applyAccent(hex);
+  };
+
+  const setMode = (mode: ThemeMode) => {
+    setThemeMode(mode);
+    setStoredTheme(mode);
+    applyThemeMode(mode);
   };
   const onResetTheme = () => {
     const next = resetAccent();
@@ -181,6 +195,17 @@ export default function EinstellungenScreen({ onRoute }: { onRoute?: (route: str
           visibleCount={visibleSections.length}
           totalCount={SECTIONS.length}
         />
+
+        {/* APPEARANCE — Light / Dark mode */}
+        {isVisible('appearance') && (
+          <SettingsCard
+            id="appearance"
+            title="Erscheinungsbild"
+            subtitle="Hell oder Dunkel. Wechselt sofort und merkt sich die Wahl im Browser dieses Geräts."
+          >
+            <AppearanceToggle mode={themeMode} onChange={setMode} />
+          </SettingsCard>
+        )}
 
         {/* THEME STUDIO */}
         {isVisible('theme') && (
@@ -602,6 +627,86 @@ function SettingsCard({ id, title, subtitle, children, isLast }: { id?: string; 
 /* ════════════════════════════════════════════════════════════════════════
    Theme studio — preset gallery + custom picker + live preview pane
    ════════════════════════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════════════════════
+   Appearance — light / dark segmented control
+   ════════════════════════════════════════════════════════════════════════ */
+function AppearanceToggle({ mode, onChange }: { mode: ThemeMode; onChange: (m: ThemeMode) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '4px 0' }}>
+      <div style={{
+        display: 'inline-flex',
+        padding: 4,
+        background: T.bg.surface3,
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: T.radius.md,
+        gap: 2,
+      }}>
+        <ModeChip
+          active={mode === 'light'}
+          onClick={() => onChange('light')}
+          icon={<SunIcon />}
+          label="Hell"
+        />
+        <ModeChip
+          active={mode === 'dark'}
+          onClick={() => onChange('dark')}
+          icon={<MoonIcon />}
+          label="Dunkel"
+        />
+      </div>
+      <span style={{ fontSize: 12.5, color: T.text.subtle, lineHeight: 1.55 }}>
+        {mode === 'dark'
+          ? 'Dunkles Theme aktiv. Wechselt sofort, ohne neuladen.'
+          : 'Helles Theme (Standard).'}
+      </span>
+    </div>
+  );
+}
+
+function ModeChip({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: ReactNode; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 14px',
+        background: active ? T.bg.surface : 'transparent',
+        color: active ? T.text.primary : T.text.subtle,
+        border: 0,
+        borderRadius: T.radius.sm,
+        boxShadow: active ? T.shadow.card : 'none',
+        fontSize: 13,
+        fontWeight: active ? 600 : 500,
+        cursor: 'pointer',
+        transition: 'background 160ms ease, color 160ms ease',
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  );
+}
+
 interface ThemeStudioProps {
   accent: string;
   previewAccent: string | null;

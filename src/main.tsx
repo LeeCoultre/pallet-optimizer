@@ -7,6 +7,7 @@ import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { applyAccent, getStoredAccent } from './utils/accent.js'
+import { applyTheme, getStoredTheme } from './utils/theme'
 
 /* Sentry — only initialised when a DSN is configured (VITE_SENTRY_DSN).
    Locally we leave it off so dev console stays quiet; on Railway prod
@@ -30,9 +31,11 @@ if (SENTRY_DSN) {
   ;(window as unknown as { Sentry?: typeof Sentry }).Sentry = Sentry
 }
 
-/* Apply the user's saved accent color before React mounts so the first
-   paint already has the right palette (no flash of the default orange). */
+/* Apply the user's saved accent + theme before React mounts so the first
+   paint already has the right palette (no flash of default orange / no
+   flash of light-mode when the user set dark). */
 applyAccent(getStoredAccent())
+applyTheme(getStoredTheme())
 
 const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
 if (!CLERK_KEY) {

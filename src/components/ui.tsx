@@ -23,15 +23,32 @@ export interface Step {
 
 export type Tone = 'success' | 'warn' | 'danger' | 'accent' | 'neutral';
 
-/* ─── Tokens ─────────────────────────────────────────────────────────── */
+/* ─── Tokens ───────────────────────────────────────────────────────────
+   ALL color tokens here resolve to CSS custom properties — defaults in
+   src/index.css :root, dark-theme overrides in [data-theme="dark"].
+   Toggle via src/utils/theme.ts. The category palette stays as flat
+   hex literals: those colors are level identity (ESKU placement viz)
+   and must keep the same hue across themes. */
 export const T = {
-  bg:     { page: '#F9FAFB', surface: '#FFFFFF', surface2: '#F9FAFB', surface3: '#F3F4F6' },
-  border: { primary: '#E5E7EB', subtle: '#F3F4F6', strong: '#D1D5DB' },
-  text:   { primary: '#111827', secondary: '#374151', muted: '#52525B', subtle: '#6B7280', faint: '#9CA3AF' },
+  bg:     {
+    page:     'var(--bg-page)',
+    surface:  'var(--bg-surface)',
+    surface2: 'var(--bg-surface-2)',
+    surface3: 'var(--bg-surface-3)',
+  },
+  border: {
+    primary: 'var(--border-primary)',
+    subtle:  'var(--border-subtle)',
+    strong:  'var(--border-strong)',
+  },
+  text:   {
+    primary:   'var(--text-primary)',
+    secondary: 'var(--text-secondary)',
+    muted:     'var(--text-muted)',
+    subtle:    'var(--text-subtle)',
+    faint:     'var(--text-faint)',
+  },
 
-  /* Accent reads CSS vars set by src/utils/accent.js — change the var,
-     every component re-paints automatically without React re-rendering.
-     Default palette derived from #FF5B1F (Marathon orange). */
   accent: {
     main:   'var(--accent)',
     hover:  'var(--accent-hover)',
@@ -41,9 +58,24 @@ export const T = {
   },
 
   status: {
-    success: { main: '#10B981', bg: '#ECFDF5', text: '#047857', border: '#A7F3D0' },
-    warn:    { main: '#F59E0B', bg: '#FFFBEB', text: '#B45309', border: '#FDE68A' },
-    danger:  { main: '#EF4444', bg: '#FEF2F2', text: '#B91C1C', border: '#FECACA' },
+    success: {
+      main:   'var(--status-success-main)',
+      bg:     'var(--status-success-bg)',
+      text:   'var(--status-success-text)',
+      border: 'var(--status-success-border)',
+    },
+    warn: {
+      main:   'var(--status-warn-main)',
+      bg:     'var(--status-warn-bg)',
+      text:   'var(--status-warn-text)',
+      border: 'var(--status-warn-border)',
+    },
+    danger: {
+      main:   'var(--status-danger-main)',
+      bg:     'var(--status-danger-bg)',
+      text:   'var(--status-danger-text)',
+      border: 'var(--status-danger-border)',
+    },
   },
 
   category: {
@@ -62,10 +94,10 @@ export const T = {
 
   radius: { sm: 4, md: 8, lg: 14, full: 9999 },
   shadow: {
-    card:   '0 1px 2px rgba(0,0,0,0.03)',
-    raised: '0 2px 8px rgba(0,0,0,0.06)',
+    card:   'var(--shadow-card)',
+    raised: 'var(--shadow-raised)',
     cta:    '0 1px 2px rgba(79,70,229,0.2)',
-    modal:  '0 12px 40px rgba(0,0,0,0.15)',
+    modal:  'var(--shadow-modal)',
   },
 };
 
