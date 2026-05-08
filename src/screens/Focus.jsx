@@ -966,55 +966,62 @@ function FocusStickyBar({
         }} />
       </div>
 
-      {/* Action row */}
+      {/* Action row — in zen mode the status block + spacer + position
+          counter are taken out of flow (display: none), and the row
+          container switches to justify-content: center, so the
+          [Zurück · Fertig · Weiter] cluster sits in the middle of the
+          available width. Snap rather than transitioned, but the
+          surrounding chrome already fades smoothly so the swap is
+          masked. */}
       <div style={{
         padding: '10px 32px 12px',
         display: 'flex',
         alignItems: 'center',
+        justifyContent: zen ? 'center' : 'flex-start',
         gap: 14,
         maxWidth: 1080,
         margin: '0 auto',
       }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          opacity: zen ? 0 : 1,
-          transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
-          pointerEvents: zen ? 'none' : 'auto',
-        }}>
+        {!zen && (
           <span style={{
-            width: 7, height: 7, borderRadius: '50%',
-            background: dotColor,
-            boxShadow: `0 0 0 3px ${dotColor}22`,
-          }} />
-          <span style={{
-            fontSize: 12.5,
-            color: T.text.primary,
-            fontWeight: 500,
-            letterSpacing: '-0.005em',
+            display: 'inline-flex', alignItems: 'center', gap: 8,
           }}>
-            {isReady ? 'Bereit' : `${missingCopies} Code${missingCopies === 1 ? '' : 's'} fehlen`}
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: dotColor,
+              boxShadow: `0 0 0 3px ${dotColor}22`,
+              flexShrink: 0,
+            }} />
+            <span style={{
+              fontSize: 12.5,
+              color: T.text.primary,
+              fontWeight: 500,
+              letterSpacing: '-0.005em',
+            }}>
+              {isReady ? 'Bereit' : `${missingCopies} Code${missingCopies === 1 ? '' : 's'} fehlen`}
+            </span>
+            <span style={{
+              fontSize: 12, color: T.text.faint,
+              fontFamily: T.font.mono, fontVariantNumeric: 'tabular-nums',
+              marginLeft: 4,
+            }}>
+              {palletId} · {itemIdx + 1}/{totalInPallet}
+            </span>
           </span>
+        )}
+
+        {!zen && <span style={{ flex: 1 }} />}
+
+        {!zen && (
           <span style={{
-            fontSize: 12, color: T.text.faint,
-            fontFamily: T.font.mono, fontVariantNumeric: 'tabular-nums',
-            marginLeft: 4,
+            fontSize: 11.5,
+            color: T.text.faint,
+            fontFamily: T.font.mono,
+            fontVariantNumeric: 'tabular-nums',
           }}>
-            {palletId} · {itemIdx + 1}/{totalInPallet}
+            {overallPos} / {totalArticles}
           </span>
-        </span>
-
-        <span style={{ flex: 1 }} />
-
-        <span style={{
-          fontSize: 11.5,
-          color: T.text.faint,
-          fontFamily: T.font.mono,
-          fontVariantNumeric: 'tabular-nums',
-          opacity: zen ? 0 : 1,
-          transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1)',
-        }}>
-          {overallPos} / {totalArticles}
-        </span>
+        )}
 
         <Button variant="ghost" size="sm" onClick={onPrev} disabled={!canPrev}
                 title="Vorheriger Artikel (←)">
