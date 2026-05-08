@@ -77,7 +77,7 @@ function clearCopiedKeys(auftragId: UUID): void {
 
 /* ─── Adapters: backend (camelCase via marathonApi) → legacy localStorage shape ── */
 
-function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): LegacyAuftrag | null {
+export function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): LegacyAuftrag | null {
   if (!a) return null;
   const detail = a as Partial<AuftragDetail>;
   return {
@@ -108,7 +108,7 @@ function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): LegacyA
   };
 }
 
-function toLegacyHistory(h: AuftragSummary): LegacyHistoryItem {
+export function toLegacyHistory(h: AuftragSummary): LegacyHistoryItem {
   return {
     id:           h.id,
     fileName:     h.fileName,

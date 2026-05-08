@@ -11,27 +11,25 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
-    include: ['src/**/*.{test,spec}.{js,jsx}'],
+    include: ['src/**/*.{test,spec}.{js,jsx,ts,tsx}'],
     // Don't accidentally start the backend probe / Clerk / etc. — these
     // are pure-function tests, no React tree needed for now.
     setupFiles: [],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      include: ['src/utils/**/*.js', 'src/hooks/**/*.js'],
-      // _archive/ holds legacy 433KB files we deliberately don't test;
-      // marathonApi.js is a thin fetch wrapper covered indirectly by
+      include: ['src/utils/**/*.{js,ts}', 'src/hooks/**/*.{js,ts}', 'src/state.{ts,tsx}'],
+      // marathonApi.ts is a thin fetch wrapper covered indirectly by
       // backend pytest. Components have separate UI/integration test
       // strategy (Tier 2.x).
       exclude: [
-        'src/_archive/**',
-        'src/marathonApi.js',
-        'src/main.jsx',
-        'src/App.jsx',
-        'src/state.jsx',
+        'src/marathonApi.ts',
+        'src/main.tsx',
+        'src/App.tsx',
         'src/index.css',
         'src/components/**',
         'src/screens/**',
+        'src/types/**',
       ],
     },
   },
