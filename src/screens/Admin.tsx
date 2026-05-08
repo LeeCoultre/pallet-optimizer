@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Admin panel — gated by useMe().role === 'admin'.
    Four tabs: Aufträge | Benutzer | Audit-Log | KPIs. */
 

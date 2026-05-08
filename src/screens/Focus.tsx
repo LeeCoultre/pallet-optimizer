@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Focus — Schritt 03. Single-article workflow.
 
    Visual ethos: the page does NOT scroll. One hero card holds every

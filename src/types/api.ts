@@ -228,6 +228,13 @@ export interface AdminAuditQuery {
   offset?: number;
 }
 
+export interface AdminAuditPage {
+  items: AuditLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /* ─── SKU Dimensions ─────────────────────────────────── */
 
 export interface SkuDimensionRead {

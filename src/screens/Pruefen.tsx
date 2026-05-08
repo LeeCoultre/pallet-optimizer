@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Pruefen — Schritt 02. "Priority-driven hierarchy" redesign.
 
    Operator priorities, in order:

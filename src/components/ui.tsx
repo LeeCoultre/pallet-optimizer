@@ -52,7 +52,7 @@ export const T = {
 
 /* ─── Page shell ─────────────────────────────────────────────────────── */
 /* Page-level wrapper — sets canvas bg, font and reset */
-export function Page({ children, style }) {
+export function Page({ children, style }: { children?: any; style?: React.CSSProperties }) {
   return (
     <div style={{
       background: T.bg.page,
@@ -71,7 +71,7 @@ export function Page({ children, style }) {
    crumbs: [{ label, muted?, onClick?, title? }, ...]
    If a crumb has onClick → renders as clickable Crumb (hover lift,
    accent on hover). The last crumb stays passive even if onClick set. */
-export function Topbar({ crumbs = [], right }) {
+export function Topbar({ crumbs = [], right }: { crumbs?: any[]; right?: any }) {
   return (
     <header style={{
       position: 'sticky',
@@ -99,7 +99,7 @@ export function Topbar({ crumbs = [], right }) {
   );
 }
 
-function Crumb({ crumb, isLast }) {
+function Crumb({ crumb, isLast }: { crumb: any; isLast: boolean }) {
   const [hover, setHover] = useState(false);
   const interactive = !!crumb.onClick && !isLast;
   const baseColor = isLast
@@ -180,7 +180,7 @@ export const STEPS = [
    When `onNavigate` is provided, also installs Alt+1..4 shortcuts at
    document level so the worker can jump tabs without leaving the
    keyboard. The shortcut handler is auto-cleaned on unmount. */
-export function StepperBar({ active, steps = STEPS, onNavigate, canNavigate }) {
+export function StepperBar({ active, steps = STEPS, onNavigate, canNavigate }: { active: string; steps?: any[]; onNavigate?: (id: string) => void; canNavigate?: (id: string) => boolean }) {
   // Alt+1..4 keyboard navigation — only when onNavigate is wired.
   useEffect(() => {
     if (!onNavigate) return undefined;
@@ -242,7 +242,7 @@ function StepperKeyframes() {
   );
 }
 
-export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }) {
+export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }: { active: string; steps?: any[]; onNavigate?: (id: string) => void; canNavigate?: (id: string) => boolean }) {
   const activeIdx = steps.findIndex((s) => s.id === active);
   const n = steps.length;
 
@@ -327,7 +327,7 @@ export function Stepper({ active, steps = STEPS, onNavigate, canNavigate }) {
 function StepCell({
   step, state, mountDelayMs = 0,
   clickable = false, isBlocked = false, shortcut = null, onClick,
-}) {
+}: any) {
   const isDone = state === 'done';
   const isCurrent = state === 'current';
   const [hover, setHover] = useState(false);
@@ -489,7 +489,7 @@ export function StudioFrame({
   padding = '32px 36px', bare = false, gap = 14,
   zen = false,
   style, contentStyle,
-}) {
+}: any) {
   const accentColor = accent ? T.accent.main : T.text.faint;
   const eyebrow = (label || status) ? (
     <div style={{
@@ -611,7 +611,7 @@ export function CornerMarks({ stroke, long }: { stroke?: string; long?: boolean 
 }
 
 /* ─── Card ───────────────────────────────────────────────────────────── */
-export function Card({ children, style, padding }) {
+export function Card({ children, style, padding }: { children?: any; style?: React.CSSProperties; padding?: string | number }) {
   return (
     <div style={{
       background: T.bg.surface,
@@ -627,7 +627,7 @@ export function Card({ children, style, padding }) {
 }
 
 /* ─── Section header ─────────────────────────────────────────────────── */
-export function SectionHeader({ title, sub, right }) {
+export function SectionHeader({ title, sub, right }: { title?: any; sub?: any; right?: any }) {
   return (
     <div style={{
       marginBottom: 14,
@@ -662,7 +662,7 @@ export function SectionHeader({ title, sub, right }) {
 }
 
 /* ─── Eyebrow (мини-метка над H1) ────────────────────────────────────── */
-export function Eyebrow({ children }) {
+export function Eyebrow({ children }: { children?: any }) {
   return (
     <div style={{
       display: 'inline-flex',
@@ -680,7 +680,7 @@ export function Eyebrow({ children }) {
 }
 
 /* ─── H1 / Lead ──────────────────────────────────────────────────────── */
-export function PageH1({ children }) {
+export function PageH1({ children }: { children?: any }) {
   return (
     <h1 style={{
       fontFamily: T.font.ui,
@@ -696,7 +696,7 @@ export function PageH1({ children }) {
   );
 }
 
-export function Lead({ children, style }) {
+export function Lead({ children, style }: { children?: any; style?: React.CSSProperties }) {
   return (
     <p style={{
       marginTop: 12,
@@ -713,7 +713,7 @@ export function Lead({ children, style }) {
 }
 
 /* ─── Label (uppercase mini-meta) ────────────────────────────────────── */
-export function Label({ children }) {
+export function Label({ children }: { children?: any }) {
   return (
     <span style={{
       fontSize: 11.5,
@@ -728,7 +728,7 @@ export function Label({ children }) {
 }
 
 /* ─── Meta (label + value pair) ──────────────────────────────────────── */
-export function Meta({ label, value, mono }) {
+export function Meta({ label, value, mono }: { label?: any; value?: any; mono?: boolean }) {
   return (
     <div>
       <div style={{ fontSize: 11.5, color: T.text.subtle, fontWeight: 500, marginBottom: 4 }}>
@@ -747,7 +747,7 @@ export function Meta({ label, value, mono }) {
 }
 
 /* ─── Badge / Pill ───────────────────────────────────────────────────── */
-export function Badge({ children, tone, color, bg, text }) {
+export function Badge({ children, tone, color, bg, text }: { children?: any; tone?: string; color?: string; bg?: string; text?: string }) {
   let styles;
   if (color) {
     styles = { background: bg, color: text, borderColor: color + '40' };
@@ -796,7 +796,7 @@ const baseBtn = {
   whiteSpace: 'nowrap',
 };
 
-export function Button({ variant = 'primary', size = 'md', children, style, disabled, ...rest }) {
+export function Button({ variant = 'primary', size = 'md', children, style, disabled, ...rest }: any) {
   const sizeStyle = size === 'sm'
     ? { height: 36, padding: '0 14px', fontSize: 13.5 }
     : size === 'lg'
@@ -873,7 +873,7 @@ export function Button({ variant = 'primary', size = 'md', children, style, disa
 }
 
 /* ─── KPI card ───────────────────────────────────────────────────────── */
-export function Kpi({ label, value, sub, tone }) {
+export function Kpi({ label, value, sub, tone }: { label?: any; value?: any; sub?: any; tone?: string }) {
   const valueColor = tone === 'accent'  ? T.accent.main
     : tone === 'danger'  ? T.status.danger.main
     : tone === 'warn'    ? T.status.warn.main
@@ -910,8 +910,8 @@ export function Kpi({ label, value, sub, tone }) {
 }
 
 /* ─── Validation banner ──────────────────────────────────────────────── */
-export function ValidationBanner({ tone = 'success', title, sub, action }) {
-  const palette = T.status[tone] || T.status.success;
+export function ValidationBanner({ tone = 'success', title, sub, action }: { tone?: 'success' | 'warn' | 'danger'; title?: any; sub?: any; action?: any }) {
+  const palette = (T.status as any)[tone] || T.status.success;
   const icon = tone === 'success' ? (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
       <path d="M5 12.5l5 5 9-11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>
@@ -964,7 +964,7 @@ export function ValidationBanner({ tone = 'success', title, sub, action }) {
 }
 
 /* ─── Empty state ────────────────────────────────────────────────────── */
-export function EmptyState({ icon, title, description, action }) {
+export function EmptyState({ icon, title, description, action }: { icon?: any; title?: any; description?: any; action?: any }) {
   return (
     <div style={{
       padding: '64px 32px',

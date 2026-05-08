@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Warteschlange v2 — «Cockpit der Schicht».
 
    Magazine-spread design (matches Upload / Pruefen / Focus):

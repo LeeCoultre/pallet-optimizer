@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Berichte v2 — «Report Studio».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live /

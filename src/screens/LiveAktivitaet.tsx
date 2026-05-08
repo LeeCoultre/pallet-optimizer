@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Live-Aktivität v2 — «Schicht-Puls».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Warteschlange):

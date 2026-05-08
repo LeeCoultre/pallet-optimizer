@@ -14,6 +14,7 @@
 
 import type {
   ActivityFeed,
+  AdminAuditPage,
   AdminAuditQuery,
   AdminAuftraegePage,
   AdminAuftraegeQuery,
@@ -186,7 +187,7 @@ export const adminListUsers = (): Promise<AdminUserDetail[]> =>
 export const adminChangeUserRole = (userId: UUID, role: UserRole): Promise<AdminUserDetail> =>
   call('PATCH', `/api/admin/users/${userId}/role`, { role });
 
-export const adminListAudit = (params: AdminAuditQuery = {}): Promise<AuditLogEntry[]> =>
+export const adminListAudit = (params: AdminAuditQuery = {}): Promise<AdminAuditPage> =>
   call('GET', `/api/admin/audit${qs(params as Record<string, unknown>)}`);
 
 export const adminGetStats = (): Promise<AdminStats> =>

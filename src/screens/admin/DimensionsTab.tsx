@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Admin → Dimensions tab.
 
    Source-of-truth UI for sku_dimensions: rich list view with expandable

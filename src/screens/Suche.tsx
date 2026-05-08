@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Suche v2 — «Command Search».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live /

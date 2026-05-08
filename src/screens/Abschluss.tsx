@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Abschluss — Schritt 04. Auftrag-Bilanz mit drei kopierbaren Schlüsselzahlen.
 
    Visual ethos shared with Upload + Pruefen + Focus:

@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Upload v2 — «Drop Studio».
 
    Magazine-spread design (matches Pruefen / Focus / Live / Historie /

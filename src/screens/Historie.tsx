@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Historie v2 — «Archiv & Performance».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live):
