@@ -187,9 +187,14 @@ export function useAppState(): UseAppStateApi {
     [all],
   );
 
+  /* Backend's GET /api/auftraege already filters in_progress to only this
+     user's row. We don't need the redundant `assignedToUserId === me?.id`
+     check here — and it was actively harmful: if `me` was still loading
+     (Clerk session not yet populated), the filter never matched and the
+     UI never switched to Pruefen after a successful Start. */
   const currentSrc = useMemo(
-    () => all.find((a) => a.status === 'in_progress' && a.assignedToUserId === me?.id) ?? null,
-    [all, me?.id],
+    () => all.find((a) => a.status === 'in_progress') ?? null,
+    [all],
   );
   const [copiedKeysVersion, setCopiedKeysVersion] = useState(0);
   const current = useMemo(
