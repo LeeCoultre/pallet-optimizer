@@ -1,7 +1,7 @@
 /* Marathon · Design System v3 — переиспользуемые атомы.
    Spec: DESIGN.md. */
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Wordmark } from './Logo.jsx';
 
 /* ─── Tokens ─────────────────────────────────────────────────────────── */
@@ -351,7 +351,7 @@ function StepCell({
   const labelWeight = isCurrent ? 600 : 500;
   const subColor = (isCurrent || isDone) ? T.text.subtle : T.text.faint;
 
-  const Wrapper = clickable ? 'button' : 'div';
+  const Wrapper: any = clickable ? 'button' : 'div';
   const wrapperProps = clickable ? {
     type: 'button',
     onClick,
@@ -595,11 +595,11 @@ export function StudioFrame({
    decoration — gives the wrapped element a «framed» feel. Pointer
    events off so clicks pass through. The `long` variant uses bigger
    arms and is anchored at offset 0 (used by StudioFrame's outer mat). */
-export function CornerMarks({ stroke, long }) {
+export function CornerMarks({ stroke, long }: { stroke?: string; long?: boolean }) {
   const arm = long ? 20 : 14;
   const offset = long ? 0 : -10;
   const color = stroke || T.border.strong;
-  const common = { position: 'absolute', width: arm, height: arm, pointerEvents: 'none' };
+  const common: React.CSSProperties = { position: 'absolute', width: arm, height: arm, pointerEvents: 'none' };
   return (
     <>
       <span style={{ ...common, top: offset, left: offset, borderTop: `1px solid ${color}`, borderLeft: `1px solid ${color}`, borderTopLeftRadius: 4 }} />
