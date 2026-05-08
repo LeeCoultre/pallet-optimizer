@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Admin → Dimensions tab.
 
    Source-of-truth UI for sku_dimensions: rich list view with expandable
@@ -41,8 +40,8 @@ export default function DimensionsTab() {
   const [filter, setFilter] = useState('all');     // all | manual | xlsx | multi | incomplete
   const [importBanner, setImportBanner] = useState(null);
   const [editing, setEditing] = useState(null);     // row | 'new' | null
-  const [selected, setSelected] = useState(new Set());
-  const [expanded, setExpanded] = useState(new Set());
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const listQ = useQuery({
     queryKey: ['admin', 'sku-dimensions', search, page],
@@ -86,7 +85,7 @@ export default function DimensionsTab() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, payload }) => adminUpdateSkuDimension(id, payload),
+    mutationFn: ({ id, payload }: { id: number; payload: any }) => adminUpdateSkuDimension(id, payload),
     onSuccess: () => {
       setEditing(null);
       qc.invalidateQueries({ queryKey: ['admin', 'sku-dimensions'] });
@@ -163,7 +162,7 @@ export default function DimensionsTab() {
   const onBulkDelete = () => {
     if (selected.size === 0) return;
     if (!confirm(`${selected.size} Einträge wirklich löschen?`)) return;
-    [...selected].forEach((id) => deleteMut.mutate(id));
+    [...selected].forEach((id) => deleteMut.mutate(id as number));
     setSelected(new Set());
   };
   const toggleExpand = (id) => setExpanded((prev) => {
@@ -253,7 +252,7 @@ export default function DimensionsTab() {
 /* ════════════════════════════════════════════════════════════════════════
    Quick stats card
    ════════════════════════════════════════════════════════════════════════ */
-function QuickStats({ stats, total, loading }) {
+function QuickStats({ stats, total, loading }: any) {
   const items = [
     { label: 'Einträge gesamt',  value: loading ? '…' : total, mono: true },
     { label: 'Mit FNSKU',         value: loading ? '…' : stats.withFnsku, mono: true },
@@ -298,7 +297,7 @@ function QuickStats({ stats, total, loading }) {
 /* ════════════════════════════════════════════════════════════════════════
    Action bar (Add / Import / Export)
    ════════════════════════════════════════════════════════════════════════ */
-function ActionBar({ importPending, exportPending, canExport, onAddNew, onFile, onExport }) {
+function ActionBar({ importPending, exportPending, canExport, onAddNew, onFile, onExport }: any) {
   return (
     <div style={{
       display: 'flex',
@@ -329,7 +328,7 @@ function ActionBar({ importPending, exportPending, canExport, onAddNew, onFile, 
 /* ════════════════════════════════════════════════════════════════════════
    Import banner
    ════════════════════════════════════════════════════════════════════════ */
-function ImportBanner({ banner }) {
+function ImportBanner({ banner }: any) {
   const ok = banner.kind === 'success';
   return (
     <div style={{
@@ -480,7 +479,7 @@ function FilterBar({
 /* ════════════════════════════════════════════════════════════════════════
    Empty state
    ════════════════════════════════════════════════════════════════════════ */
-function EmptyState({ isLoading, isEmpty, isFiltered, onAddNew }) {
+function EmptyState({ isLoading, isEmpty, isFiltered, onAddNew }: any) {
   if (isLoading) return (
     <div style={{ padding: 24 }}>
       {[0,1,2,3].map((i) => (
@@ -600,7 +599,7 @@ function DimensionsTable({
   );
 }
 
-function Th({ children, sortKey, sortBy, sortDir, onSort, w, align = 'left', mono, center, hint }) {
+function Th({ children, sortKey, sortBy, sortDir, onSort, w, align = 'left', mono, center, hint }: any) {
   const sortable = !!sortKey && !!onSort;
   const isSorted = sortable && sortBy === sortKey;
   return (
@@ -634,7 +633,7 @@ function Th({ children, sortKey, sortBy, sortDir, onSort, w, align = 'left', mon
   );
 }
 
-function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, onToggleExpand, onEdit, onDelete }) {
+function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, onToggleExpand, onEdit, onDelete }: any) {
   const totalKeys = row.fnskus.length + row.skus.length + row.eans.length;
   const updated = formatRelative(row.updatedAt);
   return (
@@ -758,7 +757,7 @@ function DimRow({ row, index, isLast, isExpanded, isSelected, onToggleSelect, on
   );
 }
 
-function Td({ children, center, align = 'left', mono, w }) {
+function Td({ children, center, align = 'left', mono, w }: any) {
   return (
     <td style={{
       padding: '10px 12px',
@@ -779,7 +778,7 @@ function Td({ children, center, align = 'left', mono, w }) {
 /* ════════════════════════════════════════════════════════════════════════
    Expanded row — full keys, audit, computed numbers
    ════════════════════════════════════════════════════════════════════════ */
-function DimRowExpansion({ row, updated }) {
+function DimRowExpansion({ row, updated }: any) {
   const volumeCm3 = row.lengthCm * row.widthCm * row.heightCm;
   const volumeL = volumeCm3 / 1000;
   const density = volumeCm3 > 0 ? row.weightKg / (volumeCm3 / 1e6) : 0;  // kg/m³
@@ -844,7 +843,7 @@ function DimRowExpansion({ row, updated }) {
   );
 }
 
-function SectionLabel({ children, style }) {
+function SectionLabel({ children, style }: any) {
   return (
     <div style={{
       fontSize: 10.5,
@@ -858,7 +857,7 @@ function SectionLabel({ children, style }) {
   );
 }
 
-function KeyGroup({ label, items, accent }) {
+function KeyGroup({ label, items, accent }: any) {
   const arr = items || [];
   return (
     <div style={{ marginBottom: 12 }}>
@@ -884,7 +883,7 @@ function KeyGroup({ label, items, accent }) {
   );
 }
 
-function KeyChip({ value }) {
+function KeyChip({ value }: any) {
   const [flash, setFlash] = useState(false);
   const onCopy = async (e) => {
     e.stopPropagation();
@@ -932,7 +931,7 @@ function KeyChip({ value }) {
   );
 }
 
-function DimMetric({ label, value, hint, mono }) {
+function DimMetric({ label, value, hint, mono }: any) {
   return (
     <div style={{
       display: 'grid',
@@ -955,7 +954,7 @@ function DimMetric({ label, value, hint, mono }) {
   );
 }
 
-function SourceBadge({ source }) {
+function SourceBadge({ source }: any) {
   const map = {
     manual:      { label: 'Manuell',  color: T.accent.text, bg: T.accent.bg, border: T.accent.border },
     xlsx_import: { label: 'xlsx',     color: T.text.muted, bg: T.bg.surface3, border: T.border.primary },
@@ -979,7 +978,7 @@ function SourceBadge({ source }) {
 /* ════════════════════════════════════════════════════════════════════════
    Pagination
    ════════════════════════════════════════════════════════════════════════ */
-function Pagination({ page, total, limit, onPage }) {
+function Pagination({ page, total, limit, onPage }: any) {
   const pageCount = Math.max(1, Math.ceil(total / limit));
   if (total <= limit) return null;
   return (
@@ -1001,7 +1000,7 @@ function Pagination({ page, total, limit, onPage }) {
 /* ════════════════════════════════════════════════════════════════════════
    Edit modal — full create/update form
    ════════════════════════════════════════════════════════════════════════ */
-function DimensionEditModal({ row, onClose, onSave, saving }) {
+function DimensionEditModal({ row, onClose, onSave, saving }: any) {
   const isNew = !row;
   const [form, setForm] = useState({
     fnskus: (row?.fnskus || []).join(', '),
@@ -1116,7 +1115,7 @@ function DimensionEditModal({ row, onClose, onSave, saving }) {
   );
 }
 
-function FieldInput({ label, value, onChange, type = 'text', step, placeholder }) {
+function FieldInput({ label, value, onChange, type = 'text', step, placeholder }: any) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span style={{

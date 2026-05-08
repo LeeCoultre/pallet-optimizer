@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Einstellungen v2 — «Studio».
 
    Magazine-spread design (matches Upload / Pruefen / Focus / Live /
@@ -366,7 +365,7 @@ function filterSections(sections, q) {
 /* ════════════════════════════════════════════════════════════════════════
    Identity hero
    ════════════════════════════════════════════════════════════════════════ */
-function IdentityHero({ me, clerkUser, shiftQ }) {
+function IdentityHero({ me, clerkUser, shiftQ }: any) {
   const initial = (me?.name || me?.email || '·').trim().charAt(0).toUpperCase();
   const isAdmin = me?.role === 'admin';
   const joinedAt = clerkUser?.createdAt;
@@ -488,7 +487,7 @@ function IdentityHero({ me, clerkUser, shiftQ }) {
 /* ════════════════════════════════════════════════════════════════════════
    Search bar
    ════════════════════════════════════════════════════════════════════════ */
-function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }) {
+function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }: any) {
   return (
     <div style={{
       position: 'sticky',
@@ -562,7 +561,7 @@ function SearchBar({ search, onSearch, searchRef, visibleCount, totalCount }) {
 /* ════════════════════════════════════════════════════════════════════════
    Settings card wrapper
    ════════════════════════════════════════════════════════════════════════ */
-function SettingsCard({ id, title, subtitle, children, isLast }) {
+function SettingsCard({ id, title, subtitle, children, isLast }: any) {
   return (
     <section id={id} style={{ marginBottom: isLast ? 0 : 20 }}>
       <div style={{ marginBottom: 14 }}>
@@ -598,7 +597,7 @@ function SettingsCard({ id, title, subtitle, children, isLast }) {
 /* ════════════════════════════════════════════════════════════════════════
    Theme studio — preset gallery + custom picker + live preview pane
    ════════════════════════════════════════════════════════════════════════ */
-function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }) {
+function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }: any) {
   const [hex, setHex] = useState(accent);
 
   /* Keep input in sync if accent changes from outside (preset click). */
@@ -711,7 +710,7 @@ function ThemeStudio({ accent, previewAccent, onApply, onPreview, onReset }) {
   );
 }
 
-function PresetCard({ preset, active, onApply, onHover, onLeave }) {
+function PresetCard({ preset, active, onApply, onHover, onLeave }: any) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -787,7 +786,7 @@ function PresetCard({ preset, active, onApply, onHover, onLeave }) {
   );
 }
 
-function ThemePreviewPane({ accentLabel, isPreviewing }) {
+function ThemePreviewPane({ accentLabel, isPreviewing }: any) {
   /* Mini-mock UI built entirely from var(--accent) so it repaints
      instantly when applyAccent() runs. Mirrors the real Marathon UI
      vocabulary so users see exactly how their accent will land. */
@@ -921,7 +920,7 @@ function ThemePreviewPane({ accentLabel, isPreviewing }) {
 /* ════════════════════════════════════════════════════════════════════════
    Experiments
    ════════════════════════════════════════════════════════════════════════ */
-function ExperimentRow({ flag, isLast }) {
+function ExperimentRow({ flag, isLast }: any) {
   const [enabled, setEnabled] = useExperiment(flag);
   const meta = EXPERIMENT_META[flag] || { label: flag, description: '' };
   return (
@@ -958,7 +957,7 @@ function ExperimentRow({ flag, isLast }) {
   );
 }
 
-function Toggle({ checked, onChange, ariaLabel }) {
+function Toggle({ checked, onChange, ariaLabel }: any) {
   return (
     <button
       type="button"
@@ -997,7 +996,7 @@ function Toggle({ checked, onChange, ariaLabel }) {
 /* ════════════════════════════════════════════════════════════════════════
    Diagnostics
    ════════════════════════════════════════════════════════════════════════ */
-function DiagnosticGrid({ healthQ, clerkUser, onClearCache }) {
+function DiagnosticGrid({ healthQ, clerkUser, onClearCache }: any) {
   const status = healthQ.data?.status || (healthQ.isError ? 'offline' : 'unknown');
   const elapsed = healthQ.data?.elapsedMs;
 
@@ -1207,7 +1206,7 @@ function ValuesGrid() {
   );
 }
 
-function ValueLine({ label, value, isLast }) {
+function ValueLine({ label, value, isLast }: any) {
   return (
     <div style={{
       display: 'flex',
@@ -1234,7 +1233,7 @@ function ValueLine({ label, value, isLast }) {
 /* ════════════════════════════════════════════════════════════════════════
    Data row + backup
    ════════════════════════════════════════════════════════════════════════ */
-function DataRow({ label, value, mono, action, isLast }) {
+function DataRow({ label, value, mono, action, isLast }: any) {
   return (
     <div style={{
       display: 'flex',
@@ -1261,7 +1260,7 @@ function DataRow({ label, value, mono, action, isLast }) {
   );
 }
 
-function BackupRow({ onExport, onImport, isLast }) {
+function BackupRow({ onExport, onImport, isLast }: any) {
   const inputRef = useRef(null);
   return (
     <div style={{
@@ -1371,7 +1370,7 @@ function fmtHm(sec) {
   return `${m}m`;
 }
 
-function Kbd({ children, inline }) {
+function Kbd({ children, inline }: any) {
   return (
     <span style={{
       display: 'inline-flex',

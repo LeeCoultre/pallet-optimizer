@@ -291,7 +291,7 @@ export interface SkuDimensionImportResult {
 }
 
 export interface AdminSkuDimensionsQuery {
-  search?: string;
+  q?: string;
   limit?: number;
   offset?: number;
 }
