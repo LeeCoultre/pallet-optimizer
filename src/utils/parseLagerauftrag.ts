@@ -43,7 +43,11 @@ export function detectCodeType(fnsku) {
 export function parseTitleMeta(title) {
   if (!title) return { dimStr: null, rollen: null, dim: null };
   const cleanTitle = title.replace(/\s+/g, ' ').trim();
-  const dimMatch = cleanTitle.match(/(\d+)\s*(?:mm)?\s*[xх×]\s*(\d+)/i);
+  // Tolerate a leading Ø on the second dimension — bond-roll titles spell
+  // the diameter as "80mm x Ø80mm x 12mm". Without the optional Ø the
+  // regex would skip the middle group and return "80 × 12" (width × thickness)
+  // instead of "80 × 80" (width × diameter).
+  const dimMatch = cleanTitle.match(/(\d+)\s*(?:mm)?\s*[xх×]\s*Ø?\s*(\d+)/i);
   const rawW = dimMatch ? parseInt(dimMatch[1], 10) : null;
   const rawH = dimMatch ? parseInt(dimMatch[2], 10) : null;
   const dimStr = dimMatch ? `${rawW} × ${rawH}` : null;

@@ -393,9 +393,12 @@ function itemWorkUnits(it) {
      2. Levels 5 (Kürbiskernöl) and 6 (Tachorollen) are the fragile cap
         of the pallet — they ALWAYS come last. Inside that tail, L5
         before L6 (Tacho is the absolute top of the stack).
-     3. All other groups (L1..L4) are ordered by total units DESC —
-        the bigger batch first so the worker clears the bulk of work
-        before chasing small remainders.
+     3. All other groups (L1..L4) are ordered by ascending level —
+        L1 Thermorollen first because they're the heaviest/bulkiest
+        rolls and form the physical base of the stack; L4 Produktion
+        (Füllmaterial / Sandsäcke / etc.) sits above them, light filler
+        material that would crush under L1. Within the same level,
+        total units DESC clears the bigger batch first.
      4. Within each level group, items are clustered by W×H format —
         SAME dimensions stay adjacent regardless of rollen-per-Einheit
         count (so a 57×18 with 75 rolls and a 57×18 with 15 rolls land
@@ -490,11 +493,14 @@ export function sortItemsForPallet(items) {
       const finalB = FINAL_LEVELS.has(lb);
       if (finalA !== finalB) return finalA ? 1 : -1;          // non-final first
       if (finalA && finalB) return la - lb;                   // L5 then L6
-      // Both non-final: total units DESC, then ascending level for stability
+      // Both non-final: ascending level (L1 bottom → L4 top of the
+      // non-fragile stack). Heavier rolls (L1) form the physical base;
+      // L4 Produktion is light filler that must NOT sit under L1.
+      // Total units DESC is only a tie-break within the same level.
+      if (la !== lb) return la - lb;
       const sumA = ga.reduce((s, e) => s + e.units, 0);
       const sumB = gb.reduce((s, e) => s + e.units, 0);
-      if (sumA !== sumB) return sumB - sumA;
-      return la - lb;
+      return sumB - sumA;
     })
     .map(([, g]) => g);
 
