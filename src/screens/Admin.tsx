@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Admin panel — gated by useMe().role === 'admin'.
    Four tabs: Aufträge | Benutzer | Audit-Log | KPIs. */
 
@@ -81,22 +80,22 @@ export default function AdminScreen() {
    ════════════════════════════════════════════════════════════════════════ */
 
 function AuftraegeTab() {
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'' | 'queued' | 'in_progress' | 'completed' | 'error'>('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
-  const [sortBy, setSortBy] = useState('created_at');
-  const [sortDir, setSortDir] = useState('desc');
+  const [sortBy, setSortBy] = useState<string>('created_at');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const onSort = (key) => {
+  const onSort = (key: string) => {
     if (sortBy === key) {
-      setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+      setSortDir((d) => d === 'desc' ? 'asc' : 'desc');
     } else {
       setSortBy(key);
       setSortDir('desc');
     }
     setPage(0);
   };
-  const resetPageThen = (setter) => (v) => { setter(v); setPage(0); };
+  const resetPageThen = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setPage(0); };
 
   const q = useQuery({
     queryKey: ['admin', 'auftraege', statusFilter, search, sortBy, sortDir, page],
@@ -175,12 +174,12 @@ function UsersTab() {
     refetchInterval: false,
   });
   const roleMut = useMutation({
-    mutationFn: ({ id, role }) => adminChangeUserRole(id, role),
+    mutationFn: ({ id, role }: { id: string; role: 'admin' | 'user' }) => adminChangeUserRole(id, role),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
-    onError: (err) => alert(err?.message || 'Fehler beim Ändern der Rolle'),
+    onError: (err: any) => alert(err?.message || 'Fehler beim Ändern der Rolle'),
   });
 
-  const onToggle = (u) => {
+  const onToggle = (u: any) => {
     const next = u.role === 'admin' ? 'user' : 'admin';
     if (!confirm(`Rolle für ${u.name} ändern: ${u.role} → ${next}?`)) return;
     roleMut.mutate({ id: u.id, role: next });
@@ -548,7 +547,7 @@ function Pagination({ page, total, limit, onPage }) {
   );
 }
 
-function DataTable({ columns, items, loading, empty, flat, sortBy, sortDir, onSort }) {
+function DataTable({ columns, items, loading, empty, flat, sortBy, sortDir, onSort }: any) {
   if (loading && !items) return <PadCenter>Lade…</PadCenter>;
   if (!items || items.length === 0) {
     return <PadCenter>{empty}</PadCenter>;

@@ -1,4 +1,3 @@
-// @ts-nocheck — incremental TS migration: file renamed to .tsx, strict typing pending
 /* Warteschlange v2 — «Cockpit der Schicht».
 
    Magazine-spread design (matches Upload / Pruefen / Focus):
@@ -103,7 +102,7 @@ export default function WarteschlangeScreen({ onRoute }) {
 
   /* ── totals for the hero KPI strip ───────────────────────────── */
   const totals = useMemo(
-    () => entries.reduce((acc, e) => ({
+    () => entries.reduce((acc: { pallets: number; articles: number; units: number; etaSec: number }, e: any) => ({
       pallets:  acc.pallets  + e._palletCount,
       articles: acc.articles + e._articleCount,
       units:    acc.units    + e._units,
@@ -113,8 +112,8 @@ export default function WarteschlangeScreen({ onRoute }) {
   );
 
   /* ── file handling ───────────────────────────────────────────── */
-  const acceptFiles = useCallback(async (fl) => {
-    const arr = Array.from(fl || []).filter((f) => /\.docx$/i.test(f.name));
+  const acceptFiles = useCallback(async (fl: FileList | File[] | null) => {
+    const arr = Array.from(fl || []).filter((f: File) => /\.docx$/i.test(f.name));
     if (!arr.length) return;
     setBusy(true);
     try {
@@ -626,7 +625,7 @@ function KpiStrip({ entries, totals }) {
   );
 }
 
-function Kpi({ label, value, accent }) {
+function Kpi({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
   return (
     <div>
       <div style={{
@@ -696,7 +695,7 @@ function Toolbar({ sortMode, onSortMode, queueLen, onClear }) {
   );
 }
 
-function SortPill({ children, active, onClick, title }) {
+function SortPill({ children, active, onClick, title }: { children?: any; active?: boolean; onClick?: any; title?: string }) {
   const [hover, setHover] = useState(false);
   return (
     <button
@@ -1338,8 +1337,8 @@ function QueueRowCard({
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function LevelBars({ lvlCounts }) {
-  const max = Math.max(1, ...Object.values(lvlCounts || {}));
+function LevelBars({ lvlCounts }: { lvlCounts?: Record<string, number> }) {
+  const max = Math.max(1, ...(Object.values(lvlCounts || {}) as number[]));
   const W = 6;
   const GAP = 3;
   const H = 28;
@@ -1406,7 +1405,7 @@ function FingerprintFlags({ fp }) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function Stat({ label, value, accent }) {
+function Stat({ label, value, accent }: { label?: any; value?: any; accent?: boolean }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
       <span style={{ color: T.text.faint }}>{label}</span>
@@ -1421,7 +1420,7 @@ function Stat({ label, value, accent }) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function IconBtn({ onClick, disabled, title, children }) {
+function IconBtn({ onClick, disabled, title, children }: { onClick?: any; disabled?: boolean; title?: string; children?: any }) {
   const [hover, setHover] = useState(false);
   return (
     <button
