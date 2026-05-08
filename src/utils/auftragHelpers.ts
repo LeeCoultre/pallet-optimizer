@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: heavy parser/distributor, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    auftragHelpers — pure helpers that map parsed-Lagerauftrag data into
    shapes the screens consume. Keeps screens dumb.

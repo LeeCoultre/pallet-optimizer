@@ -1,3 +1,4 @@
+// @ts-nocheck — incremental TS migration: heavy parser/distributor, strict typing pending
 /* ─────────────────────────────────────────────────────────────────────────
    Lagerauftrag parsing — pure functions, testable in Node.
 
