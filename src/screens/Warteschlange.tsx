@@ -466,10 +466,13 @@ function computeFingerprint(pallets, eskuItems) {
 
 function complexityScore(e) {
   /* Higher = more complex. Pallets are the dominant signal; ESKU items
-     and Single-SKU pallets each add a smaller bump. */
+     and Single-SKU pallets each add a smaller bump. `_fp` may be null
+     for queued entries that arrived without parsed (race with refetch
+     after create), so default missing flags to 0. */
+  const fp = e._fp || { eskuCount: 0, singleSku: 0 };
   return e._palletCount * 4
-       + e._fp.eskuCount * 1.2
-       + e._fp.singleSku * 1.5;
+       + fp.eskuCount * 1.2
+       + fp.singleSku * 1.5;
 }
 
 function sortEntries(entries, mode) {
@@ -1268,8 +1271,12 @@ function QueueRowCard({
           )}
         </div>
 
-        {/* Fingerprint row: level bars + flag pills */}
-        {!isError && (
+        {/* Fingerprint row: level bars + flag pills.
+            `fp` is null for queued entries whose `parsed` isn't in the
+            client cache yet (list endpoint slims parsed during the
+            brief window between create and refetch settle). Render
+            nothing in that case — the row's other stats stay visible. */}
+        {!isError && fp && (
           <div style={{
             display: 'flex',
             alignItems: 'center',
