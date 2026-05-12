@@ -10,15 +10,16 @@ import { useExperiment } from './utils/experiments';
 import { CommandPalette } from './components/CommandPalette.jsx';
 import { T } from './components/ui';
 
-/* Workspace screens load eagerly — they're the warehouse worker's
-   critical path (Upload → Pruefen → Focus → Abschluss). Anything else
-   (Historie, Admin, Suche, etc.) is lazy-loaded the first time the
-   user opens it: dropping ~70% of JS off the initial bundle. */
-import UploadScreen from './screens/Upload.jsx';
-import PruefenScreen from './screens/Pruefen.jsx';
-import FocusScreen from './screens/Focus.jsx';
-import AbschlussScreen from './screens/Abschluss.jsx';
-
+/* Every screen is lazy-loaded so the initial bundle stays tiny and
+   the warehouse worker only pays for the screen they're on. The
+   Workspace flow (Upload → Pruefen → Focus → Abschluss) is the
+   critical path, but each step is a separate concern + a heavy file
+   (Focus alone is ~2k lines) — splitting them keeps the first paint
+   fast and the chunks tree-shake independently. */
+const UploadScreen         = lazy(() => import('./screens/Upload.jsx'));
+const PruefenScreen        = lazy(() => import('./screens/Pruefen.jsx'));
+const FocusScreen          = lazy(() => import('./screens/Focus.jsx'));
+const AbschlussScreen      = lazy(() => import('./screens/Abschluss.jsx'));
 const HistorieScreen       = lazy(() => import('./screens/Historie.jsx'));
 const EinstellungenScreen  = lazy(() => import('./screens/Einstellungen.jsx'));
 const AdminScreen          = lazy(() => import('./screens/Admin.jsx'));
@@ -115,7 +116,7 @@ function Router() {
         onRoute={setRoute}
         onOpenCommand={() => setPaletteOpen(true)}
       >
-        {route === 'workspace'     && <Workspace onRoute={setRoute} />}
+        {route === 'workspace'     && <LazyRoute><Workspace onRoute={setRoute} /></LazyRoute>}
         {route === 'warteschlange' && <LazyRoute><WarteschlangeScreen onRoute={setRoute} /></LazyRoute>}
         {route === 'suche'         && <LazyRoute><SucheScreen initialQuery={sucheInitialQuery} /></LazyRoute>}
         {route === 'historie'      && <LazyRoute><HistorieScreen /></LazyRoute>}
