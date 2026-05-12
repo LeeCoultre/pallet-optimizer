@@ -12,7 +12,7 @@
        action; the parent decides what those do via callbacks.
    ───────────────────────────────────────────────────────────────────────── */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { T } from './ui.jsx';
 
 const KIND_LABELS = {
@@ -67,6 +67,21 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
   // sees the issues without an extra click.
   const [open, setOpen] = useState(defaultOpen);
 
+  /* When the card sits near the bottom of the viewport, expanding the
+     body grows it past the fold. The browser's scroll-anchoring picks
+     content below the card as the anchor and bumps scrollTop to keep
+     that anchor stable — visually the card appears to grow UPWARD
+     (header drifts up out of view). Pin the header to the top of the
+     viewport on each open so the body always extends downward. */
+  const headerRef = useRef<HTMLButtonElement | null>(null);
+  const prevOpen  = useRef<boolean>(defaultOpen);
+  useEffect(() => {
+    if (open && !prevOpen.current && headerRef.current) {
+      headerRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    prevOpen.current = open;
+  }, [open]);
+
   /* Derived check-strip — one pill per kind. Always visible, gives the
      operator a positive "yes, this was checked" signal even when ok. */
   const checks = useMemo(() => {
@@ -111,6 +126,7 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
     }}>
       {/* Header */}
       <button
+        ref={headerRef}
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
