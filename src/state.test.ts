@@ -25,6 +25,8 @@ const baseSummary: AuftragSummary = {
   status: 'queued',
   palletCount: 3,
   articleCount: 27,
+  unitsCount: 540,
+  eskuCount: 0,
   errorMessage: null,
   createdAt: '2026-05-08T10:00:00.000Z',
   queuePosition: 0,

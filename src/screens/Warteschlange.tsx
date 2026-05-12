@@ -65,20 +65,26 @@ export default function WarteschlangeScreen({ onRoute }) {
   const inputRef  = useRef<HTMLInputElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
-  /* ── enrichment per entry ────────────────────────────────────── */
+  /* ── enrichment per entry ──────────────────────────────────────
+     Queued items arrive WITHOUT `parsed` in the list payload (server
+     slims everything except the caller's active Auftrag). For counts
+     we use the precomputed Summary fields; fingerprint + ETA need
+     full pallets[] and gracefully degrade to null when absent. */
   const entries = useMemo(
     () => queue.map((entry) => {
       const pallets       = entry.parsed?.pallets || [];
       const eskuItems     = entry.parsed?.einzelneSkuItems || [];
-      const articleCount  = pallets.reduce((s, p) => s + (p.items?.length || 0), 0);
-      const units         = entry.parsed?.meta?.totalUnits || 0;
-      const fp            = computeFingerprint(pallets, eskuItems);
-      const etaSec        = estimateOrderSeconds(pallets);
+      const palletCount   = entry.palletCount ?? pallets.length;
+      const articleCount  = entry.articleCount
+        ?? pallets.reduce((s, p) => s + (p.items?.length || 0), 0);
+      const units         = entry.unitsCount ?? entry.parsed?.meta?.totalUnits ?? 0;
+      const fp            = pallets.length ? computeFingerprint(pallets, eskuItems) : null;
+      const etaSec        = pallets.length ? estimateOrderSeconds(pallets) : null;
       return {
         ...entry,
         _fp: fp,
         _etaSec: etaSec,
-        _palletCount: pallets.length,
+        _palletCount: palletCount,
         _articleCount: articleCount,
         _units: units,
       };
@@ -106,7 +112,7 @@ export default function WarteschlangeScreen({ onRoute }) {
       pallets:  acc.pallets  + e._palletCount,
       articles: acc.articles + e._articleCount,
       units:    acc.units    + Number(e._units || 0),
-      etaSec:   acc.etaSec   + e._etaSec,
+      etaSec:   acc.etaSec   + (e._etaSec ?? 0),
     }), { pallets: 0, articles: 0, units: 0, etaSec: 0 }),
     [entries],
   );

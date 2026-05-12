@@ -28,6 +28,7 @@ import {
 } from './marathonApi';
 import type {
   AuftragDetail,
+  AuftragStatus,
   AuftragSummary,
   AuftragReorderItem,
   CompletedKeys,
@@ -95,6 +96,8 @@ export function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): 
     error:     a.errorMessage,
     palletCount:  a.palletCount,
     articleCount: a.articleCount,
+    unitsCount:   a.unitsCount ?? 0,
+    eskuCount:    a.eskuCount ?? 0,
 
     startedAt:        a.startedAt  ? Date.parse(a.startedAt)  : undefined,
     finishedAt:       a.finishedAt ? Date.parse(a.finishedAt) : undefined,
@@ -220,16 +223,81 @@ export function useAppState(): UseAppStateApi {
   const createMut  = useMutation({ mutationFn: createAuftrag, onSuccess: invalidateAll });
   const removeMut  = useMutation({ mutationFn: deleteAuftrag, onSuccess: invalidateAll });
   const reorderMut = useMutation({ mutationFn: apiReorder,    onSuccess: invalidateAll });
-  const cancelMut  = useMutation({
+
+  /* ── Optimistic cancel + start ───────────────────────────────────────
+     Before this, every click on Verlassen / Start blocked the UI until
+     the server returned AND a full ['auftraege'] refetch finished. With
+     Railway latency that was 5-30 s.
+     Now we mutate the local cache immediately (onMutate) and patch the
+     server's response back in (onSuccess), skipping the heavy refetch
+     entirely for the success path. Rollback on error via onError. */
+  const cancelMut = useMutation<AuftragDetail, Error, UUID, { prev?: AuftragDetail[] }>({
     mutationFn: cancelAuftrag,
-    onSuccess: (_data, id: UUID) => { clearCopiedKeys(id); invalidateAll(); },
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['auftraege'] });
+      const prev = qc.getQueryData<AuftragDetail[]>(['auftraege']);
+      qc.setQueryData<AuftragDetail[]>(['auftraege'], (old) =>
+        (old || []).map((a) => a.id === id ? {
+          ...a,
+          status: 'queued' as AuftragStatus,
+          assignedToUserId: null,
+          assignedToUserName: null,
+          startedAt: null,
+          step: null,
+          currentPalletIdx: null,
+          currentItemIdx: null,
+          completedKeys: {},
+          palletTimings: {},
+          // No longer my active row → list payload won't carry parsed for it
+          parsed: null,
+          rawText: null,
+          validation: null,
+        } : a),
+      );
+      return { prev };
+    },
+    onSuccess: (_data, id) => {
+      clearCopiedKeys(id);
+      // history may have changed if cancel re-queued an Auftrag (rare),
+      // but the auftraege list is already in the right shape locally.
+      qc.invalidateQueries({ queryKey: ['history'] });
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['auftraege'], ctx.prev);
+      invalidateAll();
+    },
   });
-  const startMut   = useMutation({
+
+  const startMut = useMutation<AuftragDetail, Error, UUID, { prev?: AuftragDetail[] }>({
     mutationFn: startAuftrag,
-    onSuccess:  invalidateAll,
-    onError: (err: unknown) => {
-      /* Show ALL start errors, not just 409 — the previous instanceof-gated
-         alert was silently dropped when TanStack rewraps the error. */
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ['auftraege'] });
+      const prev = qc.getQueryData<AuftragDetail[]>(['auftraege']);
+      // Optimistic only flips status + workflow fields. parsed stays
+      // null until the server returns Detail (with the full payload
+      // for this user as active worker) and we patch it in.
+      const nowIso = new Date().toISOString();
+      qc.setQueryData<AuftragDetail[]>(['auftraege'], (old) =>
+        (old || []).map((a) => a.id === id ? {
+          ...a,
+          status: 'in_progress' as AuftragStatus,
+          startedAt: nowIso,
+          step: 'pruefen' as WorkflowStep,
+          currentPalletIdx: 0,
+          currentItemIdx: 0,
+        } : a),
+      );
+      return { prev };
+    },
+    onSuccess: (data, id) => {
+      // Patch the freshly-started row with full parsed so Pruefen/
+      // Focus mount with real data, no extra round-trip needed.
+      qc.setQueryData<AuftragDetail[]>(['auftraege'], (old) =>
+        (old || []).map((a) => a.id === id ? data : a),
+      );
+    },
+    onError: (err, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['auftraege'], ctx.prev);
       const msg = err instanceof Error
         ? err.message
         : 'Auftrag konnte nicht gestartet werden.';

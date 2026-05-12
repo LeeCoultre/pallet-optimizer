@@ -147,6 +147,8 @@ class AuftragSummary(APIModel):
     status: AuftragStatus
     pallet_count: int = 0                # derived from parsed.pallets
     article_count: int = 0               # derived from parsed.pallets[].items
+    units_count: int = 0                 # derived from parsed.meta.totalUnits
+    esku_count: int = 0                  # derived from parsed.einzelneSkuItems
     error_message: Optional[str] = None
     created_at: datetime
     queue_position: Optional[int] = None
@@ -166,6 +168,8 @@ class AuftragSummary(APIModel):
         parsed = row.parsed or {}
         meta = parsed.get("meta") or {}
         pallets = parsed.get("pallets") or []
+        esku_items = parsed.get("einzelneSkuItems") or []
+        total_units = meta.get("totalUnits")
         return cls(
             id=row.id,
             file_name=row.file_name,
@@ -173,6 +177,8 @@ class AuftragSummary(APIModel):
             status=row.status,
             pallet_count=len(pallets),
             article_count=sum(len(p.get("items") or []) for p in pallets),
+            units_count=int(total_units) if isinstance(total_units, (int, float)) else 0,
+            esku_count=len(esku_items),
             error_message=row.error_message,
             created_at=row.created_at,
             queue_position=row.queue_position,

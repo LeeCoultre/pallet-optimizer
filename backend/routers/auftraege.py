@@ -74,8 +74,13 @@ async def list_auftraege(
 ):
     """Queue (status=queued) plus my own in_progress, in queue order.
 
-    Returns Detail (incl. parsed JSONB) — frontend list cards need
-    pallet/article counts and meta.sendungsnummer from parsed.
+    Returns Detail for the caller's ACTIVE Auftrag (in_progress + me)
+    — needs full parsed/raw_text/validation for the workflow screens.
+    Every OTHER row (queued / errored / other users' in_progress) is
+    slimmed: parsed/raw_text/validation set to null, summary counts
+    (pallet_count, article_count, units_count, esku_count, fba_code)
+    still travel for queue cards. Saves ~30-80 KB per non-active row
+    in the payload — meaningful with 5-10 queued Aufträge.
     """
     q = (
         select(Auftrag)
@@ -96,12 +101,22 @@ async def list_auftraege(
     name_map = await _name_lookup(
         db, {r.assigned_to_user_id for r in rows if r.assigned_to_user_id}
     )
-    return [
-        AuftragDetail.from_orm_row(
+
+    def serialize(r: Auftrag) -> AuftragDetail:
+        is_caller_active = (
+            r.assigned_to_user_id == me.id
+            and r.status == AuftragStatus.in_progress
+        )
+        d = AuftragDetail.from_orm_row(
             r, assigned_to_user_name=name_map.get(r.assigned_to_user_id)
         )
-        for r in rows
-    ]
+        if not is_caller_active:
+            d.parsed = None
+            d.raw_text = None
+            d.validation = None
+        return d
+
+    return [serialize(r) for r in rows]
 
 
 @router.post("", response_model=AuftragDetail, status_code=status.HTTP_201_CREATED)

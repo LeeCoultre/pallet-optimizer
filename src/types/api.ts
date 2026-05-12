@@ -112,6 +112,8 @@ export interface AuftragSummary {
   status: AuftragStatus;
   palletCount: number;
   articleCount: number;
+  unitsCount: number;
+  eskuCount: number;
   errorMessage: string | null;
   createdAt: ISODateString;
   queuePosition: number | null;

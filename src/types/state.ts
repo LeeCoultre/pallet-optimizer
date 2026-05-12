@@ -27,6 +27,8 @@ export interface LegacyAuftrag {
   error: string | null | undefined;
   palletCount: number;
   articleCount: number;
+  unitsCount: number;
+  eskuCount: number;
 
   startedAt: number | undefined;
   finishedAt: number | undefined;
