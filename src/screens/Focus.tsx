@@ -1652,16 +1652,20 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
      a useItem each get their own bucket (no accidental clustering).
 
      For L1 / L2 (Thermo + ÖKO Thermo) the useItem alone is enough —
-     same EAN/X-code = same roll product, pack counts always match.
+     same EAN/X-code = same roll product, pack-per-carton is always
+     identical for the same SKU.
      For everything else (Klebeband, Produktion, Kernöl, Tacho) the
-     same useItem can ship in different pack sizes (e.g. Sandsäcke
-     5 Stück vs Sandsäcke 20 Stück) — those are distinct variants and
-     must NOT merge, so we fold `units` into the group key. */
+     same useItem can ship in different pack sizes: "Sandsäcke 5 Stück"
+     and "Sandsäcke 20 Stück" share the EAN but are distinct variants.
+     The 5/20 lives in the item's `rollen` (per-Einheit count, the
+     orange "5 Stück" line in the hero), NOT in `units` (total cartons
+     on this row). Fold rollen into the key. */
   const groupKey = (it) => {
     if (!it?.useItem) return null;
     const lvl = it.level || getDisplayLevel(it) || 1;
     if (lvl === 1 || lvl === 2) return `u:${it.useItem}`;
-    return `u:${it.useItem}|n:${it.units ?? '?'}`;
+    const perPack = it.rollen ?? it.perCarton ?? '?';
+    return `u:${it.useItem}|r:${perPack}`;
   };
   const groups: { key: string | null; from: number; items: typeof items }[] = [];
   items.forEach((item, j) => {
