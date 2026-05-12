@@ -28,7 +28,7 @@
    Persistence: copiedKeys is server-backed via /api/auftraege/.../
    progress copied_keys JSONB. Reload no longer wipes chip state. */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '@/state.jsx';
 import {
@@ -241,6 +241,16 @@ export default function FocusScreen() {
   const displayCurrentIdx = origToDisplayIdx.get(palletIdx) ?? palletIdx;
   const currentPalletId = rawPallets[palletIdx]?.id || '';
   const displayCurrentItemIdx = articleOrigToDisplay(currentPalletId, itemIdx);
+
+  /* Stable callback for the chip strip — keeps NumberedChip's React.memo
+     effective. Re-binds only when the active pallet id (translation key)
+     or the override map changes. */
+  const handlePickItem = useCallback((displayItemIdx: number) => {
+    const order = articleOrderOverride[currentPalletId];
+    const rawIdx = order ? (order[displayItemIdx] ?? displayItemIdx) : displayItemIdx;
+    setCurrentItemIdx(rawIdx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPalletId, articleOrderOverride, setCurrentItemIdx]);
 
   /* Totals + position. */
   const totalArticles  = rawPallets.reduce((s, p) => s + p.items.length, 0);
@@ -642,12 +652,7 @@ export default function FocusScreen() {
                 if (i > palletIdx) setInterlude(buildInterludePayload(palletIdx));
                 setCurrentPalletIdx(i);
               }}
-              onPickItem={(displayItemIdx) => {
-                /* PalletFlow only clicks chips on the current pallet,
-                   so translate via the current pallet's article order. */
-                const rawIdx = articleDisplayToOrig(currentPalletId, displayItemIdx);
-                setCurrentItemIdx(rawIdx);
-              }}
+              onPickItem={handlePickItem}
               onReorder={(fromIdx, toIdx) => {
                 if (fromIdx === toIdx) return;
                 setPalletOrderOverride((prev) => {
@@ -672,10 +677,7 @@ export default function FocusScreen() {
               palletDisplayIdx={displayCurrentIdx}
               currentDisplayItemIdx={displayCurrentItemIdx}
               copiedKeys={displayCopiedKeys}
-              onPick={(displayItemIdx) => {
-                const rawIdx = articleDisplayToOrig(currentPalletId, displayItemIdx);
-                setCurrentItemIdx(rawIdx);
-              }}
+              onPick={handlePickItem}
             />
           )}
         </StudioFrame>
@@ -1686,12 +1688,13 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
               <NumberedChip
                 key={j}
                 idx={j + 1}
+                itemIdx={j}
                 isActive={isActive}
                 isCopied={isCopied}
                 isEsku={isEsku}
                 hasFlag={hasFlag}
                 levelMeta={meta}
-                onClick={() => onPick?.(j)}
+                onPick={onPick}
                 title={`Artikel ${j + 1} · L${lvl} ${meta.shortName || meta.name}` +
                        (isEsku ? ' · ⬢ ESKU' : '') +
                        (isCopied ? ' · ✓ kopiert' : ' · noch zu kopieren')}
@@ -1705,14 +1708,29 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
   );
 }
 
-function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, levelMeta, onClick, title }) {
+const NumberedChip = memo(function NumberedChip({
+  idx, itemIdx, isActive, isCopied, isEsku, hasFlag, levelMeta, onPick, title,
+}: {
+  idx: number;
+  itemIdx: number;
+  isActive: boolean;
+  isCopied: boolean;
+  isEsku: boolean;
+  hasFlag: boolean;
+  levelMeta: { color: string; bg: string; text: string; [k: string]: unknown };
+  onPick?: (itemIdx: number) => void;
+  title: string;
+}) {
   /* Coloring rules:
        active  → filled accent, white number, bold — the selected chip
        copied  → green tinted (Artikel-Code wurde kopiert)
        todo    → level-color soft (tinted bg + colored border + text)
-     ESKU shifts border style to dashed; flags → tiny warn dot. */
+     ESKU shifts border style to dashed; flags → tiny warn dot.
+     Wrapped in React.memo — when the worker advances an item only the
+     chips whose isActive/isCopied actually flipped re-render, instead
+     of the entire strip rebuilding on every state change. */
   const meta = levelMeta || LEVEL_META[1];
-  let color, fontWeight, bg, border;
+  let color: string, fontWeight: number, bg: string, border: string;
   if (isActive) {
     color = '#fff';
     fontWeight = 700;
@@ -1729,12 +1747,15 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, levelMeta, onC
     bg = meta.bg;
     border = meta.color;
   }
-  const decoration = 'none';
+
+  const handleClick = useCallback(() => {
+    onPick?.(itemIdx);
+  }, [onPick, itemIdx]);
 
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={handleClick}
       title={title}
       style={{
         position: 'relative',
@@ -1748,7 +1769,7 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, levelMeta, onC
         fontFamily: T.font.mono,
         fontSize: 12.5,
         fontWeight,
-        textDecoration: decoration,
+        textDecoration: 'none',
         fontVariantNumeric: 'tabular-nums',
         letterSpacing: '-0.005em',
         cursor: 'pointer',
@@ -1780,7 +1801,7 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, levelMeta, onC
       )}
     </button>
   );
-}
+});
 
 /* ════════════════════════════════════════════════════════════════════════
    Wiederholt overlay
