@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -74,6 +75,10 @@ ALLOWED_ORIGINS = [
     if o.strip()
 ]
 
+# GZip responses ≥1 KB. Auftrag.parsed JSON is regularly 30-80 KB
+# and compresses 8-10× — saves real bandwidth + latency on Railway.
+# Order matters: GZip must come AFTER CORS so the gzipped body still
+# gets the Access-Control headers attached.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -81,6 +86,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(packing.router, prefix="/api", tags=["packing"])
 app.include_router(xlsx_import.router, prefix="/api", tags=["import"])
