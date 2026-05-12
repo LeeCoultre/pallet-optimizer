@@ -1649,8 +1649,20 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
   if (!items.length) return null;
   /* Bucket consecutive items that share the same `useItem` into the
      same container — one visual unit per repeating SKU. Items without
-     a useItem each get their own bucket (no accidental clustering). */
-  const groupKey = (it) => (it?.useItem ? `u:${it.useItem}` : null);
+     a useItem each get their own bucket (no accidental clustering).
+
+     For L1 / L2 (Thermo + ÖKO Thermo) the useItem alone is enough —
+     same EAN/X-code = same roll product, pack counts always match.
+     For everything else (Klebeband, Produktion, Kernöl, Tacho) the
+     same useItem can ship in different pack sizes (e.g. Sandsäcke
+     5 Stück vs Sandsäcke 20 Stück) — those are distinct variants and
+     must NOT merge, so we fold `units` into the group key. */
+  const groupKey = (it) => {
+    if (!it?.useItem) return null;
+    const lvl = it.level || getDisplayLevel(it) || 1;
+    if (lvl === 1 || lvl === 2) return `u:${it.useItem}`;
+    return `u:${it.useItem}|n:${it.units ?? '?'}`;
+  };
   const groups: { key: string | null; from: number; items: typeof items }[] = [];
   items.forEach((item, j) => {
     const k = groupKey(item);
