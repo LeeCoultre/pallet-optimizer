@@ -541,7 +541,7 @@ export default function FocusScreen() {
           right={
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <ShellToggle on={schnellmodus} onToggle={toggleSchnell} />
-              <Button variant="ghost" size="sm" onClick={onExit}
+              <Button variant="danger" size="sm" onClick={onExit}
                       title="Focus-Modus verlassen">
                 Verlassen
               </Button>
@@ -592,21 +592,21 @@ export default function FocusScreen() {
 
           {/* Pallet flow — collapses out of view in zen mode (height 0
               + opacity 0) so only the article hero remains on screen.
-              Single compact scroll row; pallets are always draggable
-              for reorder. "Liste" opens a full overlay listing every
-              pallet and its articles. */}
+              Visual shell mirrors ArticleHeroCard: same surface bg,
+              same 1px hairline border, same 18px radius, no shadow —
+              so the worker reads the two as a paired panel. */}
           <div style={{
-            padding: '12px 16px 14px',
+            padding: '14px 22px 16px',
             background: T.bg.surface,
-            borderRadius: 14,
-            boxShadow: '0 1px 3px rgba(17,24,39,0.03)',
+            borderRadius: 18,
+            boxShadow: 'none',
             display: 'flex',
             flexDirection: 'column',
-            gap: 10,
+            gap: 12,
             opacity: zen ? 0 : 1,
-            maxHeight: zen ? 0 : 200,
-            paddingTop: zen ? 0 : 12,
-            paddingBottom: zen ? 0 : 14,
+            maxHeight: zen ? 0 : 220,
+            paddingTop: zen ? 0 : 14,
+            paddingBottom: zen ? 0 : 16,
             border: zen ? '1px solid transparent' : `1px solid ${T.border.primary}`,
             pointerEvents: zen ? 'none' : 'auto',
             overflow: 'hidden',
