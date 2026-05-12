@@ -19,11 +19,12 @@ import mammoth from 'mammoth';
 import {
   parseLagerauftragText, validateParsing,
 } from './utils/parseLagerauftrag.js';
-import { sortPallets } from './utils/auftragHelpers.js';
+import { sortPallets, enrichItemDims } from './utils/auftragHelpers.js';
 import {
   listAuftraege, createAuftrag, getAuftrag, deleteAuftrag, reorderQueue as apiReorder,
   startAuftrag, updateProgress, completeAuftrag, cancelAuftrag,
   getHistory, deleteHistoryEntry, getMe,
+  lookupSkuDimensions,
   ApiError,
 } from './marathonApi';
 import type {
@@ -408,8 +409,36 @@ export function useAppState(): UseAppStateApi {
       return;
     }
     const target = entryId || queue[0]?.id;
-    if (target) startMut.mutate(target);
-  }, [current, queue, startMut]);
+    if (!target) return;
+
+    /* Pre-warm the sku-dimensions query so Pruefen mounts with the
+       lookup already inflight (or done). Uses the same queryKey
+       Pruefen subscribes to, so it'll just hand back the cached
+       result on mount instead of firing a fresh HTTP roundtrip
+       (~150-300 ms on Railway). */
+    const targetAuftrag = queue.find((a) => a.id === target) || (current as LegacyAuftrag | null);
+    const parsed = targetAuftrag?.parsed;
+    if (parsed) {
+      const palletsItems = (parsed.pallets || []).flatMap((p) => p.items || []);
+      const eskuItems   = parsed.einzelneSkuItems || [];
+      const allItems    = [...palletsItems, ...eskuItems];
+      if (allItems.length > 0) {
+        qc.prefetchQuery({
+          queryKey: ['sku-dims', target],
+          queryFn: () => enrichItemDims(allItems, lookupSkuDimensions),
+          staleTime: 5 * 60 * 1000,
+        });
+      }
+    }
+
+    /* Pre-import the Pruefen chunk while the start mutation is in
+       flight. The lazy-loaded module fetch races with the network
+       roundtrip — by the time the optimistic UI flips step→pruefen,
+       the chunk is usually already parsed and ready to render. */
+    void import('./screens/Pruefen');
+
+    startMut.mutate(target);
+  }, [current, queue, startMut, qc]);
 
   const goToStep = useCallback((step: WorkflowStep) => {
     if (current?.id) progressMut.mutate({ id: current.id, payload: { step } });

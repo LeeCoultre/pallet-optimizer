@@ -103,17 +103,15 @@ async def list_auftraege(
     )
 
     def serialize(r: Auftrag) -> AuftragDetail:
-        is_caller_active = (
-            r.assigned_to_user_id == me.id
-            and r.status == AuftragStatus.in_progress
-        )
         d = AuftragDetail.from_orm_row(
             r, assigned_to_user_name=name_map.get(r.assigned_to_user_id)
         )
-        if not is_caller_active:
-            d.parsed = None
-            d.raw_text = None
-            d.validation = None
+        # raw_text is the full docx body (10-30 KB / row) and never
+        # rendered in any list view. Strip it to slim the payload while
+        # keeping `parsed` available — Pruefen needs it the moment the
+        # worker clicks Start so the optimistic transition renders with
+        # real data, not an empty placeholder.
+        d.raw_text = None
         return d
 
     return [serialize(r) for r in rows]
