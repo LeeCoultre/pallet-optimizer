@@ -221,7 +221,28 @@ export function useAppState(): UseAppStateApi {
     qc.invalidateQueries({ queryKey: ['history'] });
   };
 
-  const createMut  = useMutation({ mutationFn: createAuftrag, onSuccess: invalidateAll });
+  /* createMut populates the cache directly with the server-returned
+     Detail instead of invalidating ['auftraege'] and waiting for a
+     refetch. Without this, the new Auftrag sits invisible to the
+     React Query cache for the ~300-700ms a refetch takes — and any
+     click on it during that window misses the optimistic Start path
+     (setQueryData does old.map() which can't find a row that isn't
+     there yet). History doesn't change on upload, so no invalidate
+     needed there either. raw_text is nulled to match the slim list
+     endpoint (the list slim strips raw_text). */
+  const createMut = useMutation({
+    mutationFn: createAuftrag,
+    onSuccess: (data: AuftragDetail) => {
+      const slim: AuftragDetail = { ...data, rawText: null };
+      qc.setQueryData<AuftragDetail[]>(['auftraege'], (old) => {
+        const arr = old ? [...old] : [];
+        const idx = arr.findIndex((a) => a.id === slim.id);
+        if (idx >= 0) arr[idx] = slim;
+        else arr.push(slim);
+        return arr;
+      });
+    },
+  });
   const removeMut  = useMutation({ mutationFn: deleteAuftrag, onSuccess: invalidateAll });
   const reorderMut = useMutation({ mutationFn: apiReorder,    onSuccess: invalidateAll });
 
