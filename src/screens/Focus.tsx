@@ -590,23 +590,26 @@ export default function FocusScreen() {
             reCopyTick={reCopyTick}
           />
 
-          {/* Pallet flow — collapses out of view in zen mode (height 0
-              + opacity 0) so only the article hero remains on screen.
-              Visual shell mirrors ArticleHeroCard: same surface bg,
-              same 1px hairline border, same 18px radius, no shadow —
-              so the worker reads the two as a paired panel. */}
+          {/* Pallet flow — visual twin of ArticleHeroCard above it.
+              Same 1px hairline + 18px radius + surface bg + no shadow,
+              identical padding rhythm (24/28), and a matching soft
+              accent halo top-right. Zen mode collapses height/opacity
+              so the hero remains alone on screen. */}
           <div style={{
-            padding: '14px 22px 16px',
+            position: 'relative',
+            width: '100%',
+            maxWidth: 1080,
+            padding: '20px 28px',
             background: T.bg.surface,
             borderRadius: 18,
             boxShadow: 'none',
             display: 'flex',
             flexDirection: 'column',
-            gap: 12,
+            gap: 14,
             opacity: zen ? 0 : 1,
-            maxHeight: zen ? 0 : 220,
-            paddingTop: zen ? 0 : 14,
-            paddingBottom: zen ? 0 : 16,
+            maxHeight: zen ? 0 : 240,
+            paddingTop: zen ? 0 : 20,
+            paddingBottom: zen ? 0 : 22,
             border: zen ? '1px solid transparent' : `1px solid ${T.border.primary}`,
             pointerEvents: zen ? 'none' : 'auto',
             overflow: 'hidden',
@@ -614,6 +617,16 @@ export default function FocusScreen() {
             scrollbarWidth: 'thin',
             transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), max-height 320ms cubic-bezier(0.16, 1, 0.3, 1), padding 240ms ease, border-color 240ms ease',
           }}>
+            {/* Soft accent radial halo — mirrors ArticleHeroCard's halo,
+                tuned to the accent so the panel reads as the "active
+                workflow" surface alongside the hero. */}
+            <div aria-hidden style={{
+              position: 'absolute',
+              top: -120, right: -120,
+              width: 280, height: 280,
+              background: `radial-gradient(circle, ${T.accent.main}10 0%, transparent 65%)`,
+              pointerEvents: 'none',
+            }} />
             {!zen && (
               <div style={{
                 display: 'flex',
