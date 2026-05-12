@@ -34,6 +34,7 @@ import { useAppState } from '@/state.jsx';
 import {
   focusItemView, sortItemsForPallet, distributeEinzelneSku,
   enrichItemDims, getDisplayLevel, LEVEL_META, formatItemTitle,
+  extractProduktionPerCarton,
 } from '@/utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '@/marathonApi.js';
 import { detectWiederholt } from '@/utils/wiederholtLogic.js';
@@ -1664,8 +1665,24 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
     if (!it?.useItem) return null;
     const lvl = it.level || getDisplayLevel(it) || 1;
     if (lvl === 1 || lvl === 2) return `u:${it.useItem}`;
-    const perPack = it.rollen ?? it.perCarton ?? '?';
-    return `u:${it.useItem}|r:${perPack}`;
+    /* Per-Einheit pack count. Items here come from the parsed payload
+       (not focusItemView'd) so we manually run the same fallback
+       chain the hero card uses: explicit `rollen` from parseTitleMeta,
+       a precomputed `perCarton` if any, and finally — only for L4 —
+       the "(N)" / "TK 50x …" title patterns. */
+    let perPack = it.rollen ?? it.perCarton ?? null;
+    if (perPack == null && lvl === 4) {
+      perPack = extractProduktionPerCarton(it.title || '');
+    }
+    if (perPack != null) return `u:${it.useItem}|r:${perPack}`;
+    /* No pack-count anywhere → never assume two rows are the same SKU.
+       Use the normalized title as the discriminator: identical title
+       + identical useItem may still merge; anything else stays
+       separate. Beats falsely merging "Sandsäcke 20 Stück" with
+       "Sandsäcke 50 Stück" when neither line carries an explicit
+       per-Einheit number the parser can pick up. */
+    const titleKey = (it.title || '').trim().toLowerCase();
+    return `u:${it.useItem}|t:${titleKey}`;
   };
   const groups: { key: string | null; from: number; items: typeof items }[] = [];
   items.forEach((item, j) => {

@@ -1301,7 +1301,7 @@ export function focusItemView(item) {
   };
 }
 
-function extractProduktionPerCarton(title) {
+export function extractProduktionPerCarton(title) {
   // "(50)" am Ende — Stück pro Karton
   const trail = title.match(/\((\d+)\)\s*$/);
   if (trail) return parseInt(trail[1], 10);
