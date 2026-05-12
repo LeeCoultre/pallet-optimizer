@@ -18,6 +18,7 @@ test, so we can simulate "user A starts → user B tries to progress".
 """
 
 import os
+from urllib.parse import urlparse
 
 import pytest
 import pytest_asyncio
@@ -30,22 +31,47 @@ from backend.main import app
 from backend.orm import User, UserRole
 
 
+def _looks_local(database_url: str) -> bool:
+    """True if DATABASE_URL points at a host that cannot be the shared
+    Railway Postgres — localhost / 127.0.0.1 / *.local, or an explicit
+    *_test database name. CI runs against an ephemeral Postgres on
+    localhost; the guard must not block it.
+    """
+    if not database_url:
+        return False
+    try:
+        parsed = urlparse(database_url.replace("postgresql+asyncpg://", "postgresql://"))
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    db_name = (parsed.path or "").lstrip("/").lower()
+    if host in {"localhost", "127.0.0.1", "::1"} or host.endswith(".local"):
+        return True
+    if db_name.endswith("_test") or db_name.endswith("-test"):
+        return True
+    return False
+
+
 def pytest_configure(config):
     """Refuse to start if the operator hasn't acknowledged that the
     suite TRUNCATEs the shared prod database before every test.
 
-    Bypass: `MARATHON_TESTS_OK_TO_WIPE_DB=yes pytest …`
+    Auto-bypass: CI / local ephemeral Postgres on localhost is safe.
+    Manual bypass: `MARATHON_TESTS_OK_TO_WIPE_DB=yes pytest …`
     """
-    if os.environ.get("MARATHON_TESTS_OK_TO_WIPE_DB") != "yes":
-        pytest.exit(
-            "\n\n"
-            "  Tests are blocked: this suite runs against the SHARED prod\n"
-            "  database and TRUNCATES every Marathon table before each test.\n"
-            "  Running it during work hours wipes any in-progress Auftrag.\n\n"
-            "  If you're sure no warehouse worker is mid-flow, opt in:\n\n"
-            "    MARATHON_TESTS_OK_TO_WIPE_DB=yes .venv/bin/pytest\n\n",
-            returncode=2,
-        )
+    if os.environ.get("MARATHON_TESTS_OK_TO_WIPE_DB") == "yes":
+        return
+    if _looks_local(os.environ.get("DATABASE_URL", "")):
+        return
+    pytest.exit(
+        "\n\n"
+        "  Tests are blocked: this suite runs against the SHARED prod\n"
+        "  database and TRUNCATES every Marathon table before each test.\n"
+        "  Running it during work hours wipes any in-progress Auftrag.\n\n"
+        "  If you're sure no warehouse worker is mid-flow, opt in:\n\n"
+        "    MARATHON_TESTS_OK_TO_WIPE_DB=yes .venv/bin/pytest\n\n",
+        returncode=2,
+    )
 
 
 @pytest_asyncio.fixture
