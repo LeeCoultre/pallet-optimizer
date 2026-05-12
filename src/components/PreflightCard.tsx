@@ -12,7 +12,7 @@
        action; the parent decides what those do via callbacks.
    ───────────────────────────────────────────────────────────────────────── */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { T } from './ui.jsx';
 
 const KIND_LABELS = {
@@ -71,16 +71,26 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
      body grows it past the fold. The browser's scroll-anchoring picks
      content below the card as the anchor and bumps scrollTop to keep
      that anchor stable — visually the card appears to grow UPWARD
-     (header drifts up out of view). Pin the header to the top of the
-     viewport on each open so the body always extends downward. */
+     (header drifts up out of view). Bring the header back into view
+     after the body has animated in, using:
+       - `behavior: 'auto'` (no smooth) to avoid racing the browser's
+         own anchor-driven scroll adjustment
+       - `block: 'nearest'` so the page only scrolls when the header
+         genuinely went off-screen — no aggressive jump otherwise
+       - requestAnimationFrame so the body's expanded height is in the
+         layout before we measure visibility */
   const headerRef = useRef<HTMLButtonElement | null>(null);
   const prevOpen  = useRef<boolean>(defaultOpen);
   useEffect(() => {
     if (open && !prevOpen.current && headerRef.current) {
-      headerRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      const node = headerRef.current;
+      requestAnimationFrame(() => {
+        node.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+      });
     }
     prevOpen.current = open;
   }, [open]);
+  const bodyId = useId();
 
   /* Derived check-strip — one pill per kind. Always visible, gives the
      operator a positive "yes, this was checked" signal even when ok. */
@@ -130,6 +140,7 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
+        aria-controls={bodyId}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -198,22 +209,42 @@ export default function PreflightCard({ briefing, onJumpToPallet, onAction, defa
         {checks.map((c) => <CheckPill key={c.kind} check={c} />)}
       </div>
 
-      {/* Body — flag details, only when expanded AND there are flags */}
-      {open && flags.length > 0 && (
-        <div style={{
-          background: T.bg.surface,
-          borderTop: `1px solid ${T.border.primary}`,
-          padding: '16px 20px',
-        }}>
-          {errors.length > 0 && (
-            <FlagSection title="Fehler" flags={errors} onJumpToPallet={onJumpToPallet} onAction={onAction} />
-          )}
-          {warns.length > 0 && (
-            <FlagSection title="Warnungen" flags={warns} onJumpToPallet={onJumpToPallet} onAction={onAction} mt={errors.length ? 16 : 0} />
-          )}
-          {infos.length > 0 && (
-            <FlagSection title="Hinweise" flags={infos} onJumpToPallet={onJumpToPallet} onAction={onAction} mt={(errors.length || warns.length) ? 16 : 0} dim />
-          )}
+      {/* Body — flag details, animated via grid-rows 0fr↔1fr trick so
+          height transitions smoothly. Always mounted (so the
+          transition has a target to measure), inner overflow hidden,
+          aria hidden when collapsed to keep it out of the a11y tree.
+          The borderTop is on the INNER wrapper so it doesn't show
+          while height is 0. */}
+      {flags.length > 0 && (
+        <div
+          id={bodyId}
+          aria-hidden={!open}
+          style={{
+            display: 'grid',
+            gridTemplateRows: open ? '1fr' : '0fr',
+            transition: 'grid-template-rows 260ms cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+        >
+          <div style={{
+            overflow: 'hidden',
+            minHeight: 0,
+          }}>
+            <div style={{
+              background: T.bg.surface,
+              borderTop: `1px solid ${T.border.primary}`,
+              padding: '16px 20px',
+            }}>
+              {errors.length > 0 && (
+                <FlagSection title="Fehler" flags={errors} onJumpToPallet={onJumpToPallet} onAction={onAction} />
+              )}
+              {warns.length > 0 && (
+                <FlagSection title="Warnungen" flags={warns} onJumpToPallet={onJumpToPallet} onAction={onAction} mt={errors.length ? 16 : 0} />
+              )}
+              {infos.length > 0 && (
+                <FlagSection title="Hinweise" flags={infos} onJumpToPallet={onJumpToPallet} onAction={onAction} mt={(errors.length || warns.length) ? 16 : 0} dim />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
