@@ -201,6 +201,22 @@ a { color: inherit; text-decoration: none; }
 }
 .mr-pulse { animation: mr-pulse 2.4s ease-in-out infinite; }
 
+/* Re-copy feedback — fires on the Artikel-Code card whenever the
+   worker copies a code that was already kopiert. Brief outline-ring
+   flash so the action is acknowledged without changing the persistent
+   "kopiert" green state. */
+@keyframes mr-recopy-flash {
+  0%   { box-shadow: 0 0 0 0   var(--status-success-main, #10B981);
+         transform: scale(1); }
+  35%  { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.18);
+         transform: scale(1.015); }
+  100% { box-shadow: 0 0 0 0   rgba(16, 185, 129, 0);
+         transform: scale(1); }
+}
+.mr-recopy-flash {
+  animation: mr-recopy-flash 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 @keyframes mr-spin {
   to { transform: rotate(360deg); }
 }
@@ -235,7 +251,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mr-rise, .mr-pulse, .mr-finale-burst, .mr-pallet-wipe { animation: none !important; }
+  .mr-rise, .mr-pulse, .mr-finale-burst, .mr-pallet-wipe, .mr-recopy-flash { animation: none !important; }
   @keyframes keynote-slide-in {
     from { opacity: 0; }
     to   { opacity: 1; }

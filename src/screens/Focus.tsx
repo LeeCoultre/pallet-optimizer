@@ -33,7 +33,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '@/state.jsx';
 import {
   focusItemView, sortItemsForPallet, distributeEinzelneSku,
-  enrichItemDims, getDisplayLevel, LEVEL_META,
+  enrichItemDims, getDisplayLevel, LEVEL_META, formatItemTitle,
 } from '@/utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '@/marathonApi.js';
 import { detectWiederholt } from '@/utils/wiederholtLogic.js';
@@ -42,6 +42,21 @@ import PalletInterlude, { resetSkipCount } from '@/components/PalletInterlude.js
 import AuftragFinaleStage from '@/components/AuftragFinaleStage.jsx';
 
 const SCHNELL_KEY = 'marathon.focus.schnellmodus';
+
+/* Short, human-readable pallet name. Files come in with id like
+   "P1-B1" / "P2-B3"; the "-B…" suffix is the docx box number, which
+   workers don't need on screen. Prefer `pallet.number` (always set by
+   the parser) and fall back to stripping the suffix. Accepts either
+   a pallet object or a raw id string. */
+function shortPalletId(p) {
+  if (!p) return '';
+  if (typeof p === 'string') {
+    const m = p.match(/^([A-Za-z]+\d+)/);
+    return m ? m[1] : p;
+  }
+  if (typeof p.number === 'number') return `P${p.number}`;
+  return shortPalletId(p.id || '');
+}
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function FocusScreen() {
@@ -129,11 +144,103 @@ export default function FocusScreen() {
   });
   const reducedMotion = useReducedMotion();
 
+  /* Overlay state — full list of every pallet + its articles. */
+  const [palletListOpen, setPalletListOpen] = useState(false);
+
+  /* Local display-order override for pallets. Null = use the parser
+     order. When the worker drags-to-reorder, we store an array of
+     pallet IDs in the desired display order. The override applies to
+     the displayed strip only — the workflow state (currentPalletIdx,
+     copiedKeys, palletStates) stays tied to rawPallets by id, and we
+     remap indices at the PalletFlow boundary. */
+  const [palletOrderOverride, setPalletOrderOverride] = useState<string[] | null>(null);
+
+  /* Per-pallet article order override (palletId → array of ORIGINAL
+     item indices in display order). Same idea as the pallet override
+     but at item granularity, applied only inside the Liste overlay
+     and propagated to the chip strip / workflow via index remap. */
+  const [articleOrderOverride, setArticleOrderOverride] =
+    useState<Record<string, number[]>>({});
+
   /* copiedKeys derived from server-persisted current.copiedKeys. */
   const copiedKeys = useMemo(
     () => new Set(Object.keys(current?.copiedKeys || {})),
     [current?.copiedKeys],
   );
+
+  /* Apply BOTH overrides:
+       1. pallet-level: reorder the pallets array
+       2. article-level: reorder items inside each pallet
+     Either override is dropped silently if it's stale (size mismatch,
+     missing id, etc.) so the UI stays consistent with the workflow. */
+  const displayPallets = useMemo(() => {
+    /* Step 1 — pallet order */
+    let base: typeof rawPallets;
+    if (!palletOrderOverride || palletOrderOverride.length !== rawPallets.length) {
+      base = rawPallets;
+    } else {
+      const byId = new Map(rawPallets.map((p) => [p.id, p]));
+      const out: typeof rawPallets = [];
+      for (const id of palletOrderOverride) {
+        const p = byId.get(id);
+        if (p) out.push(p);
+      }
+      base = out.length === rawPallets.length ? out : rawPallets;
+    }
+    /* Step 2 — article order within each pallet */
+    return base.map((p) => {
+      const order = articleOrderOverride[p.id];
+      const items = p.items || [];
+      if (!order || order.length !== items.length) return p;
+      const reordered = order.map((i) => items[i]).filter(Boolean);
+      if (reordered.length !== items.length) return p;
+      return { ...p, items: reordered };
+    });
+  }, [rawPallets, palletOrderOverride, articleOrderOverride]);
+
+  /* origIdx → displayIdx — used to remap copiedKeys + currentPalletIdx
+     into PalletFlow's display coordinates. */
+  const origToDisplayIdx = useMemo(() => {
+    const m = new Map<number, number>();
+    rawPallets.forEach((p, origIdx) => {
+      m.set(origIdx, displayPallets.findIndex((d) => d.id === p.id));
+    });
+    return m;
+  }, [rawPallets, displayPallets]);
+
+  /* Helpers to translate item indices through the per-pallet article
+     order override. origItemIdx → displayItemIdx for chip strip;
+     displayItemIdx → origItemIdx when the user clicks a chip. */
+  const articleOrigToDisplay = (palletId: string, origItemIdx: number) => {
+    const order = articleOrderOverride[palletId];
+    return order ? order.indexOf(origItemIdx) : origItemIdx;
+  };
+  const articleDisplayToOrig = (palletId: string, displayItemIdx: number) => {
+    const order = articleOrderOverride[palletId];
+    return order ? order[displayItemIdx] ?? displayItemIdx : displayItemIdx;
+  };
+
+  const displayCopiedKeys = useMemo(() => {
+    const out = new Set<string>();
+    copiedKeys.forEach((k) => {
+      const [oi, ii] = k.split('|');
+      const origPalletIdx = +oi;
+      const origItemIdx = +ii;
+      const displayPalletIdx = origToDisplayIdx.get(origPalletIdx);
+      if (displayPalletIdx == null || displayPalletIdx < 0) return;
+      const palletId = rawPallets[origPalletIdx]?.id;
+      if (!palletId) return;
+      const displayItemIdx = articleOrigToDisplay(palletId, origItemIdx);
+      if (displayItemIdx < 0) return;
+      out.add(`${displayPalletIdx}|${displayItemIdx}`);
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copiedKeys, origToDisplayIdx, articleOrderOverride, rawPallets]);
+
+  const displayCurrentIdx = origToDisplayIdx.get(palletIdx) ?? palletIdx;
+  const currentPalletId = rawPallets[palletIdx]?.id || '';
+  const displayCurrentItemIdx = articleOrigToDisplay(currentPalletId, itemIdx);
 
   /* Totals + position. */
   const totalArticles  = rawPallets.reduce((s, p) => s + p.items.length, 0);
@@ -233,11 +340,19 @@ export default function FocusScreen() {
   }, [rawPallet, rawItem, rawPallets, palletIdx, itemIdx, isLastItemOfPallet,
       allPalletCopied, completeCurrentItem, buildInterludePayload]);
 
+  /* Re-copy pulse — bumps a counter every time the worker copies the
+     Artikel-Code while it's already marked kopiert. The Hero card
+     uses the counter as an animation key to replay the flash even
+     on identical consecutive re-copies. */
+  const [reCopyTick, setReCopyTick] = useState(0);
+
   const onCopyArtikelCode = useCallback(() => {
     if (!item?.code) return;
     copyToClipboard(item.code);
+    const wasAlreadyCopied = copiedKeys.has(`${palletIdx}|${itemIdx}`);
+    if (wasAlreadyCopied) setReCopyTick((n) => n + 1);
     markCodeCopied(palletIdx, itemIdx);
-  }, [item, palletIdx, itemIdx, markCodeCopied]);
+  }, [item, palletIdx, itemIdx, markCodeCopied, copiedKeys]);
 
   const onCopyUseItem = useCallback(() => {
     if (!item?.useItem) return;
@@ -447,14 +562,14 @@ export default function FocusScreen() {
           bare
           gap={zen ? 0 : 20}
           zen={zen}
-          label={`Aktueller Artikel · ${pallet.id}`}
+          label={`Aktueller Artikel · ${shortPalletId(pallet)}`}
           status={`${String(itemIdx + 1).padStart(2, '0')} / ${String(pallet.items.length).padStart(2, '0')}`}
           style={{ width: '100%', maxWidth: 1080 }}
           contentStyle={{ transition: 'gap 240ms cubic-bezier(0.16, 1, 0.3, 1)' }}
         >
           <ArticleHeroCard
             item={item}
-            palletId={pallet.id}
+            palletId={shortPalletId(pallet)}
             itemIdx={itemIdx}
             itemCount={pallet.items.length}
             copiedCode={codeCopied ? item?.code : null}
@@ -462,47 +577,107 @@ export default function FocusScreen() {
             onCopyCode={onCopyArtikelCode}
             onCopyUse={onCopyUseItem}
             zen={zen}
+            reCopyTick={reCopyTick}
           />
 
           {/* Pallet flow — collapses out of view in zen mode (height 0
-              + opacity 0) so only the article hero remains on screen. */}
+              + opacity 0) so only the article hero remains on screen.
+              Single compact scroll row; pallets are always draggable
+              for reorder. "Liste" opens a full overlay listing every
+              pallet and its articles. */}
           <div style={{
-            padding: '14px 18px',
+            padding: '12px 16px 14px',
             background: T.bg.surface,
             borderRadius: 14,
             boxShadow: '0 1px 3px rgba(17,24,39,0.03)',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'flex-start',
-            gap: 14,
-            overflow: 'hidden',
-            WebkitOverflowScrolling: 'touch',
-            scrollbarWidth: 'none',
+            flexDirection: 'column',
+            gap: 10,
             opacity: zen ? 0 : 1,
             maxHeight: zen ? 0 : 200,
-            paddingTop: zen ? 0 : 14,
+            paddingTop: zen ? 0 : 12,
             paddingBottom: zen ? 0 : 14,
             border: zen ? '1px solid transparent' : `1px solid ${T.border.primary}`,
             pointerEvents: zen ? 'none' : 'auto',
+            overflow: 'hidden',
+            WebkitOverflowScrolling: 'touch',
+            scrollbarWidth: 'thin',
             transition: 'opacity 240ms cubic-bezier(0.16, 1, 0.3, 1), max-height 320ms cubic-bezier(0.16, 1, 0.3, 1), padding 240ms ease, border-color 240ms ease',
           }}>
+            {!zen && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                minHeight: 30,
+              }}>
+                <span style={{
+                  fontFamily: T.font.mono,
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  letterSpacing: '0.16em',
+                  textTransform: 'uppercase',
+                  color: T.text.faint,
+                }}>
+                  Pallet Flow
+                </span>
+                <ViewListButton onClick={() => setPalletListOpen(true)} />
+              </div>
+            )}
             <PalletFlow
-              pallets={rawPallets}
+              pallets={displayPallets}
               palletStates={palletStates}
               palletTimings={current?.palletTimings}
-              currentIdx={palletIdx}
-              itemIdx={itemIdx}
-              copiedKeys={copiedKeys}
+              currentIdx={displayCurrentIdx}
+              itemIdx={displayCurrentItemIdx}
+              copiedKeys={displayCopiedKeys}
               allPalletCopied={allPalletCopied}
-              onPickPallet={(i) => {
-                if (i === palletIdx) return;
+              onPickPallet={(displayIdx) => {
+                const target = displayPallets[displayIdx];
+                if (!target) return;
+                const i = rawPallets.findIndex((p) => p.id === target.id);
+                if (i < 0 || i === palletIdx) return;
                 if (i > palletIdx && !allPalletCopied) { alert(blockMessage()); return; }
                 if (i > palletIdx) setInterlude(buildInterludePayload(palletIdx));
                 setCurrentPalletIdx(i);
               }}
-              onPickItem={(i) => setCurrentItemIdx(i)}
+              onPickItem={(displayItemIdx) => {
+                /* PalletFlow only clicks chips on the current pallet,
+                   so translate via the current pallet's article order. */
+                const rawIdx = articleDisplayToOrig(currentPalletId, displayItemIdx);
+                setCurrentItemIdx(rawIdx);
+              }}
+              onReorder={(fromIdx, toIdx) => {
+                if (fromIdx === toIdx) return;
+                setPalletOrderOverride((prev) => {
+                  const ids = prev || rawPallets.map((p) => p.id);
+                  if (fromIdx < 0 || toIdx < 0
+                      || fromIdx >= ids.length || toIdx >= ids.length) return prev;
+                  const arr = [...ids];
+                  const [moved] = arr.splice(fromIdx, 1);
+                  arr.splice(toIdx, 0, moved);
+                  return arr;
+                });
+              }}
             />
           </div>
+
+          {/* Zen-mode dot strip — minimal visual cue of the current
+              pallet's articles while the full Pallet Flow is hidden.
+              Position-only: copied=green, active=accent, todo=outline. */}
+          {zen && (
+            <ZenItemDots
+              items={displayPallets[displayCurrentIdx]?.items || []}
+              palletDisplayIdx={displayCurrentIdx}
+              currentDisplayItemIdx={displayCurrentItemIdx}
+              copiedKeys={displayCopiedKeys}
+              onPick={(displayItemIdx) => {
+                const rawIdx = articleDisplayToOrig(currentPalletId, displayItemIdx);
+                setCurrentItemIdx(rawIdx);
+              }}
+            />
+          )}
         </StudioFrame>
       </main>
 
@@ -527,6 +702,33 @@ export default function FocusScreen() {
         hit={wiederholt}
         onDismiss={() => setWiederholt(null)}
       />
+
+      {palletListOpen && (
+        <PalletListOverlay
+          pallets={displayPallets}
+          rawPallets={rawPallets}
+          currentRawIdx={palletIdx}
+          currentRawItemIdx={itemIdx}
+          copiedKeys={copiedKeys}
+          articleOrderOverride={articleOrderOverride}
+          onReorderArticles={(palletId, fromIdx, toIdx) => {
+            if (fromIdx === toIdx) return;
+            setArticleOrderOverride((prev) => {
+              const pal = rawPallets.find((p) => p.id === palletId);
+              if (!pal) return prev;
+              const count = pal.items?.length || 0;
+              const order = prev[palletId] || Array.from({ length: count }, (_, i) => i);
+              if (fromIdx < 0 || toIdx < 0
+                  || fromIdx >= order.length || toIdx >= order.length) return prev;
+              const arr = [...order];
+              const [moved] = arr.splice(fromIdx, 1);
+              arr.splice(toIdx, 0, moved);
+              return { ...prev, [palletId]: arr };
+            });
+          }}
+          onClose={() => setPalletListOpen(false)}
+        />
+      )}
 
       {interlude && (
         <PalletInterlude
@@ -562,6 +764,8 @@ function ArticleHeroCard({
   item, palletId, itemIdx, itemCount,
   copiedCode, flashUse, onCopyCode, onCopyUse,
   zen = false,
+  compact = false,
+  reCopyTick = 0,
 }) {
   const cat = item.levelMeta || LEVEL_META[1];
   const haloColor = cat.color || T.accent.main;
@@ -572,12 +776,13 @@ function ArticleHeroCard({
       position: 'relative',
       width: '100%',
       maxWidth: 1080,
-      padding: '24px 28px',
+      padding: compact ? '14px 20px' : '24px 28px',
       background: T.bg.surface,
       border: `1px solid ${T.border.primary}`,
       borderRadius: 18,
-      boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 22px 50px -24px rgba(17,24,39,0.20), 0 6px 14px -6px rgba(17,24,39,0.06)',
+      boxShadow: 'none',
       overflow: 'hidden',
+      transition: 'padding 240ms cubic-bezier(0.16, 1, 0.3, 1)',
     }}>
       {/* Soft accent radial halo */}
       <div aria-hidden style={{
@@ -632,6 +837,7 @@ function ArticleHeroCard({
             flashUse={flashUse}
             onCopyCode={onCopyCode}
             onCopyUse={onCopyUse}
+            reCopyTick={reCopyTick}
           />
         </div>
       </div>
@@ -808,7 +1014,7 @@ function ArticleColumn({ item, zen = false }) {
 /* ── RIGHT — codes column. Artikel-Code dominates over Use-Item.
    Vertically centred via space-around so the column doesn't pool the
    left column's leftover height into a void below Use-Item. */
-function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse }) {
+function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse, reCopyTick = 0 }) {
   return (
     <div style={{
       display: 'flex',
@@ -827,6 +1033,7 @@ function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse }) {
         copied={copiedCode != null && copiedCode === item.code}
         onCopy={onCopyCode}
         size="dominant"
+        reCopyTick={reCopyTick}
       />
 
       <div style={{ height: 1, background: T.border.subtle }} />
@@ -845,7 +1052,7 @@ function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse }) {
   );
 }
 
-function CodeRow({ label, kbd, value, copied, onCopy, size, accent }: { label: React.ReactNode; kbd?: string; value: string; copied?: boolean; onCopy: () => void; size?: 'dominant' | 'compact' | 'quiet'; accent?: boolean }) {
+function CodeRow({ label, kbd, value, copied, onCopy, size, accent, reCopyTick = 0 }: { label: React.ReactNode; kbd?: string; value: string; copied?: boolean; onCopy: () => void; size?: 'dominant' | 'compact' | 'quiet'; accent?: boolean; reCopyTick?: number }) {
   const isDominant = size === 'dominant';
   const valueFont = isDominant
     ? 'clamp(30px, 3.6vw, 46px)'
@@ -856,6 +1063,10 @@ function CodeRow({ label, kbd, value, copied, onCopy, size, accent }: { label: R
     <button
       type="button"
       onClick={onCopy}
+      /* Bump key on every re-copy so the flash animation replays even
+         if the same code is copied twice in a row. */
+      key={`code-${reCopyTick}`}
+      className={reCopyTick > 0 ? 'mr-recopy-flash' : undefined}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -1079,19 +1290,28 @@ interface PalletFlowProps {
   allPalletCopied: boolean;
   onPickPallet: (idx: number) => void;
   onPickItem: (palletIdx: number, itemIdx: number) => void;
+  onReorder?: (fromIdx: number, toIdx: number) => void;
 }
 
 function PalletFlow({
   pallets, palletStates, currentIdx, itemIdx,
   copiedKeys, allPalletCopied,
-  onPickPallet, onPickItem,
+  onPickPallet, onPickItem, onReorder,
 }: PalletFlowProps) {
+  /* Drag-and-drop reorder — always live in the compact strip. The
+     cards are draggable silently; visual cues only appear DURING a
+     drag (source dimmed, target outlined) so the resting state stays
+     clean. */
+  const [dragFromIdx, setDragFromIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const dndEnabled = !!onReorder;
+
   if (!pallets?.length) return null;
   return (
     <div style={{
       display: 'inline-flex',
       alignItems: 'center',
-      gap: 0,
+      gap: 10,
       flexShrink: 0,
     }}>
       {pallets.map((p, i) => {
@@ -1108,9 +1328,48 @@ function PalletFlow({
           (ps?.overloadFlags && ps.overloadFlags.size > 0)
           || (p.items || []).some((it) => (it.placementMeta?.flags || []).length > 0)
         );
+        const isDragSource = dragFromIdx === i;
+        const isDragTarget = dragOverIdx === i && dragFromIdx !== null && dragFromIdx !== i;
         return (
-          <span key={p.id} style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-            {i > 0 && <PalletConnector done={i <= currentIdx} />}
+          <span
+            key={p.id}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              flexShrink: 0,
+              borderRadius: 14,
+              cursor: dndEnabled ? 'grab' : 'default',
+              opacity: isDragSource ? 0.4 : 1,
+              boxShadow: isDragTarget
+                ? `inset 0 0 0 2px ${T.accent.main}`
+                : 'none',
+              transition: 'opacity 160ms ease, box-shadow 160ms ease',
+            }}
+            draggable={dndEnabled}
+            onDragStart={dndEnabled ? (e) => {
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', String(i));
+              setDragFromIdx(i);
+            } : undefined}
+            onDragOver={dndEnabled ? (e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              if (dragFromIdx === null) return;
+              if (i !== dragOverIdx) setDragOverIdx(i);
+            } : undefined}
+            onDrop={dndEnabled ? (e) => {
+              e.preventDefault();
+              if (dragFromIdx !== null && dragFromIdx !== i) {
+                onReorder?.(dragFromIdx, i);
+              }
+              setDragFromIdx(null);
+              setDragOverIdx(null);
+            } : undefined}
+            onDragEnd={dndEnabled ? () => {
+              setDragFromIdx(null);
+              setDragOverIdx(null);
+            } : undefined}
+          >
             <PalletNode
               pallet={p}
               palletIdx={i}
@@ -1132,16 +1391,103 @@ function PalletFlow({
   );
 }
 
-function PalletConnector({ done }) {
+/* ZenItemDots — minimal article progress strip shown only in zen
+   mode (full Pallet Flow is hidden). One dot per item of the
+   CURRENT pallet: green = kopiert, accent = aktiv, outline = todo.
+   Click to jump. Centered, low-profile, fades in with zen. */
+function ZenItemDots({ items, palletDisplayIdx, currentDisplayItemIdx, copiedKeys, onPick }) {
+  if (!items || items.length === 0) return null;
   return (
-    <span aria-hidden style={{
-      display: 'inline-block',
-      width: 28, height: 2,
-      borderRadius: 1,
-      background: done ? T.status.success.main : T.border.primary,
-      flexShrink: 0,
-      transition: 'background 320ms cubic-bezier(0.16, 1, 0.3, 1)',
-    }} />
+    <div style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 12,
+      paddingTop: 26,
+      opacity: 0.85,
+      animation: 'mr-rise 360ms cubic-bezier(0.16, 1, 0.3, 1) both',
+    }}>
+      {items.map((_, j) => {
+        const isCopied = copiedKeys?.has?.(`${palletDisplayIdx}|${j}`);
+        const isActive = j === currentDisplayItemIdx;
+        const size = isActive ? 16 : 11;
+        return (
+          <button
+            key={j}
+            type="button"
+            onClick={() => onPick?.(j)}
+            title={`Artikel ${j + 1}${isCopied ? ' · ✓ kopiert' : ''}`}
+            aria-label={`Artikel ${j + 1}`}
+            aria-current={isActive ? 'true' : undefined}
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              width: size,
+              height: size,
+              borderRadius: '50%',
+              background: isActive
+                ? T.accent.main
+                : (isCopied ? T.status.success.main : 'transparent'),
+              border: (!isActive && !isCopied)
+                ? `1.75px solid ${T.border.strong}`
+                : 'none',
+              boxShadow: isActive
+                ? `0 0 0 4px ${T.accent.main}20`
+                : 'none',
+              transition: 'width 200ms ease, height 200ms ease, background 200ms ease, box-shadow 200ms ease',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/* ViewListButton — opens the full-pallet overview overlay. Solid
+   accent border + list icon so it reads as a primary action. */
+function ViewListButton({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Alle Paletten und Artikel als Liste anzeigen"
+      style={{
+        height: 30,
+        paddingInline: 12,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        border: `1.5px solid ${T.accent.main}`,
+        background: T.bg.surface,
+        borderRadius: 8,
+        cursor: 'pointer',
+        color: T.accent.main,
+        fontFamily: T.font.mono,
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        transition: 'background 200ms ease, color 200ms ease',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = T.accent.main;
+        e.currentTarget.style.color = '#fff';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = T.bg.surface;
+        e.currentTarget.style.color = T.accent.main;
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+           stroke="currentColor" strokeWidth="1.8"
+           strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 4h10M3 8h10M3 12h10"/>
+        <circle cx="1.5" cy="4" r="0.6" fill="currentColor" stroke="none"/>
+        <circle cx="1.5" cy="8" r="0.6" fill="currentColor" stroke="none"/>
+        <circle cx="1.5" cy="12" r="0.6" fill="currentColor" stroke="none"/>
+      </svg>
+      <span>Liste</span>
+    </button>
   );
 }
 
@@ -1150,7 +1496,7 @@ function PalletNode({
   isEsku, hasFlag, currentItemIdx, copiedKeys,
   onPickPallet, onPickItem,
 }) {
-  const styles = {
+  const STATE_STYLES = {
     done:    { bg: T.status.success.bg, border: T.status.success.border,
                text: T.status.success.text, sub: T.status.success.text,
                accent: T.status.success.main },
@@ -1160,36 +1506,52 @@ function PalletNode({
     todo:    { bg: T.bg.surface,        border: T.border.primary,
                text: T.text.subtle,     sub: T.text.faint,
                accent: T.border.strong },
-  }[state];
-  const isCurrent = state === 'current';
-  const isDone    = state === 'done';
-  const counter   = isCurrent ? `${copied}/${total}` : `${total}`;
+  };
+  /* Positional vs visual state separation:
+       - `isCurrent` (positional) — worker is on this pallet right now;
+         drives chip strip + larger font.
+       - `visualState` — bg/border/text colors + status icon. Switches
+         to 'done' (green) the moment all items are copied, even before
+         the worker advances; gives instant "ready to next" feedback. */
+  const isCurrent  = state === 'current';
+  const allCopied  = total > 0 && copied === total;
+  const visualState = (state === 'done' || allCopied)
+    ? 'done'
+    : isCurrent ? 'current' : 'todo';
+  const styles    = STATE_STYLES[visualState];
+  const showCheck = visualState === 'done';
+  const showRing  = visualState === 'todo';
+  const shortId   = shortPalletId(pallet);
+  const tooltip   = blocked
+    ? 'Erst alle Codes der aktuellen Palette kopieren'
+    : `Palette ${shortId} · ${isCurrent ? `${copied}/${total} kopiert` : `${total} Artikel`}`;
+  const clickable = blocked ? undefined : onPickPallet;
 
   return (
     <div
       style={{
         display: 'inline-flex',
-        flexDirection: 'column',
-        gap: isCurrent ? 10 : 6,
-        padding: isCurrent ? '12px 16px 14px' : '10px 14px',
-        background: styles.bg,
-        border: `1px solid ${styles.border}`,
-        borderRadius: 14,
-        opacity: blocked ? 0.5 : 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: isCurrent ? 14 : 8,
+        padding: isCurrent ? '10px 16px' : '10px 14px',
+        /* Current pallet gets a strong identity — bg tint (accent or
+           green if allCopied) hugged in a fully-rounded pill so the
+           worker can never confuse it with the neighbours. Others
+           stay transparent. */
+        background: isCurrent ? styles.bg : 'transparent',
+        border: 'none',
+        borderRadius: 999,
+        opacity: blocked ? 0.45 : (isCurrent ? 1 : 0.55),
         flexShrink: 0,
-        boxShadow: isCurrent
-          ? `0 1px 2px rgba(17,24,39,0.04), 0 8px 24px -12px ${styles.accent}3a`
-          : 'none',
-        transition: 'background 240ms ease, border-color 240ms ease, box-shadow 240ms ease',
-        minWidth: isCurrent ? 132 : 96,
+        boxShadow: 'none',
+        transition: 'background 240ms ease, opacity 240ms ease',
       }}
     >
-      {/* Header — state dot + ID + counter + ESKU/flag badges */}
+      {/* Header — state-icon (done/todo only) + ID + badges */}
       <div
-        onClick={blocked ? undefined : onPickPallet}
-        title={blocked
-          ? 'Erst alle Codes der aktuellen Palette kopieren'
-          : `Palette ${pallet.id} · ${isCurrent ? `${copied}/${total} kopiert` : `${total} Artikel`}`}
+        onClick={clickable}
+        title={tooltip}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -1198,8 +1560,7 @@ function PalletNode({
           fontFamily: T.font.mono,
         }}
       >
-        {/* State indicator */}
-        {isDone && (
+        {showCheck && (
           <span style={{
             width: 16, height: 16, borderRadius: '50%',
             background: styles.accent,
@@ -1212,52 +1573,21 @@ function PalletNode({
             </svg>
           </span>
         )}
-        {isCurrent && (
-          <span style={{
-            position: 'relative', width: 10, height: 10, flexShrink: 0,
-          }}>
-            <span className="mr-pulse" style={{
-              position: 'absolute', inset: 0, borderRadius: '50%',
-              background: styles.accent,
-            }} />
-            <span style={{
-              position: 'absolute', inset: 2, borderRadius: '50%',
-              background: '#fff',
-            }} />
-            <span style={{
-              position: 'absolute', inset: 3, borderRadius: '50%',
-              background: styles.accent,
-            }} />
-          </span>
-        )}
-        {state === 'todo' && (
+        {showRing && (
           <span style={{
             width: 10, height: 10, borderRadius: '50%',
             border: `1.5px solid ${styles.accent}`, flexShrink: 0,
           }} />
         )}
 
-        {/* ID — bigger, dominant */}
+        {/* ID — back inside the container, dominant label */}
         <span style={{
-          fontSize: 13.5,
-          fontWeight: isCurrent ? 700 : isDone ? 600 : 500,
+          fontSize: isCurrent ? 22 : 19,
+          fontWeight: isCurrent ? 700 : visualState === 'done' ? 600 : 500,
           color: styles.text,
           letterSpacing: '-0.01em',
         }}>
-          {pallet.id}
-        </span>
-
-        {/* Counter */}
-        <span style={{
-          fontSize: 12,
-          fontWeight: 500,
-          color: styles.sub,
-          opacity: 0.85,
-          fontVariantNumeric: 'tabular-nums',
-          marginLeft: 'auto',
-          paddingLeft: 4,
-        }}>
-          {counter}
+          {shortId}
         </span>
 
         {isEsku && (
@@ -1266,7 +1596,7 @@ function PalletNode({
             style={{
               fontSize: 11,
               color: styles.accent,
-              opacity: state === 'todo' ? 0.6 : 1,
+              opacity: visualState === 'todo' ? 0.6 : 1,
             }}
           >⬢</span>
         )}
@@ -1283,8 +1613,6 @@ function PalletNode({
         )}
       </div>
 
-      {/* Body — numbered chip strip ONLY on the current pallet so each
-          item is individually visible, addressable, and click-jumpable. */}
       {isCurrent && (
         <NumberedChipStrip
           items={pallet.items || []}
@@ -1304,69 +1632,104 @@ function PalletNode({
    dashed border. Items with placement flags get a tiny warn dot. */
 function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPick }) {
   if (!items.length) return null;
+  /* Bucket consecutive items that share the same `useItem` into the
+     same container — one visual unit per repeating SKU. Items without
+     a useItem each get their own bucket (no accidental clustering). */
+  const groupKey = (it) => (it?.useItem ? `u:${it.useItem}` : null);
+  const groups: { key: string | null; from: number; items: typeof items }[] = [];
+  items.forEach((item, j) => {
+    const k = groupKey(item);
+    const last = groups[groups.length - 1];
+    if (last && k != null && last.key === k) {
+      last.items.push(item);
+    } else {
+      groups.push({ key: k, from: j, items: [item] });
+    }
+  });
   return (
     <div style={{
       display: 'flex',
       flexWrap: 'nowrap',
-      gap: 6,
-      maxWidth: '100%',
-      overflowX: 'auto',
-      WebkitOverflowScrolling: 'touch',
-      scrollbarWidth: 'none',
-      paddingBottom: 1,
+      alignItems: 'center',
+      gap: 10,
     }}>
-      {items.map((item, j) => {
-        const isCopied = copiedKeys?.has?.(`${palletIdx}|${j}`);
-        const isActive = j === currentItemIdx;
-        const isEsku = item.isEinzelneSku === true;
-        const hasFlag = (item.placementMeta?.flags || []).length > 0;
-        const lvl = item.level || getDisplayLevel(item) || 1;
-        const meta = LEVEL_META[lvl] || LEVEL_META[1];
+      {groups.map((g) => {
+        const isCluster = g.items.length > 1;
         return (
-          <NumberedChip
-            key={j}
-            idx={j + 1}
-            isActive={isActive}
-            isCopied={isCopied}
-            isEsku={isEsku}
-            hasFlag={hasFlag}
-            onClick={() => onPick?.(j)}
-            title={`Artikel ${j + 1} · L${lvl} ${meta.shortName || meta.name}` +
-                   (isEsku ? ' · ⬢ ESKU' : '') +
-                   (isCopied ? ' · ✓ kopiert' : ' · noch zu kopieren')}
-          />
+        <div
+          key={g.from}
+          title={isCluster
+            ? `${g.items.length}× gleicher Use-Item`
+            : undefined}
+          style={{
+            display: 'inline-flex',
+            flexWrap: 'nowrap',
+            gap: 6,
+            /* Clusters get a clearly visible capsule — deeper surface
+               bg + bolder border — so the operator reads each group
+               of same-useItem chips as one unit at a glance. */
+            padding: isCluster ? 4 : 0,
+            background: isCluster ? T.bg.surface3 : 'transparent',
+            border: isCluster ? `1.5px solid ${T.border.strong}` : 'none',
+            borderRadius: 999,
+          }}
+        >
+          {g.items.map((item, gi) => {
+            const j = g.from + gi;
+            const isCopied = copiedKeys?.has?.(`${palletIdx}|${j}`);
+            const isActive = j === currentItemIdx;
+            const isEsku = item.isEinzelneSku === true;
+            const hasFlag = (item.placementMeta?.flags || []).length > 0;
+            const lvl = item.level || getDisplayLevel(item) || 1;
+            const meta = LEVEL_META[lvl] || LEVEL_META[1];
+            return (
+              <NumberedChip
+                key={j}
+                idx={j + 1}
+                isActive={isActive}
+                isCopied={isCopied}
+                isEsku={isEsku}
+                hasFlag={hasFlag}
+                levelMeta={meta}
+                onClick={() => onPick?.(j)}
+                title={`Artikel ${j + 1} · L${lvl} ${meta.shortName || meta.name}` +
+                       (isEsku ? ' · ⬢ ESKU' : '') +
+                       (isCopied ? ' · ✓ kopiert' : ' · noch zu kopieren')}
+              />
+            );
+          })}
+        </div>
         );
       })}
     </div>
   );
 }
 
-function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title }) {
-  /* Three visual states with clear hierarchy:
-       active  → filled accent surface, white number, prominent
-       copied  → green tinted surface, success-text number — code DONE
-       todo    → subtle outline, primary-text number, ready-to-act
+function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, levelMeta, onClick, title }) {
+  /* Coloring rules:
+       active  → filled accent, white number, bold — the selected chip
+       copied  → green tinted (Artikel-Code wurde kopiert)
+       todo    → level-color soft (tinted bg + colored border + text)
      ESKU shifts border style to dashed; flags → tiny warn dot. */
-  let color, fontWeight, decoration, bg, border;
+  const meta = levelMeta || LEVEL_META[1];
+  let color, fontWeight, bg, border;
   if (isActive) {
     color = '#fff';
     fontWeight = 700;
-    decoration = 'none';
     bg = T.accent.main;
     border = T.accent.main;
   } else if (isCopied) {
     color = T.status.success.text;
     fontWeight = 600;
-    decoration = 'none';
     bg = T.status.success.bg;
     border = T.status.success.border;
   } else {
-    color = T.text.primary;
+    color = meta.text;
     fontWeight = 600;
-    decoration = 'none';
-    bg = T.bg.surface;
-    border = T.border.strong;
+    bg = meta.bg;
+    border = meta.color;
   }
+  const decoration = 'none';
 
   return (
     <button
@@ -1375,12 +1738,12 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title
       title={title}
       style={{
         position: 'relative',
-        minWidth: 30,
+        minWidth: 28,
         height: 28,
-        padding: '0 8px',
+        padding: '0 6px',
         background: bg,
         border: `1.5px ${isEsku ? 'dashed' : 'solid'} ${border}`,
-        borderRadius: 8,
+        borderRadius: 999,
         color,
         fontFamily: T.font.mono,
         fontSize: 12.5,
@@ -1395,22 +1758,14 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title
         justifyContent: 'center',
         flexShrink: 0,
         boxShadow: isActive
-          ? `0 1px 2px rgba(17,24,39,0.06), 0 4px 12px -4px ${T.accent.main}50`
+          ? `0 1px 2px rgba(17,24,39,0.06), 0 4px 12px -4px ${T.accent.main}55`
           : 'none',
       }}
       onMouseEnter={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.borderColor = T.accent.main;
-          e.currentTarget.style.transform = 'translateY(-1px)';
-        }
+        if (!isActive) e.currentTarget.style.transform = 'translateY(-1px)';
       }}
       onMouseLeave={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.borderColor = isCopied
-            ? T.status.success.border
-            : T.border.strong;
-          e.currentTarget.style.transform = 'none';
-        }
+        if (!isActive) e.currentTarget.style.transform = 'none';
       }}
     >
       {idx}
@@ -1430,6 +1785,581 @@ function NumberedChip({ idx, isActive, isCopied, isEsku, hasFlag, onClick, title
 /* ════════════════════════════════════════════════════════════════════════
    Wiederholt overlay
    ════════════════════════════════════════════════════════════════════════ */
+/* ArticleDetailPanel — expanded info bound to a list row in
+   PalletListOverlay. Shows the full title, every code we have, the
+   units, and any placement notes. Read-only audit view. */
+function ArticleDetailPanel({ item, level, levelMeta }) {
+  const codes: Array<[string, string | null | undefined]> = [
+    ['Artikel-Code', item.code],
+    ['Use-Item',     item.useItem],
+    ['FNSKU',        item.fnsku],
+    ['SKU',          item.sku],
+    ['EAN',          item.ean],
+    ['ASIN',         item.asin],
+  ];
+  const visibleCodes = codes.filter(([, v]) => v);
+  const lstLabel = item.lst || null;
+  const flags    = (item.placementMeta?.flags || item.placementFlags || []) as unknown[];
+  return (
+    <div style={{
+      padding: '12px 16px 16px 32px',
+      background: T.bg.surface2,
+      borderTop: `1px dashed ${T.border.subtle}`,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      {/* Full title */}
+      <div>
+        <div style={{
+          fontFamily: T.font.mono,
+          fontSize: 10,
+          fontWeight: 600,
+          color: T.text.faint,
+          letterSpacing: '0.14em',
+          textTransform: 'uppercase',
+          marginBottom: 4,
+        }}>
+          Titel
+        </div>
+        <div style={{
+          fontSize: 13.5,
+          color: T.text.primary,
+          lineHeight: 1.45,
+          letterSpacing: '-0.005em',
+          wordBreak: 'break-word',
+        }}>
+          {item.title || '—'}
+        </div>
+      </div>
+
+      {/* Codes — key/value grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+        gap: '8px 18px',
+      }}>
+        {visibleCodes.map(([k, v]) => (
+          <div key={k} style={{ minWidth: 0 }}>
+            <div style={{
+              fontFamily: T.font.mono,
+              fontSize: 10,
+              fontWeight: 600,
+              color: T.text.faint,
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+              marginBottom: 2,
+            }}>
+              {k}
+            </div>
+            <div style={{
+              fontFamily: T.font.mono,
+              fontSize: 13,
+              fontWeight: 500,
+              color: T.text.primary,
+              wordBreak: 'break-all',
+            }}>
+              {String(v)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Meta row — level + units + LST + flags */}
+      <div style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '6px 10px',
+        alignItems: 'center',
+      }}>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 10.5,
+          fontWeight: 600,
+          padding: '2px 7px',
+          background: levelMeta.bg,
+          color: levelMeta.text,
+          border: `1px solid ${levelMeta.color}40`,
+          borderRadius: 999,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+        }}>
+          L{level} {levelMeta.name}
+        </span>
+        {item.units != null && (
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '2px 8px',
+            background: T.bg.surface,
+            color: T.text.primary,
+            border: `1px solid ${T.border.primary}`,
+            borderRadius: 999,
+          }}>
+            × {item.units} Stück
+          </span>
+        )}
+        {item.isEinzelneSku && (
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '2px 8px',
+            background: T.accent.bg,
+            color: T.accent.text,
+            border: `1px solid ${T.accent.main}40`,
+            borderRadius: 999,
+          }}>
+            ⬢ ESKU
+          </span>
+        )}
+        {lstLabel && (
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '2px 8px',
+            background: T.bg.surface,
+            color: T.text.subtle,
+            border: `1px solid ${T.border.primary}`,
+            borderRadius: 999,
+          }}>
+            {lstLabel}
+          </span>
+        )}
+        {flags.length > 0 && flags.map((f, k) => (
+          <span key={k} style={{
+            fontFamily: T.font.mono,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '2px 8px',
+            background: T.status.warn.bg,
+            color: T.status.warn.text,
+            border: `1px solid ${T.status.warn.main}40`,
+            borderRadius: 999,
+          }}>
+            {String(f)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* PalletListOverlay — full-screen modal listing every pallet and its
+   articles. Worker uses it as an audit/overview and as a sandbox to
+   rearrange article order: each row is draggable inside its pallet
+   section, drops re-emit through onReorderArticles. Current article
+   gets an accent rail + tint so the worker keeps orientation. */
+function PalletListOverlay({
+  pallets, rawPallets,
+  currentRawIdx, currentRawItemIdx,
+  copiedKeys,
+  articleOrderOverride,
+  onReorderArticles,
+  onClose,
+}) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const currentPalletId = rawPallets[currentRawIdx]?.id;
+
+  /* DnD scoped to (palletId, displayIdx). We only allow reordering
+     within a single pallet — cross-pallet drops fall back to no-op. */
+  const [dragInfo, setDragInfo]       = useState<{ palletId: string; from: number } | null>(null);
+  const [dragOverInfo, setDragOverInfo] = useState<{ palletId: string; idx: number } | null>(null);
+
+  /* Row-expand state — clicking a row toggles a detail panel that
+     shows every code, units, and placement notes for the article. */
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const toggleExpanded = (key: string) =>
+    setExpandedKey((prev) => (prev === key ? null : key));
+  const onItemDragStart = (palletId, from) => (e) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', `${palletId}|${from}`);
+    setDragInfo({ palletId, from });
+  };
+  const onItemDragOver = (palletId, idx) => (e) => {
+    if (!dragInfo || dragInfo.palletId !== palletId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (!dragOverInfo || dragOverInfo.palletId !== palletId || dragOverInfo.idx !== idx) {
+      setDragOverInfo({ palletId, idx });
+    }
+  };
+  const onItemDrop = (palletId, idx) => (e) => {
+    e.preventDefault();
+    if (dragInfo && dragInfo.palletId === palletId && dragInfo.from !== idx) {
+      onReorderArticles?.(palletId, dragInfo.from, idx);
+    }
+    setDragInfo(null);
+    setDragOverInfo(null);
+  };
+  const onItemDragEnd = () => {
+    setDragInfo(null);
+    setDragOverInfo(null);
+  };
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(17, 24, 39, 0.42)',
+      zIndex: 1000,
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'center',
+      padding: '6vh 24px 32px',
+      cursor: 'pointer',
+      backdropFilter: 'blur(2px)',
+      animation: 'wiederholt-bg-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both',
+    }}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          maxWidth: 920,
+          width: '100%',
+          maxHeight: '88vh',
+          background: T.bg.surface,
+          border: `1px solid ${T.border.primary}`,
+          borderRadius: 18,
+          boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 24px 56px -20px rgba(17,24,39,0.20)',
+          display: 'flex',
+          flexDirection: 'column',
+          cursor: 'default',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: '18px 24px 14px',
+          borderBottom: `1px solid ${T.border.primary}`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+            <h2 style={{
+              margin: 0,
+              fontSize: 18,
+              fontWeight: 600,
+              color: T.text.primary,
+              letterSpacing: '-0.01em',
+            }}>
+              Alle Paletten · Liste
+            </h2>
+            <span style={{
+              fontFamily: T.font.mono,
+              fontSize: 11,
+              fontWeight: 600,
+              color: T.text.faint,
+              letterSpacing: '0.14em',
+              textTransform: 'uppercase',
+            }}>
+              {pallets.length} Paletten
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            title="Schließen"
+            aria-label="Schließen"
+            style={{
+              all: 'unset',
+              width: 30, height: 30,
+              display: 'inline-flex',
+              alignItems: 'center', justifyContent: 'center',
+              border: `1px solid ${T.border.primary}`,
+              borderRadius: 8,
+              cursor: 'pointer',
+              color: T.text.subtle,
+              transition: 'border-color 200ms ease, color 200ms ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = T.accent.main;
+              e.currentTarget.style.color = T.accent.main;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = T.border.primary;
+              e.currentTarget.style.color = T.text.subtle;
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"
+                 stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M3 3l8 8M11 3l-8 8"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '12px 24px 22px',
+          WebkitOverflowScrolling: 'touch',
+        }}>
+          {pallets.map((p) => {
+            const origIdx = rawPallets.findIndex((rp) => rp.id === p.id);
+            const items = p.items || [];
+            const total = items.length;
+            let copied = 0;
+            for (let j = 0; j < total; j++) {
+              if (copiedKeys?.has?.(`${origIdx}|${j}`)) copied += 1;
+            }
+            const isCurrent = p.id === currentPalletId;
+            const allCopied = total > 0 && copied === total;
+            return (
+              <section key={p.id} style={{ marginTop: 14 }}>
+                {/* Pallet header */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 10,
+                  paddingBottom: 6,
+                  borderBottom: `1px solid ${T.border.subtle}`,
+                }}>
+                  <span style={{
+                    fontFamily: T.font.mono,
+                    fontSize: 17,
+                    fontWeight: 700,
+                    color: isCurrent ? T.accent.main : T.text.primary,
+                    letterSpacing: '-0.01em',
+                  }}>
+                    {shortPalletId(p)}
+                  </span>
+                  <span style={{
+                    fontFamily: T.font.mono,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: T.text.faint,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {copied} / {total} kopiert
+                  </span>
+                  {isCurrent && (
+                    <span style={{
+                      fontFamily: T.font.mono,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: T.accent.main,
+                      letterSpacing: '0.14em',
+                      textTransform: 'uppercase',
+                    }}>
+                      Aktuell
+                    </span>
+                  )}
+                  {allCopied && !isCurrent && (
+                    <span style={{
+                      fontFamily: T.font.mono,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: T.status.success.text,
+                      letterSpacing: '0.14em',
+                      textTransform: 'uppercase',
+                    }}>
+                      ✓ Fertig
+                    </span>
+                  )}
+                </div>
+
+                {/* Items list — drag rows to reorder within this pallet */}
+                <ul style={{
+                  listStyle: 'none',
+                  margin: 0,
+                  padding: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}>
+                  {items.map((it, j) => {
+                    const articleOrder = articleOrderOverride[p.id];
+                    const origItemIdx  = articleOrder ? articleOrder[j] : j;
+                    const isCopiedItem = copiedKeys?.has?.(`${origIdx}|${origItemIdx}`);
+                    const isActiveItem = isCurrent && origItemIdx === currentRawItemIdx;
+                    const lvl = it.level || getDisplayLevel(it) || 1;
+                    const meta = LEVEL_META[lvl] || LEVEL_META[1];
+                    const units = it.units;
+                    const rowKey = `${p.id}|${origItemIdx}`;
+                    const isExpanded = expandedKey === rowKey;
+                    const isDragSrc = !!dragInfo && dragInfo.palletId === p.id && dragInfo.from === j;
+                    const isDragTgt = !!dragInfo && !!dragOverInfo
+                                      && dragOverInfo.palletId === p.id && dragOverInfo.idx === j
+                                      && dragInfo.palletId === p.id && dragInfo.from !== j;
+                    return (
+                      <li
+                        key={`${origItemIdx}-${it.code || it.fnsku || j}`}
+                        style={{
+                          listStyle: 'none',
+                          borderBottom: `1px dashed ${T.border.subtle}`,
+                          background: isActiveItem ? T.accent.bg : 'transparent',
+                          borderLeft: isActiveItem
+                            ? `3px solid ${T.accent.main}`
+                            : '3px solid transparent',
+                          transition: 'background 160ms ease',
+                        }}
+                      >
+                        {/* Row — draggable + clickable to expand */}
+                        <div
+                          draggable
+                          onClick={() => toggleExpanded(rowKey)}
+                          onDragStart={onItemDragStart(p.id, j)}
+                          onDragOver={onItemDragOver(p.id, j)}
+                          onDrop={onItemDrop(p.id, j)}
+                          onDragEnd={onItemDragEnd}
+                          style={{
+                            position: 'relative',
+                            display: 'grid',
+                            gridTemplateColumns: '18px 30px 64px minmax(80px, auto) 1fr minmax(120px, auto) 22px',
+                            alignItems: 'center',
+                            gap: 12,
+                            padding: '8px 8px 8px 7px',
+                            opacity: isDragSrc ? 0.4 : (isCopiedItem && !isActiveItem ? 0.75 : 1),
+                            boxShadow: isDragTgt ? `inset 0 2px 0 ${T.accent.main}` : 'none',
+                            cursor: 'grab',
+                            transition: 'opacity 160ms ease, box-shadow 160ms ease',
+                          }}
+                        >
+                          {/* Drag handle */}
+                          <span aria-hidden style={{
+                            display: 'inline-grid',
+                            gridTemplateColumns: 'repeat(2, 3px)',
+                            gridAutoRows: '3px',
+                            gap: 2,
+                            color: T.text.faint,
+                            justifySelf: 'center',
+                          }}>
+                            {Array.from({ length: 6 }).map((_, k) => (
+                              <span key={k} style={{
+                                width: 3, height: 3, borderRadius: '50%',
+                                background: 'currentColor',
+                              }} />
+                            ))}
+                          </span>
+
+                          {/* Position number */}
+                          <span style={{
+                            fontFamily: T.font.mono,
+                            fontSize: 11,
+                            color: isActiveItem ? T.accent.main : T.text.faint,
+                            fontWeight: isActiveItem ? 700 : 500,
+                            fontVariantNumeric: 'tabular-nums',
+                            textAlign: 'right',
+                          }}>
+                            {String(j + 1).padStart(2, '0')}
+                          </span>
+
+                          {/* Units / Menge */}
+                          <span
+                            title={units != null ? `${units} Stück` : 'Menge nicht erkannt'}
+                            style={{
+                              fontFamily: T.font.mono,
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: units != null ? T.text.primary : T.text.faint,
+                              fontVariantNumeric: 'tabular-nums',
+                              textAlign: 'right',
+                            }}
+                          >
+                            {units != null ? `× ${units}` : '—'}
+                          </span>
+
+                          {/* Level pill */}
+                          <span style={{
+                            fontFamily: T.font.mono,
+                            fontSize: 10.5,
+                            fontWeight: 600,
+                            padding: '2px 7px',
+                            background: meta.bg,
+                            color: meta.text,
+                            border: `1px solid ${meta.color}40`,
+                            borderRadius: 999,
+                            letterSpacing: '0.06em',
+                            textTransform: 'uppercase',
+                            justifySelf: 'start',
+                            whiteSpace: 'nowrap',
+                          }}>
+                            L{lvl} {meta.shortName || meta.name}
+                          </span>
+
+                          {/* Title — single line by default; full text
+                             appears in the expanded panel + via tooltip. */}
+                          <span style={{
+                            fontSize: 13,
+                            fontWeight: isActiveItem ? 600 : 400,
+                            color: T.text.primary,
+                            letterSpacing: '-0.005em',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }} title={it.title || ''}>
+                            {formatItemTitle(it.title || '—')}
+                          </span>
+
+                          {/* Code */}
+                          <span style={{
+                            fontFamily: T.font.mono,
+                            fontSize: 12,
+                            color: T.text.subtle,
+                            textAlign: 'right',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }} title={it.code || it.useItem || it.fnsku || ''}>
+                            {it.code || it.useItem || it.fnsku || '—'}
+                          </span>
+
+                          {/* Status indicator (✓ if copied) OR chevron
+                             when expanded. Status wins — copy state is
+                             primary signal. */}
+                          <span aria-hidden style={{
+                            width: 18, height: 18, borderRadius: '50%',
+                            border: isCopiedItem ? 'none' : `1.5px solid ${T.border.strong}`,
+                            background: isCopiedItem ? T.status.success.main : 'transparent',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            justifySelf: 'center',
+                            color: isCopiedItem ? '#fff' : T.text.faint,
+                            transform: isExpanded ? 'rotate(180deg)' : 'none',
+                            transition: 'transform 200ms ease',
+                          }}>
+                            {isCopiedItem ? (
+                              <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+                                <path d="M2.5 6.5l2 2 5-5.5" stroke="currentColor" strokeWidth="2"
+                                      strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            ) : (
+                              <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
+                                <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.6"
+                                      strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Detail panel — opens on row click */}
+                        {isExpanded && (
+                          <ArticleDetailPanel
+                            item={it}
+                            level={lvl}
+                            levelMeta={meta}
+                          />
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WiederholtOverlay({ hit, onDismiss }) {
   if (!hit) return null;
   return (
@@ -1476,7 +2406,7 @@ function WiederholtOverlay({ hit, onDismiss }) {
           fontFamily: T.font.mono,
           letterSpacing: '0.02em',
         }}>
-          auf Palette {hit.palletId}
+          auf Palette {shortPalletId(hit.palletId)}
         </p>
 
         {/* Hero — code (mono, large) + units (numeric, accent) so the
