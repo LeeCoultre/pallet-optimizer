@@ -2,7 +2,7 @@
    and routes between Workspace (Upload/Pruefen/Focus/Abschluss based on
    current Auftrag step), Historie, and Einstellungen. */
 
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { AppStateProvider, useAppState } from './state';
 import { AppShell } from './components/AppShell.jsx';
 import DynamicIsland from './components/DynamicIsland.jsx';
@@ -10,23 +10,57 @@ import { useExperiment } from './utils/experiments';
 import { CommandPalette } from './components/CommandPalette.jsx';
 import { T } from './components/ui';
 
+/* Stale-deploy resilience for code-split chunks.
+   When Railway redeploys, old chunk filenames are deleted. A tab
+   that was open before the deploy holds a cached index.html that
+   references the now-404 hashes — the next route navigation throws
+   "Failed to fetch dynamically imported module". Wrap every lazy
+   loader so a chunk-fetch failure triggers a one-shot hard reload
+   (sessionStorage flag prevents reload loops on genuine network
+   errors). Errors from inside the chunk module bubble normally to
+   the error boundary. */
+const RELOAD_FLAG = 'marathon.chunkReloadAt';
+function isStaleChunkError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e || '');
+  return /Failed to fetch dynamically imported module|Loading chunk|Loading CSS chunk|Importing a module script failed/i.test(msg);
+}
+function lazyWithReload<T extends ComponentType<any>>(loader: () => Promise<{ default: T }>) {
+  return lazy<T>(async () => {
+    try {
+      return await loader();
+    } catch (e) {
+      if (isStaleChunkError(e)) {
+        const last = Number(sessionStorage.getItem(RELOAD_FLAG) || '0');
+        if (Date.now() - last > 30_000) {
+          sessionStorage.setItem(RELOAD_FLAG, String(Date.now()));
+          window.location.reload();
+          // Return a stub so React doesn't hit the error boundary
+          // while the navigation tears the page down.
+          return { default: (() => null) as unknown as T };
+        }
+      }
+      throw e;
+    }
+  });
+}
+
 /* Every screen is lazy-loaded so the initial bundle stays tiny and
    the warehouse worker only pays for the screen they're on. The
    Workspace flow (Upload → Pruefen → Focus → Abschluss) is the
    critical path, but each step is a separate concern + a heavy file
    (Focus alone is ~2k lines) — splitting them keeps the first paint
    fast and the chunks tree-shake independently. */
-const UploadScreen         = lazy(() => import('./screens/Upload.jsx'));
-const PruefenScreen        = lazy(() => import('./screens/Pruefen.jsx'));
-const FocusScreen          = lazy(() => import('./screens/Focus.jsx'));
-const AbschlussScreen      = lazy(() => import('./screens/Abschluss.jsx'));
-const HistorieScreen       = lazy(() => import('./screens/Historie.jsx'));
-const EinstellungenScreen  = lazy(() => import('./screens/Einstellungen.jsx'));
-const AdminScreen          = lazy(() => import('./screens/Admin.jsx'));
-const SucheScreen          = lazy(() => import('./screens/Suche.jsx'));
-const LiveAktivitaetScreen = lazy(() => import('./screens/LiveAktivitaet.jsx'));
-const BerichteScreen       = lazy(() => import('./screens/Berichte.jsx'));
-const WarteschlangeScreen  = lazy(() => import('./screens/Warteschlange.jsx'));
+const UploadScreen         = lazyWithReload(() => import('./screens/Upload.jsx'));
+const PruefenScreen        = lazyWithReload(() => import('./screens/Pruefen.jsx'));
+const FocusScreen          = lazyWithReload(() => import('./screens/Focus.jsx'));
+const AbschlussScreen      = lazyWithReload(() => import('./screens/Abschluss.jsx'));
+const HistorieScreen       = lazyWithReload(() => import('./screens/Historie.jsx'));
+const EinstellungenScreen  = lazyWithReload(() => import('./screens/Einstellungen.jsx'));
+const AdminScreen          = lazyWithReload(() => import('./screens/Admin.jsx'));
+const SucheScreen          = lazyWithReload(() => import('./screens/Suche.jsx'));
+const LiveAktivitaetScreen = lazyWithReload(() => import('./screens/LiveAktivitaet.jsx'));
+const BerichteScreen       = lazyWithReload(() => import('./screens/Berichte.jsx'));
+const WarteschlangeScreen  = lazyWithReload(() => import('./screens/Warteschlange.jsx'));
 
 /* Legacy localStorage keys from the pre-backend era. Stale data left
    in old browsers; harmless but pollutes devtools. One-shot cleanup. */
