@@ -28,6 +28,16 @@ describe('parseTitleMeta', () => {
     expect(m.dimStr).toBe('57 × 18');
   });
 
+  it('prefers parenthetical "(W×OD×ID)" triple over the leading title pair', () => {
+    // Title's "80mm x 50m" is W×LENGTH (50 meters) — wrong as diameter.
+    // The parenthetical (Medium - 80x63x12) gives the canonical W × OD.
+    const m = parseTitleMeta(
+      'Thermorollen 80mm x 50m x 12mm - Kassenrollen - Bonrollen für Registrierkasse mit Bondrucker - Thermopapier für Kassensysteme – BPA Frei (Medium - 80x63x12 - 50 Meter - 50 Rollen)'
+    );
+    expect(m.dim).toMatchObject({ w: 80, h: 63 });
+    expect(m.dimStr).toBe('80 × 63');
+  });
+
   it('handles unicode × and Cyrillic х as separators', () => {
     expect(parseTitleMeta('80×80').dim).toMatchObject({ w: 80, h: 80 });
     expect(parseTitleMeta('80х80').dim).toMatchObject({ w: 80, h: 80 });

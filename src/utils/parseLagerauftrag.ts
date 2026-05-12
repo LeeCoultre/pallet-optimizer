@@ -43,16 +43,34 @@ export function detectCodeType(fnsku) {
 export function parseTitleMeta(title) {
   if (!title) return { dimStr: null, rollen: null, dim: null };
   const cleanTitle = title.replace(/\s+/g, ' ').trim();
-  // Tolerate a leading Ø on the second dimension — bond-roll titles spell
-  // the diameter as "80mm x Ø80mm x 12mm". Without the optional Ø the
-  // regex would skip the middle group and return "80 × 12" (width × thickness)
-  // instead of "80 × 80" (width × diameter).
-  const dimMatch = cleanTitle.match(/(\d+)\s*(?:mm)?\s*[xх×]\s*Ø?\s*(\d+)/i);
-  const rawW = dimMatch ? parseInt(dimMatch[1], 10) : null;
-  const rawH = dimMatch ? parseInt(dimMatch[2], 10) : null;
-  const dimStr = dimMatch ? `${rawW} × ${rawH}` : null;
+  // Two-step dim extraction:
+  //   1) Prefer the parenthetical "(… W×OD×ID …)" triple — canonical
+  //      product spec form, e.g. "(Medium - 80x63x12 - 50 Meter -
+  //      50 Rollen)". Take W × OD (first two of the triple). This
+  //      avoids misreading the title's leading "80mm x 50m x 12mm"
+  //      where the second number is LENGTH-in-meters, not diameter.
+  //   2) Fall back to the first W×H pair anywhere in the title.
+  //      A leading Ø on the second dimension is tolerated — bond-roll
+  //      titles spell the diameter as "80mm x Ø80mm x 12mm". Without
+  //      the optional Ø the regex would skip the middle group and
+  //      return "80 × 12" (width × thickness) instead of "80 × 80".
+  let rawW: number | null = null;
+  let rawH: number | null = null;
+  const tripleParen = cleanTitle.match(/\(\s*[^()]*?(\d+)\s*[xх×]\s*(\d+)\s*[xх×]\s*\d+/i);
+  if (tripleParen) {
+    rawW = parseInt(tripleParen[1], 10);
+    rawH = parseInt(tripleParen[2], 10);
+  }
+  if (rawW == null) {
+    const dimMatch = cleanTitle.match(/(\d+)\s*(?:mm)?\s*[xх×]\s*Ø?\s*(\d+)/i);
+    if (dimMatch) {
+      rawW = parseInt(dimMatch[1], 10);
+      rawH = parseInt(dimMatch[2], 10);
+    }
+  }
+  const dimStr = rawW != null ? `${rawW} × ${rawH}` : null;
   const normH = normalizeHeight(rawH);
-  const dim = dimMatch ? { w: rawW, h: rawH, normH, normW: rawW } : null;
+  const dim = rawW != null ? { w: rawW, h: rawH, normH, normW: rawW } : null;
   // Rolls-per-Einheit detection. Two patterns:
   //   (a) Explicit count anywhere in the title: "50 Rollen" / "10 Stk" /
   //       "(50 Stück)" — the strongest signal.
