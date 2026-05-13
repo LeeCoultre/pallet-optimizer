@@ -336,7 +336,6 @@ export default function FocusScreen() {
     }
     const wasLastOfPallet = isLastItemOfPallet;
     const wasLastOfAuftrag = wasLastOfPallet && palletIdx === rawPallets.length - 1;
-    const hit = detectWiederholt(rawPallets, palletIdx, itemIdx);
 
     completeCurrentItem(rawPallet.items.length, rawItem);
 
@@ -346,10 +345,18 @@ export default function FocusScreen() {
     if (wasLastOfAuftrag) {
       setFinalePending(true);   // arm the finale gate
     }
-    if (hit) setWiederholt(hit);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawPallet, rawItem, rawPallets, palletIdx, itemIdx, isLastItemOfPallet,
       allPalletCopied, completeCurrentItem, buildInterludePayload]);
+
+  /* Wiederholt hit for the CURRENT article — computed per position so the
+     hero card can flag it (badge) and the overlay can fire on first copy.
+     `detectWiederholt` already suppresses noise (continuous repeats,
+     skip when next pallet has no high-quantity hit). */
+  const currentWiederholt = useMemo(
+    () => detectWiederholt(rawPallets, palletIdx, itemIdx),
+    [rawPallets, palletIdx, itemIdx],
+  );
 
   /* Re-copy pulse — bumps a counter every time the worker copies the
      Artikel-Code while it's already marked kopiert. The Hero card
@@ -363,7 +370,14 @@ export default function FocusScreen() {
     const wasAlreadyCopied = copiedKeys.has(`${palletIdx}|${itemIdx}`);
     if (wasAlreadyCopied) setReCopyTick((n) => n + 1);
     markCodeCopied(palletIdx, itemIdx);
-  }, [item, palletIdx, itemIdx, markCodeCopied, copiedKeys]);
+    /* Wiederholt overlay fires on the FIRST copy of this article (not
+       on Fertig). The worker has just acknowledged the code — that's
+       the moment the warning about the next-pallet repeat is most
+       actionable. Re-copies suppress to avoid nag. */
+    if (!wasAlreadyCopied && currentWiederholt) {
+      setWiederholt(currentWiederholt);
+    }
+  }, [item, palletIdx, itemIdx, markCodeCopied, copiedKeys, currentWiederholt]);
 
   const onCopyUseItem = useCallback(() => {
     if (!item?.useItem) return;
@@ -589,6 +603,7 @@ export default function FocusScreen() {
             onCopyUse={onCopyUseItem}
             zen={zen}
             reCopyTick={reCopyTick}
+            wiederholt={currentWiederholt}
           />
 
           {/* Pallet flow — visual twin of ArticleHeroCard above it.
@@ -782,6 +797,7 @@ function ArticleHeroCard({
   zen = false,
   compact = false,
   reCopyTick = 0,
+  wiederholt = null,
 }) {
   const cat = item.levelMeta || LEVEL_META[1];
   const haloColor = cat.color || T.accent.main;
@@ -832,6 +848,7 @@ function ArticleHeroCard({
           {item.lst && (
             <Badge tone={item.lst === 'mit LST' ? 'accent' : 'success'}>{item.lst}</Badge>
           )}
+          {wiederholt && <WiederholtChip palletId={wiederholt.palletId} units={wiederholt.units} />}
           {noVal && <Badge tone="danger">NO_VALID_PLACEMENT</Badge>}
           {!noVal && item.placementFlags?.length > 0 && (
             <Badge tone="warn">{item.placementFlags.join(' · ')}</Badge>
@@ -905,6 +922,55 @@ function LevelChip({ level, cat }) {
     }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: cat.color }} />
       L{level} · {cat.name}
+    </span>
+  );
+}
+
+/* Heads-up chip: this article repeats on a later pallet — surfaces the
+   TARGET pallet id directly so the worker can plan the pick without
+   waiting for the overlay. Renders the full pallet id (e.g. "P3-B1")
+   instead of the shortened prefix so block ("-B#") info isn't lost
+   when a pallet has multiple sub-blocks. */
+function WiederholtChip({ palletId, units }) {
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '3px 10px',
+      background: T.status.warn.bg,
+      color: T.status.warn.text,
+      border: `1px solid ${T.status.warn.border}`,
+      borderRadius: 999,
+      fontFamily: T.font.mono,
+      fontSize: 10.5,
+      fontWeight: 600,
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+    }}>
+      <span aria-hidden style={{
+        fontSize: 11,
+        lineHeight: 1,
+        transform: 'translateY(-0.5px)',
+      }}>↺</span>
+      Wiederholt auf
+      <span style={{
+        fontWeight: 700,
+        color: T.status.warn.main,
+        letterSpacing: '0.04em',
+      }}>
+        {palletId}
+      </span>
+      {units != null && (
+        <span style={{
+          fontWeight: 500,
+          color: T.status.warn.text,
+          fontVariantNumeric: 'tabular-nums',
+          opacity: 0.75,
+        }}>
+          · {units}×
+        </span>
+      )}
     </span>
   );
 }
@@ -2459,22 +2525,47 @@ function WiederholtOverlay({ hit, onDismiss }) {
         <Badge tone="warn">Wiederholung erkannt</Badge>
 
         <h2 style={{
-          marginTop: 14, marginBottom: 4,
+          marginTop: 14, marginBottom: 14,
           fontSize: 20, fontWeight: 500, color: T.text.primary,
           letterSpacing: '-0.02em',
         }}>
           Dieser Artikel kommt erneut vor
         </h2>
-        <p style={{
-          margin: 0,
-          fontSize: 13.5,
-          lineHeight: 1.5,
-          color: T.text.subtle,
-          fontFamily: T.font.mono,
-          letterSpacing: '0.02em',
+
+        {/* Target pallet — the single fact the worker needs to remember.
+           Rendered as a high-contrast pill so it survives a quick glance
+           at the overlay without the worker parsing prose around it. */}
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: 10,
+          padding: '10px 16px',
+          background: T.status.warn.bg,
+          border: `1px solid ${T.status.warn.border}`,
+          borderRadius: 12,
         }}>
-          auf Palette {shortPalletId(hit.palletId)}
-        </p>
+          <span style={{
+            fontSize: 10.5,
+            fontWeight: 600,
+            fontFamily: T.font.mono,
+            color: T.status.warn.text,
+            textTransform: 'uppercase',
+            letterSpacing: '0.14em',
+          }}>
+            auf Palette
+          </span>
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 'clamp(22px, 2.6vw, 30px)',
+            fontWeight: 700,
+            color: T.status.warn.main,
+            letterSpacing: '-0.01em',
+            lineHeight: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {hit.palletId}
+          </span>
+        </div>
 
         {/* Hero — code (mono, large) + units (numeric, accent) so the
             worker spots both at a glance without parsing prose. */}
