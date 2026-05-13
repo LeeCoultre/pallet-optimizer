@@ -215,50 +215,53 @@ describe('extractRolleFormat', () => {
 });
 
 /* ════════════════════════════════════════════════════════════════════ */
-describe('sortItemsForPallet — Rolle-format clustering (2026-05-07)', () => {
-  /* Real production case: P1-B3 of FBA15LL4PK53.
-
-     Items (in source order):
-       X001CTH9YB · 57mm x 9m  x 12mm · useItem 9120107187471 · 20 units
-       X001CX6BRN · 57mm x 14m x 12mm · useItem 9120107187396 · 70 units
-       X00198BJKP · 58/64/12          · useItem 9120107187495 ·  2 units
-       X00101830P · 57mm x 18m x 12mm · useItem 9120107187457 · 15 units (mit LST)
-       X001CTN52B · 57mm x 18m x 12mm · useItem 9120107187433 · 75 units
-
-     X001CTN52B and X00101830P share rolle-format 57mm × 18m × 12mm
-     but have DIFFERENT useItems — they MUST cluster together regardless
-     of LST. Bucket order (by sum-volume DESC):
-        57x18m-12 (90 rollen)  →  57x14m-12 (70)  →  57x9m-12 (20)  →  58/64/12 (2)
-     Within bucket, units DESC: X001CTN52B (75) before X00101830P (15). */
-  it('clusters same rolle-format across different useItems (LST variants)', () => {
+describe('sortItemsForPallet — useItem clustering for Thermorollen (2026-05-13)', () => {
+  /* User rule 2026-05-13: for L1/L2 Thermorollen, items sharing the
+     same `useItem` (parent product EAN from "Zu verwendender Artikel")
+     must ALWAYS cluster together — even when rolle formats differ.
+     Supersedes the 2026-05-07 rolle-format-only rule. */
+  it('clusters same useItem across different rolle formats (L1)', () => {
+    /* User's reported case: two SKUs share useItem 4017279107701 but
+       have different formats (57×14 and 57×35). Currently sorted with
+       a 9120107187419-57×35 item between them — they must instead
+       group together. */
     const items = [
-      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 9m x 12mm (57x30x12) (50 Rollen)',
-                units: 20, dim: { w: 57, h: 9 }, rollen: 50, fnsku: 'X001CTH9YB' }),
-      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 14m x 12mm (57x35x12-14 Meter - 50 Rollen)',
-                units: 70, dim: { w: 57, h: 14 }, rollen: 50, fnsku: 'X001CX6BRN' }),
-      mkMixed({ title: 'Thermorolle 58/64/12 - 50 Meter Lauflänge, 50 Stück',
-                units: 2, dim: null, rollen: 50, fnsku: 'X00198BJKP' }),
-      mkMixed({ title: '50 EC-Cash Thermorollen im Karton 57mm x 18m x 12mm mit Lastschrifttext ELV',
-                units: 15, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'X00101830P' }),
-      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 18m x 12mm (57x40x12) (50 Rollen)',
-                units: 75, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'X001CTN52B' }),
+      mkMixed({ title: 'Thermorolle 57 × 14 50 Rollen',
+                units: 50, dim: { w: 57, h: 14 }, rollen: 50, fnsku: 'F-A1' }),
+      mkMixed({ title: 'Thermorolle 57 × 35 50 Rollen',
+                units: 50, dim: { w: 57, h: 35 }, rollen: 50, fnsku: 'F-B1' }),
+      mkMixed({ title: 'Thermorolle 57 × 14 50 Rollen',
+                units: 50, dim: { w: 57, h: 14 }, rollen: 50, fnsku: 'F-A2' }),
     ];
-    /* Inject distinct useItems so the OLD (dim+useItem) key would split them. */
-    items[0].useItem = '9120107187471';
-    items[1].useItem = '9120107187396';
-    items[2].useItem = '9120107187495';
-    items[3].useItem = '9120107187457';
-    items[4].useItem = '9120107187433';
+    items[0].useItem = '4017279107701';
+    items[1].useItem = '9120107187419';
+    items[2].useItem = '4017279107701';
 
     const sorted = sortItemsForPallet(items);
-    const order = sorted.map((it) => it.fnsku);
-    expect(order).toEqual([
-      'X001CTN52B',  // 57x18m, 75 units — bucket anchor
-      'X00101830P',  // 57x18m, 15 units — same bucket (clusters across LST)
-      'X001CX6BRN',  // 57x14m, 70 units
-      'X001CTH9YB',  // 57x9m,  20 units
-      'X00198BJKP',  // 58/64/12, 2 units
-    ]);
+    const fnskus = sorted.map((it) => it.fnsku);
+    /* Both 4017279107701 items must be adjacent. */
+    const aIdx1 = fnskus.indexOf('F-A1');
+    const aIdx2 = fnskus.indexOf('F-A2');
+    expect(Math.abs(aIdx1 - aIdx2)).toBe(1);
+  });
+
+  it('falls back to rolle-format clustering when useItem is absent', () => {
+    /* L1 items without a useItem still cluster by rolle format —
+       preserves the 2026-05-07 LST-variant behaviour for legacy
+       Aufträge whose parser output lacks the "Zu verwendender
+       Artikel" line. */
+    const items = [
+      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 18m x 12mm (57x40x12) (50 Rollen)',
+                units: 75, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'F-LST1' }),
+      mkMixed({ title: 'Ec-Cash Thermorollen 57mm x 14m x 12mm (50 Rollen)',
+                units: 70, dim: { w: 57, h: 14 }, rollen: 50, fnsku: 'F-MID' }),
+      mkMixed({ title: '50 EC-Cash Thermorollen im Karton 57mm x 18m x 12mm mit Lastschrifttext ELV',
+                units: 15, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'F-LST2' }),
+    ];
+    // No useItem on any → fall back to rolle-format bucketing.
+    const sorted = sortItemsForPallet(items);
+    const fnskus = sorted.map((it) => it.fnsku);
+    expect(fnskus).toEqual(['F-LST1', 'F-LST2', 'F-MID']);
   });
 });
 

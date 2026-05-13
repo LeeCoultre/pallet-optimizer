@@ -417,19 +417,27 @@ const VOL_TIE_BREAK_THRESHOLD = 0.10;
 
    Resolution order:
      1. ESKU → unique key (rule 7, never cluster).
-     2. **Rolle format from title** when extractable — covers L1/L2/L3
-        Thermorollen / Klebeband. Same format-signature clusters
-        regardless of LST status, useItem or own EAN. Two articles
-        printed as "57mm x 18m x 12mm" merge even when one is
-        "mit Lastschrifttext" and the other is plain — the worker
-        stacks them as one rolle family. (User-confirmed 2026-05-07.)
-     3. Fall back to `dim:WxH|use:EAN/X-code` for items without a
+     2. **L1/L2 Thermorollen + useItem present** → `useitem:<EAN>`.
+        Variants of the same parent product (same "Zu verwendender
+        Artikel" EAN) must always be picked together — regardless of
+        rolle size or LST variant. So 4017279107701-57×14 and
+        4017279107701-57×35 cluster, while 9120107187419-57×35 stays
+        in its own bucket. (User rule 2026-05-13, supersedes the
+        2026-05-07 rolle-only rule for thermorollen.)
+     3. **Rolle format from title** when extractable — covers L3
+        Klebeband and any L1/L2 items without a parseable useItem.
+        Same format-signature clusters regardless of own EAN.
+     4. Fall back to `dim:WxH|use:EAN/X-code` for items without a
         recognisable rolle pattern (L4 Produktion, generic Sandsäcke,
         etc.). useItem keeps the V5/EZ EAN-cross-reference behaviour
         for those non-rolle SKUs. */
-function formatClusterKey(it) {
+function formatClusterKey(it, level) {
   if (it.isEinzelneSku) {
     return `esku:${it.fnsku || it.sku || it.title || ''}`;
+  }
+  if (level === 1 || level === 2) {
+    const useId = extractUseItemId(it.useItem);
+    if (useId) return `useitem:${useId}`;
   }
   const rolle = extractRolleFormat(it.title);
   if (rolle) return `rolle:${rolle}`;
@@ -470,16 +478,19 @@ export function sortItemsForPallet(items) {
   if (!items?.length) return items || [];
   const FINAL_LEVELS = new Set([5, 6]);
 
-  const enriched = items.map((it, i) => ({
-    item: it,
-    origIdx: i,
-    level: getDisplayLevel(it),
-    units: it.isEinzelneSku
-      ? (it.einzelneSku?.cartonsCount ?? it.placementMeta?.cartonsHere ?? 1)
-      : (it.units || 0),
-    totalVol: itemTotalVolumeCm3(it),
-    fmtKey: formatClusterKey(it),
-  }));
+  const enriched = items.map((it, i) => {
+    const level = getDisplayLevel(it);
+    return {
+      item: it,
+      origIdx: i,
+      level,
+      units: it.isEinzelneSku
+        ? (it.einzelneSku?.cartonsCount ?? it.placementMeta?.cartonsHere ?? 1)
+        : (it.units || 0),
+      totalVol: itemTotalVolumeCm3(it),
+      fmtKey: formatClusterKey(it, level),
+    };
+  });
 
   const groups = new Map();
   for (const e of enriched) {
