@@ -30,9 +30,8 @@ Deploy:   Railway, single-service Docker (Vite-built frontend served
 ## Production
 
 - **App:** https://lagerauftrag-production.up.railway.app/
-- **GitHub:** https://github.com/LeeCoultre/Lagerauftrag
-  - Active branch: `claude/sweet-tharp-495790`
-  - `main` is the old pre-Marathon code (not in use)
+- **GitHub:** https://github.com/LeeCoultre/pallet-optimizer
+  - Active branch: `main` (all Marathon work lives here)
 - **Railway:** project has 2 services — `Marathon` (Dockerfile build)
   and `Postgres` (managed). DATABASE_URL is reference-injected.
 - **Clerk:** instance `trusted-spider-53.clerk.accounts.dev` (test mode)
