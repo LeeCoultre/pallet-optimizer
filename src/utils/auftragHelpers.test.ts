@@ -14,7 +14,9 @@ import {
   getLevel,
   getDisplayLevel,
   formatItemTitle,
+  focusItemView,
   sortItemsForPallet,
+  sortPallets,
   distributeEinzelneSku,
   primaryLevel,
   itemTotalVolumeCm3,
@@ -48,30 +50,36 @@ function mkEsku({ title, cartons = 5, packsPerCarton = 10, fnsku = 'X-ESKU' }: {
 
 /* ════════════════════════════════════════════════════════════════════ */
 describe('getLevel / getDisplayLevel', () => {
-  it('Tachorollen → L6 (highest priority — beats Thermorollen pattern)', () => {
-    expect(getLevel({ title: 'Tachographenrollen 57×8mm' })).toBe(6);
-    expect(getLevel({ title: 'Tachorolle 57/8' })).toBe(6);
+  it('Tachorollen → L7 (highest priority — beats Thermorollen pattern)', () => {
+    expect(getLevel({ title: 'Tachographenrollen 57×8mm' })).toBe(7);
+    expect(getLevel({ title: 'Tachorolle 57/8' })).toBe(7);
   });
 
-  it('Kürbiskernöl → L5 (fragile cap)', () => {
-    expect(getLevel({ title: 'Steirisches Gourmet Kürbiskernöl 1L' })).toBe(5);
-    expect(getLevel({ title: 'Kernöl Premium' })).toBe(5);
+  it('Kürbiskernöl → L6 (fragile cap, just below Tacho)', () => {
+    expect(getLevel({ title: 'Steirisches Gourmet Kürbiskernöl 1L' })).toBe(6);
+    expect(getLevel({ title: 'Kernöl Premium' })).toBe(6);
   });
 
-  it('TK THERMALKING / Sandsäcke → L4 Produktion', () => {
-    expect(getLevel({ title: 'TK THERMALKING Klebeband' })).toBe(4);
-    expect(getLevel({ title: '50x Sandsäcke leer' })).toBe(4);
+  it('Sandsäcke / TK THERMALKING (non-Klebeband) → L5 Produktion', () => {
+    expect(getLevel({ title: 'TK THERMALKING Big Bag 500L' })).toBe(5);
+    expect(getLevel({ title: '50x Sandsäcke leer' })).toBe(5);
   });
 
-  it('Klebeband / fragile → L3', () => {
-    expect(getLevel({ title: 'Klebeband Standard 50m' })).toBe(3);
-    expect(getLevel({ title: 'Fragile Aufkleber' })).toBe(3);
+  it('Klebeband / paketband / packband / absperrband / fragile → L4 (before Produktion)', () => {
+    expect(getLevel({ title: 'Klebeband Standard 50m' })).toBe(4);
+    expect(getLevel({ title: 'Fragile Aufkleber' })).toBe(4);
+    // TK THERMALKING branding does NOT pull a Klebeband item into L5 —
+    // Klebeband is checked first because it always stacks below Produktion.
+    expect(getLevel({ title: 'TK THERMALKING Klebeband 50m' })).toBe(4);
+    expect(getLevel({ title: 'Paketband transparent 50mm × 66m' })).toBe(4);
+    expect(getLevel({ title: 'Packband braun' })).toBe(4);
+    expect(getLevel({ title: 'Absperrband rot-weiß' })).toBe(4);
   });
 
-  it('only the "öko" word triggers L2 — phenolfrei alone is L1', () => {
-    // Genuine ÖKO branding wins L2.
-    expect(getLevel({ title: 'ÖKO Thermorollen phenolfrei' })).toBe(2);
-    expect(getLevel({ title: 'THERMALKING - ÖKO - Thermorollen 80mm' })).toBe(2);
+  it('only the "öko" word triggers L3 — phenolfrei alone is L1', () => {
+    // Genuine ÖKO branding wins L3.
+    expect(getLevel({ title: 'ÖKO Thermorollen phenolfrei' })).toBe(3);
+    expect(getLevel({ title: 'THERMALKING - ÖKO - Thermorollen 80mm' })).toBe(3);
     // Phenolfrei alone is a paper spec, not an ÖKO product.
     expect(getLevel({ title: 'Phenolfrei BPA-frei Thermorolle' })).toBe(1);
     expect(getLevel({
@@ -79,16 +87,29 @@ describe('getLevel / getDisplayLevel', () => {
     })).toBe(1);
   });
 
-  it('ECO ROOLLS brand alone is L1, not L2', () => {
+  it('ECO ROOLLS brand alone is L1, not L3', () => {
     // Brand prefix "ECO ROOLLS" (registered trademark) used to false-
-    // positive into L2. The vendor's catalog is mostly regular thermal
-    // paper — only the explicit "öko" word marks an actual L2 product.
+    // positive into L3. The vendor's catalog is mostly regular thermal
+    // paper — only the explicit "öko" word marks an actual L3 product.
     expect(getLevel({
       title: 'ECO ROOLLS® EC Cash Rollen Thermopapier 57mm x 35mm x 12mm - Kassenrollen',
     })).toBe(1);
     expect(getLevel({ title: 'ECO ROOLLS 57×40' })).toBe(1);
-    // ECO ROOLLS that ARE explicitly öko still hit L2:
-    expect(getLevel({ title: 'ECO ROOLLS öko 80×80' })).toBe(2);
+    // ECO ROOLLS that ARE explicitly öko still hit L3:
+    expect(getLevel({ title: 'ECO ROOLLS öko 80×80' })).toBe(3);
+  });
+
+  it('VEIT brand → L2 (own bucket, sits right after L1 Thermo in the pick order)', () => {
+    expect(getLevel({ title: 'Veit GmbH Papierrolle 57×35' })).toBe(2);
+    expect(getLevel({ title: 'VEIT Thermorollen 80×80' })).toBe(2);
+    // Word-boundary: "Veitsbach" shouldn't match.
+    expect(getLevel({ title: 'Veitsbach Thermo 57×40' })).toBe(1);
+  });
+
+  it('VEIT + öko stays L3 — öko precedence preserved', () => {
+    // VEIT öko historically resolved to ÖKO (the dedicated thermal-roll
+    // sub-bucket); the L2 Veit branch must not override that.
+    expect(getLevel({ title: 'VEIT öko Thermorolle 57×40' })).toBe(3);
   });
 
   it('default falls through to L1 Thermorollen', () => {
@@ -97,23 +118,25 @@ describe('getLevel / getDisplayLevel', () => {
   });
 
   it('getDisplayLevel: title regex wins over legacy category field', () => {
-    // Legacy parser tagged Kernöl as 'produktion' (=L4) but the live
-    // title-based check should give L5. This was the FBA15LL4PK53 bug.
+    // Legacy parser tagged Kernöl as 'produktion' (=L5) but the live
+    // title-based check should give L6.
     const item = { title: 'Kürbiskernöl 1 L', category: 'produktion' };
-    expect(getDisplayLevel(item)).toBe(5);
+    expect(getDisplayLevel(item)).toBe(6);
   });
 
   it('getDisplayLevel: pre-computed item.level always wins', () => {
-    expect(getDisplayLevel({ level: 6, title: 'whatever' })).toBe(6);
+    expect(getDisplayLevel({ level: 7, title: 'whatever' })).toBe(7);
   });
 
-  it('LEVEL_META has 6 entries with shortName + color', () => {
-    for (let lvl = 1; lvl <= 6; lvl++) {
+  it('LEVEL_META has 7 entries with shortName + color, L2=VEIT', () => {
+    for (let lvl = 1; lvl <= 7; lvl++) {
       expect(LEVEL_META[lvl]).toMatchObject({
         shortName: expect.any(String),
         color: expect.stringMatching(/^#[0-9A-F]{6}$/i),
       });
     }
+    expect(LEVEL_META[2].shortName).toBe('VEIT');
+    expect(LEVEL_META[7].shortName).toBe('TACHO');
   });
 });
 
@@ -139,6 +162,108 @@ describe('formatItemTitle', () => {
 });
 
 /* ════════════════════════════════════════════════════════════════════ */
+describe('focusItemView — L5 size hint preserves variant distinction', () => {
+  it('appends "1 Kg" to a Füllmaterial that strips at "für"', () => {
+    const view = focusItemView({
+      title:
+        'Füllmaterial für Pakete - 1 Kg Holzwolle für Geschenkkorb - naturbelassenes Ostergras - Deko Stroh - perfekt als Füllung für Verpackungen - Premium Qualität (1 Kg Holzwolle)',
+      units: 50,
+    });
+    expect(view.name).toMatch(/Füllmaterial/);
+    expect(view.name).toMatch(/1\s*Kg/);
+  });
+
+  it('appends "500 g" for the small variant — distinguishes from 1 Kg sibling', () => {
+    const view = focusItemView({
+      title:
+        'Füllmaterial für Pakete - 500 g Holzwolle für Geschenkkorb - naturbelassenes Ostergras - Deko Stroh - perfekt als Füllung für Verpackungen - Premium Qualität (500 g Holzwolle)',
+      units: 40,
+    });
+    expect(view.name).toMatch(/500\s*g/);
+  });
+
+  it('does NOT duplicate the size hint when it survives the strip', () => {
+    const view = focusItemView({
+      title: 'Sandsack 50 Kg',
+      units: 20,
+    });
+    // "50 Kg" already in the stripped name → must not append again.
+    const matches = view.name.match(/50\s*Kg/gi) || [];
+    expect(matches.length).toBe(1);
+  });
+
+  it('Big Bag: strips "1000 Kg" suffix from the headline', () => {
+    const view = focusItemView({ title: 'Big Bag 1000 Kg', units: 4 });
+    expect(view.name).toBe('Big Bag');
+  });
+
+  it('Big Bag: strips brand prefix AND size — TK THERMALKING Big Bag → Big Bag', () => {
+    const view = focusItemView({ title: 'TK THERMALKING Big Bag 1000 Kg', units: 4 });
+    expect(view.name).toBe('Big Bag');
+  });
+
+  it('Big Bag: keeps variant descriptor AFTER "Big Bag", strips size', () => {
+    const view = focusItemView({ title: 'Big Bag XL 500 Kg schwarz', units: 4 });
+    expect(view.name).toBe('Big Bag XL schwarz');
+  });
+
+  it('Big Bag: strips size even with parenthetical pack count', () => {
+    const view = focusItemView({ title: 'Big Bag 1000 Kg (4 Stück)', units: 4 });
+    expect(view.name).toBe('Big Bag');
+  });
+
+  it('Big Bag: bare title returns "Big Bag" unchanged', () => {
+    const view = focusItemView({ title: 'TK THERMALKING Big Bag', units: 4 });
+    expect(view.name).toBe('Big Bag');
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
+describe('focusItemView — useItem display vs copy-code split', () => {
+  it('keeps full "wird von X001BVO9LV produziert" for display, exposes bare code for clipboard', () => {
+    const view = focusItemView({
+      title: 'Füllmaterial für Pakete - 500 g Holzwolle',
+      useItem: 'wird von X001BVO9LV produziert',
+    });
+    expect(view.useItem).toBe('wird von X001BVO9LV produziert');
+    expect(view.useItemCode).toBe('X001BVO9LV');
+  });
+
+  it('bare X-code: display and copy match', () => {
+    const view = focusItemView({
+      title: 'Füllmaterial 1 Kg',
+      useItem: 'X001BVO9LV',
+    });
+    expect(view.useItem).toBe('X001BVO9LV');
+    expect(view.useItemCode).toBe('X001BVO9LV');
+  });
+
+  it('EAN wrapper: display keeps prefix, copy gets just the digits', () => {
+    const view = focusItemView({
+      title: 'Sandsack 50 Kg',
+      useItem: 'EAN: 9120107182162 (Bestand)',
+    });
+    expect(view.useItem).toBe('EAN: 9120107182162 (Bestand)');
+    expect(view.useItemCode).toBe('9120107182162');
+  });
+
+  it('falls back to the original string when no code can be extracted', () => {
+    const view = focusItemView({
+      title: 'Random',
+      useItem: 'VF-Z4DN-RFTL',
+    });
+    expect(view.useItem).toBe('VF-Z4DN-RFTL');
+    expect(view.useItemCode).toBe('VF-Z4DN-RFTL');
+  });
+
+  it('returns empty strings when useItem is missing', () => {
+    const view = focusItemView({ title: 'Random' });
+    expect(view.useItem).toBe('');
+    expect(view.useItemCode).toBe('');
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
 describe('sortItemsForPallet — W×H cluster rule (2026-05-06)', () => {
   it('clusters identical W×H even with different rollen counts', () => {
     // FBA15LL4PK53 P1-B3 case: 57×18 (75 rolls) + 57×14 + 57×18 (15 rolls) + 57×9
@@ -159,7 +284,7 @@ describe('sortItemsForPallet — W×H cluster rule (2026-05-06)', () => {
     expect(keys[3]).toBe('57×9 ·20');
   });
 
-  it('puts L5 (Kernöl) and L6 (Tacho) at end, L5 before L6', () => {
+  it('puts L6 (Kernöl) and L7 (Tacho) at end, L6 before L7', () => {
     const items = [
       mkMixed({ title: 'Tachographenrollen 57×8', units: 20, dim: { w: 57, h: 8 }, rollen: 50, fnsku: 'T1' }),
       mkMixed({ title: 'Kürbiskernöl 1L',         units: 10, fnsku: 'K1' }),
@@ -167,8 +292,8 @@ describe('sortItemsForPallet — W×H cluster rule (2026-05-06)', () => {
     ];
     const sorted = sortItemsForPallet(items);
     expect(getDisplayLevel(sorted[0])).toBe(1);   // L1 first
-    expect(getDisplayLevel(sorted[1])).toBe(5);   // Kernöl
-    expect(getDisplayLevel(sorted[2])).toBe(6);   // Tacho last
+    expect(getDisplayLevel(sorted[1])).toBe(6);   // Kernöl
+    expect(getDisplayLevel(sorted[2])).toBe(7);   // Tacho last
   });
 
   it('returns empty array for empty input', () => {
@@ -191,6 +316,66 @@ describe('sortItemsForPallet — W×H cluster rule (2026-05-06)', () => {
     b.dim = { w: 57, h: 18 };
     const sorted = sortItemsForPallet([a, b]);
     expect(sorted.length).toBe(2);    // both present
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
+describe('sortItemsForPallet — Veit (L2) pick-order rule', () => {
+  it('default: L2 Veit sits RIGHT AFTER L1 (before L3/L4/L5)', () => {
+    const items = [
+      mkMixed({ title: 'Klebeband 50m',           units: 10, fnsku: 'KB' }),         // L4
+      mkMixed({ title: 'Sandsack 50x',            units: 5,  fnsku: 'PR' }),         // L5
+      mkMixed({ title: 'Veit Thermo 57×40',       units: 30, dim: { w: 57, h: 40 }, rollen: 50, fnsku: 'V1' }), // L2 (small)
+      mkMixed({ title: 'Thermorollen 57×18',      units: 40, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'T1' }), // L1
+      mkMixed({ title: 'ÖKO Thermo 80×80',        units: 20, dim: { w: 80, h: 80 }, fnsku: 'O1' }),             // L3
+    ];
+    const sorted = sortItemsForPallet(items);
+    const levels = sorted.map(getDisplayLevel);
+    expect(levels).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('heavy Veit (50 rollen × 120 units) — L2 jumps to BASE position before L1', () => {
+    const items = [
+      mkMixed({ title: 'Thermorollen 57×18', units: 40,  dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'T1' }),
+      mkMixed({ title: 'Veit Thermo 57×40',  units: 120, dim: { w: 57, h: 40 }, rollen: 50, fnsku: 'V1' }),
+      mkMixed({ title: 'Klebeband 50m',      units: 10,  fnsku: 'KB' }),
+    ];
+    const sorted = sortItemsForPallet(items);
+    expect(getDisplayLevel(sorted[0])).toBe(2);   // Veit forms the base
+    expect(getDisplayLevel(sorted[1])).toBe(1);
+    expect(getDisplayLevel(sorted[2])).toBe(4);
+  });
+
+  it('heavy Veit (20 rollen × 400 units) also flips to base', () => {
+    const items = [
+      mkMixed({ title: 'Thermorollen 57×18', units: 40,  dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'T1' }),
+      mkMixed({ title: 'Veit Mini 80×80',    units: 400, dim: { w: 80, h: 80 }, rollen: 20, fnsku: 'V2' }),
+    ];
+    const sorted = sortItemsForPallet(items);
+    expect(getDisplayLevel(sorted[0])).toBe(2);
+    expect(getDisplayLevel(sorted[1])).toBe(1);
+  });
+
+  it('Veit just BELOW the threshold stays in default position (after L1)', () => {
+    const items = [
+      mkMixed({ title: 'Thermorollen 57×18', units: 40,  dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'T1' }),
+      mkMixed({ title: 'Veit Thermo 57×40',  units: 119, dim: { w: 57, h: 40 }, rollen: 50, fnsku: 'V1' }),
+      mkMixed({ title: 'Veit Mini 80×80',    units: 399, dim: { w: 80, h: 80 }, rollen: 20, fnsku: 'V2' }),
+    ];
+    const sorted = sortItemsForPallet(items);
+    expect(getDisplayLevel(sorted[0])).toBe(1);
+    expect(getDisplayLevel(sorted[1])).toBe(2);   // Veit V1
+    expect(getDisplayLevel(sorted[2])).toBe(2);   // Veit V2
+  });
+
+  it('non-50/20 rollen counts are NEVER heavy — Veit stays after L1', () => {
+    const items = [
+      mkMixed({ title: 'Thermorollen 57×18', units: 40,   dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'T1' }),
+      mkMixed({ title: 'Veit 30-Rollen',     units: 9999, dim: { w: 57, h: 40 }, rollen: 30, fnsku: 'V1' }),
+    ];
+    const sorted = sortItemsForPallet(items);
+    expect(getDisplayLevel(sorted[0])).toBe(1);
+    expect(getDisplayLevel(sorted[1])).toBe(2);
   });
 });
 
@@ -281,6 +466,105 @@ describe('primaryLevel', () => {
 });
 
 /* ════════════════════════════════════════════════════════════════════ */
+describe('sortPallets — Single-SKU useItem clustering', () => {
+  function mkPallet(id, items, hasFourSideWarning = false) {
+    return { id, items, hasFourSideWarning };
+  }
+  function mkItem(title, useItem) {
+    return { title, units: 100, useItem, isEinzelneSku: false };
+  }
+
+  it('clusters Single-SKU pallets sharing the same useItem, even when split in original order', () => {
+    const pallets = [
+      mkPallet('P1-B1', [mkItem('Thermo 57×18', '4017279107701')], true),  // single, useItem A
+      mkPallet('P1-B2', [mkItem('Thermo 80×80', '4017279999999')], true),  // single, useItem B
+      mkPallet('P1-B3', [mkItem('Thermo 57×40', '4017279107701')], true),  // single, useItem A — should cluster with P1-B1
+      mkPallet('P1-B4', [mkItem('Thermo 80×80', '4017279999999')], true),  // single, useItem B — clusters with P1-B2
+    ];
+    const sorted = sortPallets(pallets);
+    const ids = sorted.map((p) => p.id);
+    // Cluster A anchored at index 0 → P1-B1, P1-B3
+    // Cluster B anchored at index 1 → P1-B2, P1-B4
+    expect(ids).toEqual(['P1-B1', 'P1-B3', 'P1-B2', 'P1-B4']);
+  });
+
+  it('Single-SKU clusters interleaved with Mixed pallets reshuffle to stay adjacent', () => {
+    const pallets = [
+      mkPallet('P1-B1', [mkItem('Thermo 57×18', 'X001AAA0001')], true),       // single A
+      mkPallet('P1-B2', [
+        mkItem('Thermo 57×18', 'X001AAA0001'),
+        mkItem('Thermo 80×80', 'X001AAA0001'),
+      ]),                                                                       // Mixed
+      mkPallet('P1-B3', [mkItem('Thermo 57×18', 'X001AAA0001')], true),       // single A
+    ];
+    const sorted = sortPallets(pallets);
+    const ids = sorted.map((p) => p.id);
+    // Single-SKU pallets share useItem → cluster at the front (1 article tier).
+    // Mixed pallet has 2 articles → falls into a higher fewest-articles bucket.
+    expect(ids).toEqual(['P1-B1', 'P1-B3', 'P1-B2']);
+  });
+
+  it('Single-SKU pallets with DIFFERENT useItems stay separate', () => {
+    const pallets = [
+      mkPallet('P1-B1', [mkItem('Thermo 57×18', 'X001AAA0001')], true),
+      mkPallet('P1-B2', [mkItem('Thermo 80×80', 'X001BBB0002')], true),
+      mkPallet('P1-B3', [mkItem('Thermo 57×40', 'X001CCC0003')], true),
+    ];
+    const sorted = sortPallets(pallets);
+    expect(sorted.map((p) => p.id)).toEqual(['P1-B1', 'P1-B2', 'P1-B3']);
+  });
+
+  it('Mixed pallets (not Single-SKU) are NOT clustered by useItem', () => {
+    const pallets = [
+      mkPallet('P1-B1', [mkItem('Thermo 57×18', 'X001AAA0001')]),  // Mixed (no hasFourSideWarning)
+      mkPallet('P1-B2', [mkItem('Thermo 80×80', 'X001BBB0002')]),
+      mkPallet('P1-B3', [mkItem('Thermo 57×40', 'X001AAA0001')]),
+    ];
+    const sorted = sortPallets(pallets);
+    // Stable order — no useItem-based reshuffle for Mixed pallets.
+    expect(sorted.map((p) => p.id)).toEqual(['P1-B1', 'P1-B2', 'P1-B3']);
+  });
+
+  it('Single-SKU pallet without a parseable useItem falls back to stable order', () => {
+    const pallets = [
+      mkPallet('P1-B1', [mkItem('Thermo 57×18', null)], true),
+      mkPallet('P1-B2', [mkItem('Thermo 80×80', 'X001AAA0001')], true),
+      mkPallet('P1-B3', [mkItem('Thermo 57×40', null)], true),
+    ];
+    const sorted = sortPallets(pallets);
+    expect(sorted.map((p) => p.id)).toEqual(['P1-B1', 'P1-B2', 'P1-B3']);
+  });
+
+  it('Single-SKU split palets (no useItem) cluster by FNSKU fallback', () => {
+    // Real-world Lynne pattern: a 4-Seiten-Warnung SKU spread across
+    // multiple palets without a "Zu verwendender Artikel" line.
+    // Same FNSKU across palets must still glue them together.
+    const pallets = [
+      mkPallet('P1-B1', [{ title: 'Produktion A', units: 36, fnsku: 'X001AAA0001', isEinzelneSku: false }], true),
+      mkPallet('P1-B2', [{ title: 'Produktion A', units: 36, fnsku: 'X001AAA0001', isEinzelneSku: false }], true),
+      mkPallet('P1-B3', [{ title: 'Produktion B', units: 36, fnsku: 'X001BBB0002', isEinzelneSku: false }], true),
+      mkPallet('P1-B4', [{ title: 'Produktion A', units: 36, fnsku: 'X001AAA0001', isEinzelneSku: false }], true),
+    ];
+    const sorted = sortPallets(pallets);
+    // Same FNSKU = same cluster. Anchor of A is index 0 → A's pallets first.
+    expect(sorted.map((p) => p.id)).toEqual(['P1-B1', 'P1-B2', 'P1-B4', 'P1-B3']);
+  });
+
+  it('cluster key prioritises useItem over FNSKU when both present', () => {
+    // useItem is the most specific identifier (parent EAN). If two
+    // palets share useItem but have different FNSKU labels, they STILL
+    // cluster — Amazon may issue distinct labels for the same parent.
+    const pallets = [
+      mkPallet('P1-B1', [{ title: 'A', units: 36, useItem: 'X001PARENT', fnsku: 'X001LABEL1', isEinzelneSku: false }], true),
+      mkPallet('P1-B2', [{ title: 'B', units: 36, useItem: 'X001OTHER',  fnsku: 'X001LABEL2', isEinzelneSku: false }], true),
+      mkPallet('P1-B3', [{ title: 'A', units: 36, useItem: 'X001PARENT', fnsku: 'X001LABEL3', isEinzelneSku: false }], true),
+    ];
+    const sorted = sortPallets(pallets);
+    expect(sorted.map((p) => p.id)).toEqual(['P1-B1', 'P1-B3', 'P1-B2']);
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
 describe('distributeEinzelneSku — hard constraints', () => {
   function mkPallet({ id, items = [] as Array<Record<string, unknown>>, hasFourSideWarning = false }: { id: string; items?: Array<Record<string, unknown>>; hasFourSideWarning?: boolean }) {
     return { id, items, hasFourSideWarning };
@@ -336,6 +620,84 @@ describe('distributeEinzelneSku — hard constraints', () => {
     );
     expect(typeof r.overloadCount).toBe('number');
     expect(typeof r.noValidCount).toBe('number');
+  });
+
+  it('Klebeband-ESKU exception — L4 ESKU can land on a pallet that holds L5 Produktion', () => {
+    // Pallet pre-populated with a Mixed Produktion item (L5). Without the
+    // exception, the L4 Klebeband ESKU would fail violatesLevelOrder
+    // and end up flagged as NO_VALID_PLACEMENT.
+    const p = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'Sandsack 50x bedruckt', units: 5 })],
+    });
+    const esku = mkEsku({ title: 'Klebeband 50m × 36 Pack', cartons: 2, fnsku: 'KB1' });
+    const r = distributeEinzelneSku([p], [esku]);
+    expect(r.byPalletId['P1-B1'].length).toBeGreaterThan(0);
+    expect(r.noValidCount).toBe(0);
+  });
+
+  it('Klebeband-ESKU exception does NOT bypass L6/L7 — Klebeband still blocked under Kernöl', () => {
+    const p = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'Kürbiskernöl 1 L', units: 5 })],
+    });
+    const esku = mkEsku({ title: 'Klebeband 50m × 24 Pack', cartons: 2, fnsku: 'KB2' });
+    const r = distributeEinzelneSku([p], [esku]);
+    // Only one pallet, so it gets the carton even as "least bad" — but the
+    // NO_VALID_PLACEMENT flag must be raised because L6 > L4 still violates.
+    expect(r.noValidCount).toBeGreaterThan(0);
+  });
+
+  it('ESKU atomicity — 4 cartons of one FNSKU land on a single pallet, never split', () => {
+    // Two eligible empty pallets — splitting was the old behaviour. Atomic
+    // placement parks the whole shipment on one (the least-filled) pallet.
+    const p1 = mkPallet({ id: 'P1-B1' });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'Heipa 5505840703 Thermo (5 Stück) 58x64x12', cartons: 4, fnsku: 'Z2-F5FO-F995' });
+    const r = distributeEinzelneSku([p1, p2], [esku]);
+    const counts = [r.byPalletId['P1-B1'].length, r.byPalletId['P1-B2'].length];
+    // Exactly one pallet receives the group, the other gets nothing.
+    expect(counts.sort()).toEqual([0, 1]);
+    // The receiving pallet's single entry carries ALL 4 cartons.
+    const winnerEntries = [...r.byPalletId['P1-B1'], ...r.byPalletId['P1-B2']];
+    expect(winnerEntries[0].placementMeta.cartonsHere).toBe(4);
+    expect(winnerEntries[0].placementMeta.cartonsTotalGroup).toBe(4);
+    // No SPLIT-GROUP flag.
+    expect(winnerEntries[0].placementMeta.flags).not.toContain('SPLIT-GROUP');
+  });
+
+  it('format-match wins over least-filled — same format pallet gets the group even when fuller', () => {
+    // P1-B1: holds a 57x35 thermo (some volume already used) AND matches format.
+    // P1-B2: empty (more free volume) but no format on it.
+    // The group's format = same 57x35 → P1-B1 wins despite being fuller.
+    const p1 = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'Mixed thermo 57×35', units: 30, dim: { w: 57, h: 35 }, rollen: 50, fnsku: 'F1' })],
+    });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo 57×35', cartons: 3, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 };
+    esku.rollen = 50;
+    const r = distributeEinzelneSku([p1, p2], [esku]);
+    expect(r.byPalletId['P1-B1'].length).toBeGreaterThan(0);
+    expect(r.byPalletId['P1-B2'].length).toBe(0);
+  });
+
+  it('no format match → group lands on LEAST-FILLED pallet', () => {
+    // P1-B1: has a thermo Mixed (some volume used), no format match for the ESKU.
+    // P1-B2: empty.
+    // Neither pallet matches the ESKU's format → least-filled (P1-B2) wins.
+    const p1 = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'Mixed thermo 57×18', units: 80, dim: { w: 57, h: 18 }, rollen: 50, fnsku: 'F1' })],
+    });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU different 80×80', cartons: 3, fnsku: 'EB' });
+    esku.dim = { w: 80, h: 80 };
+    esku.rollen = 20;
+    const r = distributeEinzelneSku([p1, p2], [esku]);
+    expect(r.byPalletId['P1-B2'].length).toBeGreaterThan(0);
+    expect(r.byPalletId['P1-B1'].length).toBe(0);
   });
 });
 

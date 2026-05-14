@@ -491,7 +491,7 @@ export function useAppState(): UseAppStateApi {
     setCopiedKeysVersion((v) => v + 1);
   }, [current?.id]);
 
-  const completeCurrentItem = useCallback((effectiveItemsCount?: number, effectiveItem: unknown = null): boolean => {
+  const completeCurrentItem = useCallback((effectiveItemsCount?: number, effectiveItem: unknown = null, nextPalletIdxOverride?: number): boolean => {
     if (!current?.parsed) return false;
     const pallet = current.parsed.pallets[current.currentPalletIdx];
     if (!pallet) return false;
@@ -514,8 +514,14 @@ export function useAppState(): UseAppStateApi {
         ...palletTimings,
         [pallet.id]: { ...prevTiming, finishedAt: Date.now() },
       };
-      if (nextPalletIdx + 1 < current.parsed.pallets.length) {
-        nextPalletIdx += 1;
+      // Caller-provided override lets Focus follow the display reorder
+      // (palletOrderOverride) when picking the next pallet. Falls back
+      // to raw idx + 1 for the normal unreordered flow.
+      const candidate = nextPalletIdxOverride != null
+        ? nextPalletIdxOverride
+        : nextPalletIdx + 1;
+      if (candidate >= 0 && candidate < current.parsed.pallets.length) {
+        nextPalletIdx = candidate;
         nextItemIdx = 0;
         const nextId = current.parsed.pallets[nextPalletIdx].id;
         if (!palletTimings[nextId]) {

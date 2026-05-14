@@ -28,31 +28,43 @@ import { parseTitleMeta } from './parseLagerauftrag.js';
 
 export function getLevel(item) {
   const t = (item.title || '').toLowerCase();
-  if (/\btacho/.test(t)) return 6;                                  // Tachorollen
-  if (/(kürbis|kernöl)/.test(t)) return 5;                          // Kernöl
+  if (/\btacho/.test(t)) return 7;                                  // Tachorollen
+  if (/(kürbis|kernöl)/.test(t)) return 6;                          // Kernöl
+  // Klebeband (incl. paketband / packband / absperrband / fragile /
+  // bruchgefahr) — adhesive tapes and fragile-marker SKUs always sit
+  // BELOW Produktion in the stack, so they must be classified BEFORE
+  // the L5 regex below. Otherwise a title like "TK THERMALKING Klebeband"
+  // would get absorbed into L5 via the brand prefix and lose its own
+  // level. (Exception: ESKU Klebeband can land on Produktion pallets —
+  // enforced in violatesLevelOrder, not here.)
+  if (/(klebeband|paketband|packband|absperrband|fragile|bruchgefahr)/.test(t)) return 4;
   // Produktion: explicit phrasing OR known TK-THERMALKING product line
-  // OR any of the packaging-material keywords that classifyItem already
-  // recognises as Produktion (big bags, sandbags, fillers, packing tapes).
-  // klebeband is intentionally NOT included here — it has its own L3.
-  if (/(wird (von .* )?produziert|tk\s+thermalking|big\s*bag|silosack|sandsack|sandsäcke|sandsaecke|säcke|bauschutt|holzsack|paketband|packband|absperrband|holzwolle|füllmaterial)/.test(t)) return 4;
-  if (/(klebeband|fragile|bruchgefahr)/.test(t)) return 3;          // Klebeband / Fragile
-  // L2 ÖKO Thermorollen — ONLY explicit "öko" branding. `phenolfrei`
+  // OR any of the bulk-packaging keywords (big bags, sandbags, fillers).
+  if (/(wird (von .* )?produziert|tk\s+thermalking|big\s*bag|silosack|sandsack|sandsäcke|sandsaecke|säcke|bauschutt|holzsack|holzwolle|füllmaterial)/.test(t)) return 5;
+  // L3 ÖKO Thermorollen — ONLY explicit "öko" branding. `phenolfrei`
   // is a paper spec (BPA-free analog) that regular L1 thermorolls also
   // carry, so matching it would false-positive thermal rolls like
-  // "EC Thermorollen ... phenolfrei 52g/m²" into L2. Genuine ÖKO
+  // "EC Thermorollen ... phenolfrei 52g/m²" into L3. Genuine ÖKO
   // articles always carry the "öko" word in their title — that's the
   // only reliable signal.
-  if (/öko/.test(t)) return 2;
+  if (/öko/.test(t)) return 3;
+  // L2 Veit — own bucket for the VEIT brand thermal rolls so they
+  // stand apart from generic L1 Thermorollen. Detection logic is the
+  // same `\bveit\b` regex `classifyItem` uses; placed AFTER the öko
+  // check so a "VEIT öko …" title still resolves to L3 ÖKO the way it
+  // did before this split.
+  if (/\bveit\b/.test(t)) return 2;
   return 1;                                                          // Thermorollen (default)
 }
 
 export const LEVEL_META = {
   1: { name: 'Thermorollen',   shortName: 'THERMO',     color: '#3B82F6', bg: '#EFF6FF', text: '#1D4ED8' },
-  2: { name: 'ÖKO Thermo',     shortName: 'ÖKO',        color: '#06B6D4', bg: '#ECFEFF', text: '#0E7490' },
-  3: { name: 'Klebeband',      shortName: 'KLEBE',      color: '#A855F7', bg: '#FAF5FF', text: '#7E22CE' },
-  4: { name: 'Produktion',     shortName: 'PRODUKTION', color: '#10B981', bg: '#ECFDF5', text: '#047857' },
-  5: { name: 'Kernöl',         shortName: 'KERNÖL',     color: '#F59E0B', bg: '#FFFBEB', text: '#B45309' },
-  6: { name: 'Tachorollen',    shortName: 'TACHO',      color: '#F97316', bg: '#FFF7ED', text: '#C2410C' },
+  2: { name: 'Veit',           shortName: 'VEIT',       color: '#EC4899', bg: '#FDF2F8', text: '#BE185D' },
+  3: { name: 'ÖKO Thermo',     shortName: 'ÖKO',        color: '#06B6D4', bg: '#ECFEFF', text: '#0E7490' },
+  4: { name: 'Klebeband',      shortName: 'KLEBE',      color: '#A855F7', bg: '#FAF5FF', text: '#7E22CE' },
+  5: { name: 'Produktion',     shortName: 'PRODUKTION', color: '#10B981', bg: '#ECFDF5', text: '#047857' },
+  6: { name: 'Kernöl',         shortName: 'KERNÖL',     color: '#F59E0B', bg: '#FFFBEB', text: '#B45309' },
+  7: { name: 'Tachorollen',    shortName: 'TACHO',      color: '#F97316', bg: '#FFF7ED', text: '#C2410C' },
 };
 
 /* Compat shim: legacy parsed Aufträge (Historie) only have `category`.
@@ -60,9 +72,10 @@ export const LEVEL_META = {
 const CATEGORY_TO_LEVEL = {
   thermorollen: 1,
   heipa: 1,
-  veit: 1,
-  produktion: 4,
-  tachographenrollen: 6,
+  veit: 2,
+  klebeband: 4,
+  produktion: 5,
+  tachographenrollen: 7,
   sonstige: 1,
 };
 
@@ -105,25 +118,72 @@ export function getDisplayLevel(item) {
 
 /* ─── Pallet ordering ─────────────────────────────────────────────────────
    Operations rule:
-     1. Pallets WITHOUT Tachorollen (level 6) come first
+     1. Pallets WITHOUT Tachorollen (level 7) come first
      2. Inside each group, fewest articles first (easy → hard)
-     3. Tachorollen-pallets always last
+     3. Single-SKU pallets (hasFourSideWarning) sharing the same useItem
+        cluster together — the worker handles all variants of the same
+        parent product back-to-back instead of jumping between SKUs.
+     4. Tachorollen-pallets always last
    Stable sort preserves original order for equal-rank pallets.
    ───────────────────────────────────────────────────────────────────────── */
 function palletHasLevel(p, level) {
   return (p.items || []).some((it) => getDisplayLevel(it) === level);
 }
 
+/* Cluster identifier for a Single-SKU pallet — uniquely identifies the
+   product stencilled on the 4-Seiten-Warnung label so split palets of
+   the same SKU cluster together. Returns null for Mixed pallets, and
+   null when nothing identifies the product.
+
+   Priority chain (most specific → most universal):
+     1. useItem ("Zu verwendender Artikel" — parent EAN / X-code).
+     2. EAN of the article itself.
+     3. FNSKU (Amazon label-level; usually same across split palets of
+        the same SKU).
+     4. SKU (seller-listing identifier).
+   The chain protects against parser variants: some Single-SKU palets
+   carry "Zu verwendender Artikel:" lines, others ship without them. */
+export function singleSkuClusterKey(p) {
+  if (!p?.hasFourSideWarning) return null;
+  const first = (p.items || [])[0];
+  if (!first) return null;
+  const fromUseItem = extractUseItemId(first.useItem);
+  if (fromUseItem) return `use:${fromUseItem}`;
+  if (first.ean)   return `ean:${String(first.ean)}`;
+  if (first.fnsku) return `fnsku:${String(first.fnsku).toUpperCase()}`;
+  if (first.sku)   return `sku:${String(first.sku).toUpperCase()}`;
+  return null;
+}
+
 export function sortPallets(pallets) {
-  return [...(pallets || [])]
-    .map((p, i) => ({ p, i }))
+  const list = (pallets || []).map((p, i) => ({ p, i }));
+
+  // First-appearance index per useItem → cluster anchor. Pallets with
+  // the same useItem land at the same anchor, so they stay adjacent
+  // even when the original order had non-clusterable pallets in
+  // between. Mixed (non-single-SKU) pallets keep their own index as
+  // anchor, so they retain their relative position.
+  const clusterAnchor = new Map<string, number>();
+  for (const { p, i } of list) {
+    const k = singleSkuClusterKey(p);
+    if (k && !clusterAnchor.has(k)) clusterAnchor.set(k, i);
+  }
+  const anchorOf = (entry) => {
+    const k = singleSkuClusterKey(entry.p);
+    return k ? clusterAnchor.get(k)! : entry.i;
+  };
+
+  return list
     .sort((a, b) => {
-      const at = palletHasLevel(a.p, 6) ? 1 : 0;
-      const bt = palletHasLevel(b.p, 6) ? 1 : 0;
+      const at = palletHasLevel(a.p, 7) ? 1 : 0;
+      const bt = palletHasLevel(b.p, 7) ? 1 : 0;
       if (at !== bt) return at - bt;
       const al = a.p.items?.length || 0;
       const bl = b.p.items?.length || 0;
       if (al !== bl) return al - bl;
+      const aa = anchorOf(a);
+      const bb = anchorOf(b);
+      if (aa !== bb) return aa - bb;
       return a.i - b.i;
     })
     .map((x) => x.p);
@@ -168,20 +228,25 @@ const DEFAULT_KG_PER_CARTON = 0.55;            // fallback when no dimensions ro
    N × packing-slack. We recompute the per-roll bounding-box volume
    from dim when present (same physical reality as the Mixed heuristic),
    and only fall back to coarse buckets when no dim is available. */
+/* Thermo-roll family — physical packaging is the same cylinder-in-box
+   shape across L1 Thermorollen, L2 Veit, and L3 ÖKO Thermo. Heuristics
+   share the same roll bounding-box formula for all three. */
+const THERMO_FAMILY = new Set([1, 2, 3]);
+
 function eskuCartonHeuristicCm3(it) {
   const lvl = getDisplayLevel(it);
   const N = it.einzelneSku?.packsPerCarton ?? 10;
-  if (lvl === 1 || lvl === 2) {
+  if (THERMO_FAMILY.has(lvl)) {
     const wCm = (it.dim?.w ?? 57) / 10;
     const dCm = (it.dim?.normH ?? it.dim?.h ?? 35) / 10;
     const perRollBox = Math.max(20, wCm * dCm * dCm);
     const rollsPerInner = it.rollen || 5;
     return perRollBox * rollsPerInner * N * ROLL_PACK_INV;
   }
-  if (lvl === 6) return 1500 * N;             // Tachorollen carton scaled by inner packs
-  if (lvl === 5) return 1100 * N;             // Kernöl bottle ≈1.1L outer
-  if (lvl === 4) return 1800 * N;             // Produktion
-  if (lvl === 3) return 350  * N;             // Klebeband
+  if (lvl === 7) return 1500 * N;             // Tachorollen carton scaled by inner packs
+  if (lvl === 6) return 1100 * N;             // Kernöl bottle ≈1.1L outer
+  if (lvl === 5) return 1800 * N;             // Produktion
+  if (lvl === 4) return 350  * N;             // Klebeband
   return 800 * N;
 }
 
@@ -230,22 +295,22 @@ const TACHO_PACK_INV = 1.20;      // small spool packing
 
 function mixedItemHeuristicCm3(it) {
   const lvl = getDisplayLevel(it);
-  if (lvl === 1 || lvl === 2) {
+  if (THERMO_FAMILY.has(lvl)) {
     const wCm = (it.dim?.w ?? 57) / 10;
     const dCm = (it.dim?.normH ?? it.dim?.h ?? 35) / 10;
     const perRollBox = Math.max(20, wCm * dCm * dCm);          // floor 20 cm³
     return perRollBox * Math.max(1, it.rollen || 1) * ROLL_PACK_INV;
   }
-  if (lvl === 6) {
+  if (lvl === 7) {
     // Tachorolle: small spool ~57×15×15 mm bounding-box → ~13 cm³ each
     const wCm = (it.dim?.w ?? 57) / 10;
     const dCm = (it.dim?.normH ?? it.dim?.h ?? 15) / 10;
     const perRollBox = Math.max(8, wCm * dCm * dCm);
     return perRollBox * Math.max(1, it.rollen || 1) * TACHO_PACK_INV;
   }
-  if (lvl === 5) return 1000;                                    // 1L bottle + slack
-  if (lvl === 4) return 350 * Math.max(1, it.rollen || 1) * PROD_PACK_INV;
-  if (lvl === 3) return 80  * Math.max(1, it.rollen || 1) * KLEBE_PACK_INV;
+  if (lvl === 6) return 1000;                                    // 1L bottle + slack
+  if (lvl === 5) return 350 * Math.max(1, it.rollen || 1) * PROD_PACK_INV;
+  if (lvl === 4) return 80  * Math.max(1, it.rollen || 1) * KLEBE_PACK_INV;
   return 250;
 }
 
@@ -256,11 +321,11 @@ function mixedItemHeuristicKg(it) {
   if (fromTitle != null) return fromTitle;
   const lvl = getDisplayLevel(it);
   const r = Math.max(1, it.rollen || 1);
-  if (lvl === 1 || lvl === 2) return 0.05 * r;   // 50g per roll
-  if (lvl === 6) return 0.02 * r;                // 20g per Tachorolle
-  if (lvl === 5) return 0.45;                    // Kernöl bottle
-  if (lvl === 4) return 0.5 * r;                 // Produktion / Sandsäcke
-  if (lvl === 3) return 0.08 * r;                // Klebeband
+  if (THERMO_FAMILY.has(lvl)) return 0.05 * r;   // 50g per roll (Thermo / Veit / ÖKO)
+  if (lvl === 7) return 0.02 * r;                // 20g per Tachorolle
+  if (lvl === 6) return 0.45;                    // Kernöl bottle
+  if (lvl === 5) return 0.5 * r;                 // Produktion / Sandsäcke
+  if (lvl === 4) return 0.08 * r;                // Klebeband
   return 0.10;
 }
 
@@ -435,7 +500,7 @@ function formatClusterKey(it, level) {
   if (it.isEinzelneSku) {
     return `esku:${it.fnsku || it.sku || it.title || ''}`;
   }
-  if (level === 1 || level === 2) {
+  if (THERMO_FAMILY.has(level)) {
     const useId = extractUseItemId(it.useItem);
     if (useId) return `useitem:${useId}`;
   }
@@ -474,9 +539,26 @@ export function extractRolleFormat(title) {
   return null;
 }
 
+/* Veit (L2) is normally picked RIGHT AFTER L1 Thermorollen so its rolls
+   sit on the Thermo base. But a heavy Veit batch (50-roll packs ≥ 120
+   Einheiten, or 20-roll packs ≥ 400 Einheiten) is bulky/dense enough to
+   form the physical base itself — then Veit moves BEFORE L1.
+
+   "Heavy" check is per-item: any single Veit row hitting either
+   threshold flips the whole L2 group to the base position. */
+function isHeavyVeitGroup(group) {
+  return group.some((e) => {
+    const rolls = e.item.rollen ?? 0;
+    const units = e.units || 0;
+    if (rolls === 50 && units >= 120) return true;
+    if (rolls === 20 && units >= 400) return true;
+    return false;
+  });
+}
+
 export function sortItemsForPallet(items) {
   if (!items?.length) return items || [];
-  const FINAL_LEVELS = new Set([5, 6]);
+  const FINAL_LEVELS = new Set([6, 7]);
 
   const enriched = items.map((it, i) => {
     const level = getDisplayLevel(it);
@@ -498,17 +580,24 @@ export function sortItemsForPallet(items) {
     groups.get(e.level).push(e);
   }
 
+  // Veit (L2) pick-order override: default position is right after L1
+  // by ascending order. A heavy Veit batch jumps BEFORE L1 (pickKey 0.5).
+  // Other levels keep their natural numeric order.
+  const veitGroup = groups.get(2) || [];
+  const veitKey = veitGroup.length > 0 && isHeavyVeitGroup(veitGroup) ? 0.5 : 2;
+  const pickKey = (lvl) => (lvl === 2 ? veitKey : lvl);
+
   const orderedGroups = [...groups.entries()]
     .sort(([la, ga], [lb, gb]) => {
       const finalA = FINAL_LEVELS.has(la);
       const finalB = FINAL_LEVELS.has(lb);
       if (finalA !== finalB) return finalA ? 1 : -1;          // non-final first
       if (finalA && finalB) return la - lb;                   // L5 then L6
-      // Both non-final: ascending level (L1 bottom → L4 top of the
-      // non-fragile stack). Heavier rolls (L1) form the physical base;
-      // L4 Produktion is light filler that must NOT sit under L1.
-      // Total units DESC is only a tie-break within the same level.
-      if (la !== lb) return la - lb;
+      // Both non-final: ascending pickKey so L1 forms the physical base
+      // (with Veit slotted right after — or before, for heavy batches).
+      const ka = pickKey(la);
+      const kb = pickKey(lb);
+      if (ka !== kb) return ka - kb;
       const sumA = ga.reduce((s, e) => s + e.units, 0);
       const sumB = gb.reduce((s, e) => s + e.units, 0);
       return sumB - sumA;
@@ -521,14 +610,14 @@ export function sortItemsForPallet(items) {
     if (!g.length) continue;
     const groupLevel = g[0].level;
 
-    /* L6 (Tachorollen) — pack-size dominates ordering. The warehouse
+    /* L7 (Tachorollen) — pack-size dominates ordering. The warehouse
        always stacks the biggest pack first (60 → 15 → 6 → 3 Rollen),
        regardless of total batch units. We bucket by `rollen` and order
        buckets by rollen DESC, falling back to volume/units within the
        same pack-size group. No W×H clustering — Tacho dims are usually
        expressed as "57/8" (slashes) which the dim regex doesn't catch
        anyway, so all Tacho items would otherwise land in one mega-bucket. */
-    if (groupLevel === 6) {
+    if (groupLevel === 7) {
       const buckets = new Map();
       for (const e of g) {
         const r = e.item.rollen ?? 0;
@@ -680,53 +769,38 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
 
     for (const group of orderedGroups) {
       for (const e of group) {
-        // Place EACH carton of the ESKU group separately so the capacity
-        // tracker sees N increments (not 1) and naturally splits the
-        // group across pallets if any one fills up. Aggregate the
-        // resulting placements per pallet for the UI.
+        // ATOMIC PLACEMENT — an ESKU FNSKU is one indivisible unit. The
+        // Lagerauftrag's "ACHTUNG! Jeder Karton ... Kartonnummer" line
+        // names ONE shipment of N cartons that must arrive on ONE pallet
+        // (warehouse SOP). Picking once for the whole group, never
+        // splitting, also means the same SPLIT-GROUP flag never fires.
         const totalCartons = Math.max(1, e.cartons || 1);
-        const splits: Record<string, { count: number; result: ReturnType<typeof pickPallet> }> = {};
-        for (let i = 0; i < totalCartons; i++) {
-          const result = pickPallet(e, states);
-          const target = result.target;
-          target.add(e);
-          const pid = target.pallet.id;
-          if (!splits[pid]) splits[pid] = { count: 0, result };
-          splits[pid].count += 1;
-          splits[pid].result = result;     // keep latest score/flags per pallet
-          if (result.flags.includes('NO_VALID_PLACEMENT')) noValidCount += 1;
-        }
+        const result = pickPalletAtomic(e, states, totalCartons);
+        const target = result.target;
+        for (let i = 0; i < totalCartons; i++) target.add(e);
+        const pid = target.pallet.id;
+        if (result.flags.includes('NO_VALID_PLACEMENT')) noValidCount += 1;
 
-        // Emit ONE list item per pallet that received any cartons of
-        // this ESKU group. `cartonsHere` carries the per-pallet split.
-        const splitEntries = Object.entries(splits);
-        const isSplit = splitEntries.length > 1;
-        for (const [pid, s] of splitEntries) {
-          const flags = [...(s.result.flags || [])];
-          if (isSplit) flags.push('SPLIT-GROUP');
-          byPalletId[pid].push({
-            ...e.item,
-            placementMeta: {
-              score: s.result.score,
-              breakdown: s.result.breakdown,
-              overload: s.result.overload,
-              flags,
-              cartonsHere: s.count,
-              cartonsTotalGroup: totalCartons,
-            },
-          });
-        }
-        // Reason — use the first (or only) pallet for trace
-        const primary = splitEntries[0];
+        byPalletId[pid].push({
+          ...e.item,
+          placementMeta: {
+            score: result.score,
+            breakdown: result.breakdown,
+            overload: result.overload,
+            flags: [...(result.flags || [])],
+            cartonsHere: totalCartons,
+            cartonsTotalGroup: totalCartons,
+          },
+        });
         reasons[e.key] = {
-          source: primary[1].result.flags.includes('NO_VALID_PLACEMENT')
+          source: result.flags.includes('NO_VALID_PLACEMENT')
             ? 'no_valid_placement'
-            : (isSplit ? 'split' : 'assigned'),
-          breakdown: primary[1].result.breakdown,
-          overload: primary[1].result.overload,
-          flags: primary[1].result.flags,
-          palletId: primary[0],
-          splits: isSplit ? Object.fromEntries(splitEntries.map(([pid, s]) => [pid, s.count])) : null,
+            : 'assigned',
+          breakdown: result.breakdown,
+          overload: result.overload,
+          flags: result.flags,
+          palletId: pid,
+          splits: null,
         };
       }
     }
@@ -772,7 +846,7 @@ function buildPalletState(p) {
   const brands = new Set();
   const useItemIds = new Set();
   const fnskus = new Set();
-  const byLevel = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+  const byLevel = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [], 7: [] };
   // Capacity tracking — { formatKey: cartons }, plus per-key max
   const formatCounts = {};
   const formatMax = {};
@@ -890,10 +964,19 @@ function enrichEsku(item) {
 }
 
 /* H1-H4: a carton at level X may not sit BELOW any existing item of level Y > X.
-   The pallet's level stack is monotonic from bottom (1) up to top (6). */
+   The pallet's level stack is monotonic from bottom (1) up to top (7).
+
+   Klebeband-ESKU exception: an L4 ESKU Klebeband carton is allowed to
+   sit on a pallet that already has L5 Produktion items. The rule
+   "Klebeband always goes before Produktion" applies to Mixed-Box
+   workflow; ESKU placement may co-locate them on the same pallet.
+   Fragile-cap levels (L6 Kernöl / L7 Tacho) still block. */
 function violatesLevelOrder(carton, ps) {
   for (const existingLevel of ps.levels) {
-    if (existingLevel > carton.level) return true;
+    if (existingLevel > carton.level) {
+      if (carton.level === 4 && existingLevel === 5) continue;
+      return true;
+    }
   }
   return false;
 }
@@ -1016,6 +1099,127 @@ function scorePallet(carton, ps) {
 
 /* Returns { target, score, breakdown, overload, flags }. Always returns
    a target — falls back to least-bad NO_VALID_PLACEMENT if hard fails. */
+/* Atomic placement for an entire ESKU group (N cartons, one FNSKU).
+   Picks ONE pallet for all N cartons — the group is never split.
+
+   Selection rules (per warehouse SOP, 2026-05-14):
+     1. Filter by hard constraints (H1-H7).
+     2. Prefer pallets where ALL N cartons fit without overflow (weight
+        AND volume soft limits respected).
+     3. Within that, prefer pallets that ALREADY hold the same format
+        (format-match wins over neutral) — same X×Y on the same pallet
+        is the SOP optimum for stacking and label adherence.
+     4. Among format-match candidates, score via scorePallet
+        (useItem/brand/FNSKU/level tie-breakers) and free-volume.
+     5. If no format-match candidate exists, fall back to LEAST-FILLED
+        pallet (max remaining capacity) so the heaviest group lands on
+        the emptiest available pallet.
+     6. If no pallet passes hard constraints, mark NO_VALID_PLACEMENT
+        on the least-bad pallet (same fallback as the per-carton path).
+
+   Returns the same shape as pickPallet so the placement loop is
+   structurally identical. */
+function pickPalletAtomic(carton, states, totalCartons) {
+  const groupWeight = carton.weightKg * totalCartons;
+  const groupVol    = carton.volCm3   * totalCartons;
+
+  const eligible = states.filter((ps) => passesHardConstraints(carton, ps));
+
+  if (eligible.length > 0) {
+    // Pass 1 — pallets that swallow the WHOLE group without overflow.
+    const noOverflow = eligible.filter((ps) =>
+      (ps.weightKg + groupWeight) <= PALLET_WEIGHT_KG &&
+      (ps.volCm3   + groupVol)    <= PALLET_VOL_CM3
+    );
+    const candidates = noOverflow.length > 0 ? noOverflow : eligible;
+
+    // Pass 2 — among capacity-fit candidates, partition by format match.
+    // Format match = same X×Y rolle/dim signature already on the pallet.
+    const formatMatch = candidates.filter((ps) =>
+      ps.formats.has(carton.formatSig)
+    );
+
+    let best: typeof eligible[number] | null = null;
+    let bestScore = -Infinity;
+    let bestFree = -Infinity;
+    let bestBreakdown: Record<string, boolean | number> | null = null;
+
+    if (formatMatch.length > 0) {
+      // Score within format-match group — useItem / brand / FNSKU /
+      // sweet-spot still differentiate ties between same-format pallets.
+      for (const ps of formatMatch) {
+        const { score, breakdown } = scorePallet(carton, ps);
+        const free = PALLET_VOL_CM3 - ps.volCm3;
+        if (score > bestScore || (score === bestScore && free > bestFree)) {
+          bestScore = score;
+          bestFree = free;
+          best = ps;
+          bestBreakdown = breakdown;
+        }
+      }
+    } else {
+      // Pass 3 — no format match: route the whole group to the
+      // LEAST-FILLED pallet so we don't pile onto an already-busy one.
+      for (const ps of candidates) {
+        const free = PALLET_VOL_CM3 - ps.volCm3;
+        if (free > bestFree) {
+          bestFree = free;
+          best = ps;
+          bestScore = scorePallet(carton, ps).score;
+          bestBreakdown = scorePallet(carton, ps).breakdown;
+        }
+      }
+    }
+
+    // overload prediction uses GROUP totals so the warning reflects the
+    // real impact of dropping N cartons in one go.
+    const overload = predictOverloadGroup(carton, best, totalCartons);
+    return {
+      target: best,
+      score: bestScore,
+      breakdown: bestBreakdown,
+      overload,
+      flags: [...overload],
+    };
+  }
+
+  // No pallet passes hard — least-bad fallback (same shape as
+  // per-carton path). NO_VALID_PLACEMENT will surface in the UI.
+  let best = states[0];
+  let leastViolations = Infinity;
+  for (const ps of states) {
+    let v = 0;
+    if (!ps.eligible) v += 100;
+    if (violatesLevelOrder(carton, ps)) v += 10;
+    v += ps.volCm3 / PALLET_VOL_CM3;
+    if (v < leastViolations) {
+      leastViolations = v;
+      best = ps;
+    }
+  }
+  const overload = predictOverloadGroup(carton, best, totalCartons);
+  return {
+    target: best,
+    score: -Infinity,
+    breakdown: { fillScore: 0 },
+    overload,
+    flags: ['NO_VALID_PLACEMENT', ...overload],
+  };
+}
+
+function predictOverloadGroup(carton, ps, totalCartons) {
+  const flags: string[] = [];
+  const w = ps.weightKg + carton.weightKg * totalCartons;
+  const v = ps.volCm3   + carton.volCm3   * totalCartons;
+  if (w > PALLET_WEIGHT_KG) flags.push('OVERLOAD-W');
+  if (v > PALLET_VOL_CM3)   flags.push('OVERLOAD-V');
+  if (carton.formatKey && carton.palletLoadMax) {
+    const wouldFrac = ps.capacityFraction() + (totalCartons / carton.palletLoadMax);
+    if (wouldFrac > 1.0) flags.push('OVERLOAD-CAP');
+  }
+  return flags;
+}
+
 function pickPallet(carton, states) {
   const eligible = states.filter((ps) => passesHardConstraints(carton, ps));
 
@@ -1238,7 +1442,7 @@ const T_PALLET_BASE = 6 * 60;
 const T_BETWEEN_PALLETS = 9 * 60;
 
 function isTachoForTiming(it) {
-  if (getDisplayLevel(it) !== 6) return false;
+  if (getDisplayLevel(it) !== 7) return false;
   const w = it.dim?.w, h = it.dim?.h;
   if (w === 57 && (h === 15 || h === 6)) return true;
   if (it.rollen === 60) return true;
@@ -1277,10 +1481,10 @@ export function focusItemView(item) {
   // Produktion-Fallback: "(50)" trailing oder "50x ..." leading
   let perCarton = item.rollen || rollen || null;
   const lvl = getDisplayLevel(item);
-  if (!perCarton && lvl === 4) {
+  if (!perCarton && lvl === 5) {
     perCarton = extractProduktionPerCarton(item.title || '');
   }
-  const perCartonUnit = lvl === 4 ? 'Stück' : 'Rollen';
+  const perCartonUnit = lvl === 5 ? 'Stück' : 'Rollen';
 
   // ESKU items carry their own carton metadata (cartonsCount =
   // number of FBA-labelled cartons) plus distributor-attached
@@ -1294,9 +1498,16 @@ export function focusItemView(item) {
   const eskuPacksPerCarton = isEsku ? (item.einzelneSku?.packsPerCarton ?? null) : null;
   const placementFlags = item.placementMeta?.flags || [];
 
+  // Display keeps the original useItem text (incl. wrappers like
+  // "wird von X001BVO9LV produziert"), but clipboard gets only the
+  // bare code so the worker doesn't paste prose into the scanner.
+  const useItemRaw  = item.useItem || '';
+  const useItemCode = extractUseItemId(useItemRaw) || useItemRaw;
+
   return {
     code:           item.fnsku || item.sku || '—',
-    useItem:        item.useItem || '',
+    useItem:        useItemRaw,
+    useItemCode,
     units:          item.units || 0,
     name:           shortArticleName(item),
     dim:            item.dimStr,
@@ -1322,13 +1533,28 @@ export function extractProduktionPerCarton(title) {
   return null;
 }
 
+/* Extract a clean size hint ("500 g" / "1 Kg" / "1 L" / "250 ml") from
+   a Produktion title. Picks the FIRST numeric+unit pair so SKUs like
+   "Füllmaterial für Pakete - 500 g Holzwolle ... (500 g Holzwolle)"
+   yield "500 g" rather than colliding with later occurrences. Returns
+   null if no size token is present. */
+function extractL5SizeHint(title) {
+  if (!title) return null;
+  const m = title.match(/\b(\d+(?:[.,]\d+)?)\s*(kg|g|l|ml)\b/i);
+  if (!m) return null;
+  const num = m[1];
+  const unit = m[2].toLowerCase();
+  const pretty = unit === 'kg' ? 'Kg' : unit === 'l' ? 'L' : unit;
+  return `${num} ${pretty}`;
+}
+
 function shortArticleName(item) {
   const title = item.title || '';
   const { dimStr } = parseTitleMeta(title);
   const lvl = getDisplayLevel(item);
 
   const lower = title.toLowerCase();
-  const isThermo = lvl === 1 || lvl === 2 || /thermo|bonroll|kassenroll/i.test(lower);
+  const isThermo = THERMO_FAMILY.has(lvl) || /thermo|bonroll|kassenroll/i.test(lower);
   if (isThermo) {
     if (dimStr) return `Thermorolle ${dimStr}`;
     // Thermopapier-Notation: "12mm ø, 57mm breit"
@@ -1339,7 +1565,7 @@ function shortArticleName(item) {
     if (width)             return `Thermopapier, ${width[1]}mm breit`;
   }
 
-  if (lvl === 6) {
+  if (lvl === 7) {
     // Tacho-Notationen: "57-8mm", "57/8 mm", "57/28/7"
     const m = title.match(/(\d+)\s*[-/×x]\s*(\d+)(?:\s*[-/×x]\s*(\d+))?/i);
     if (m) {
@@ -1349,7 +1575,23 @@ function shortArticleName(item) {
     return 'Tachographenrollen';
   }
 
-  if (lvl === 4) {
+  if (lvl === 5) {
+    // Big Bag SKUs: anchor the name on "Big Bag" itself — drop any
+    // leading brand prefix (e.g. "TK THERMALKING") and any trailing
+    // size suffix ("1000 Kg", "500 L", …). The per-Einheit "Stück"
+    // line and the carton tile already carry the pack info; keeping
+    // them in the headline duplicates the same kg figure across every
+    // Big Bag variant in the auftrag.
+    if (/\bbig\s*bag\b/i.test(title)) {
+      const m = title.match(/\bbig\s*bag\b(.*)$/i);
+      const tail = (m ? m[1] : '')
+        .replace(/\b\d+(?:[.,]\d+)?\s*(?:kg|g|l|ml)\b/gi, '')
+        .split(/[,(–—-]/)[0]
+        .replace(/\s+/g, ' ')
+        .replace(/[\s,;–—-]+$/, '')
+        .trim();
+      return tail ? `Big Bag ${tail}` : 'Big Bag';
+    }
     let s = title
       .replace(/^TK\s+\w+\s+/i, '')
       .replace(/^\d+\s*x\s+/i, '')
@@ -1357,11 +1599,19 @@ function shortArticleName(item) {
       .split(/[,(–—-]/)[0]
       .trim();
     if (!s) s = title.split(/[,(]/)[0].trim();
+    // Surface the size hint (e.g. "500 g", "1 Kg", "1 L") so visually
+    // identical L5 names like "Füllmaterial" are still distinguishable
+    // between pack sizes. Read from the original title because the strip
+    // above usually drops the "für …" tail that carries the gram count.
+    const size = extractL5SizeHint(title);
     if (s.length > 50) s = s.slice(0, 47) + '…';
+    if (size && !new RegExp(`\\b${size.replace(/\s+/g, '\\s+')}\\b`, 'i').test(s)) {
+      s = `${s} ${size}`;
+    }
     return s;
   }
 
-  if (lvl === 5) {
+  if (lvl === 6) {
     // Kernöl: drop "g.g.A. 100% vegan und kaltgepresst" noise and
     // surface the litre/ml hint at the end (parser keeps the full title
     // for matching, this is just for rendering).

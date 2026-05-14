@@ -68,7 +68,7 @@ describe('analyzeAuftrag — structural flags', () => {
         id: 'P1-B1',
         items: [
           mkItem({ title: 'Thermo 57×18', units: 80, level: 1 }),
-          mkItem({ title: 'Klebeband',    units: 20, level: 3 }),
+          mkItem({ title: 'Klebeband',    units: 20, level: 4 }),
         ],
       }],
     });
@@ -150,14 +150,31 @@ describe('analyzeAuftrag — capacity flags from distribution', () => {
     expect(near.severity).toBe('warn');
   });
 
-  it('emits NO_VALID_PLACEMENT error when distribution.noValidCount > 0', () => {
+  it('does NOT emit a red flag for NO_VALID_PLACEMENT — least-bad fallback is acceptable', () => {
+    // Policy: red flag is reserved for ESKU that landed on NO pallet at
+    // all. A NO_VALID_PLACEMENT means the distributor still routed the
+    // carton to a least-bad pallet, which is a soft escalation, not a
+    // loss — must not surface as error.
     const distribution = {
       palletStates: {},
       overloadCount: 0,
       noValidCount: 2,
+      unassigned: [],
     };
     const b = analyzeAuftrag({ parsed: mkParsed({}), distribution });
-    const flag = b.flags.find((f) => f.code === 'NO_VALID_PLACEMENT');
+    expect(b.flags.find((f) => f.code === 'NO_VALID_PLACEMENT')).toBeUndefined();
+    expect(b.flags.find((f) => f.code === 'ESKU_UNASSIGNED')).toBeUndefined();
+  });
+
+  it('emits ESKU_UNASSIGNED error when distribution.unassigned has items', () => {
+    const distribution = {
+      palletStates: {},
+      overloadCount: 0,
+      noValidCount: 0,
+      unassigned: [{ title: 'Phantom ESKU', fnsku: 'X' }],
+    };
+    const b = analyzeAuftrag({ parsed: mkParsed({}), distribution });
+    const flag = b.flags.find((f) => f.code === 'ESKU_UNASSIGNED');
     expect(flag).toBeDefined();
     expect(flag.severity).toBe('error');
   });

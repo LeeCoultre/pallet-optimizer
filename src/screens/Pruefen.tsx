@@ -348,7 +348,7 @@ function HeroFBA({ view, stats, validView, insights, palletStates, onJumpToPalle
       background: T.bg.surface,
       border: `1px solid ${T.border.primary}`,
       borderRadius: 18,
-      boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 22px 50px -24px rgba(17,24,39,0.20), 0 6px 14px -6px rgba(17,24,39,0.06)',
+      boxShadow: 'none',
       overflow: 'hidden',
       animation: 'mp-prf-hero 540ms cubic-bezier(0.16, 1, 0.3, 1) backwards',
     }}>

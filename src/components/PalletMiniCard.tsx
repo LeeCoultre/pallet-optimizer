@@ -43,22 +43,20 @@ export default function PalletMiniCard({ pallet, index, story, eskuAssigned, pal
         background: T.bg.surface,
         border: `1px solid ${T.border.primary}`,
         borderRadius: 14,
-        boxShadow: '0 1px 2px rgba(17,24,39,0.02), 0 6px 16px -12px rgba(17,24,39,0.05)',
+        boxShadow: 'none',
         cursor: 'pointer',
         textAlign: 'left',
         fontFamily: T.font.ui,
-        transition: 'border-color 160ms, box-shadow 160ms, transform 160ms',
+        transition: 'border-color 160ms, transform 160ms',
         position: 'relative',
         overflow: 'hidden',
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = accentBorder;
-        e.currentTarget.style.boxShadow = '0 2px 4px rgba(17,24,39,0.04), 0 12px 28px -16px rgba(17,24,39,0.10)';
         e.currentTarget.style.transform = 'translateY(-1px)';
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.borderColor = T.border.primary;
-        e.currentTarget.style.boxShadow = '0 1px 2px rgba(17,24,39,0.02), 0 6px 16px -12px rgba(17,24,39,0.05)';
         e.currentTarget.style.transform = 'none';
       }}
     >

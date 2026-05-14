@@ -97,13 +97,19 @@ export function parseTitleMeta(title) {
 export function classifyItem(title) {
   const t = (title || '').toLowerCase();
   const isTacho = /tachograph|tacho\b|fahrtenschreiber|dtco/i.test(t);
+  // Klebeband is its own physical level (sits BELOW Produktion in the
+  // stack), so split it out of isProduktion. Catch the same variants
+  // getLevel recognises: klebeband, paketband, packband, absperrband.
+  const isKlebeband = /klebeband|paketband|packband|absperrband/i.test(t);
   const isProduktion =
-    /big\s*bag|silosack|sandsack|säcke|bauschutt|holzsack|klebeband|paketband|packband|absperrband|holzwolle|füllmaterial|kürbiskern/i.test(t);
+    !isKlebeband &&
+    /big\s*bag|silosack|sandsack|säcke|bauschutt|holzsack|holzwolle|füllmaterial|kürbiskern/i.test(t);
   const isVeit = /\bveit\b/i.test(t);
   const isHeipa = /\bheipa\b/i.test(t);
   const isThermo =
     !isTacho &&
     !isProduktion &&
+    !isKlebeband &&
     !isVeit &&
     !isHeipa &&
     /thermorollen|thermopapier|thermal|kassenrollen|bonrollen|cash\s*roll|ec[-\s]*cash|swiparo|eco\s*roolls/i.test(t);
@@ -113,9 +119,10 @@ export function classifyItem(title) {
   else if (isHeipa) category = 'heipa';
   else if (isVeit) category = 'veit';
   else if (isTacho) category = 'tachographenrollen';
+  else if (isKlebeband) category = 'klebeband';
   else if (isProduktion) category = 'produktion';
 
-  return { isThermo, isVeit, isHeipa, isTacho, isProduktion, category };
+  return { isThermo, isVeit, isHeipa, isTacho, isKlebeband, isProduktion, category };
 }
 
 
@@ -262,6 +269,7 @@ function parseItemColumns(rest) {
     isVeit: cls.isVeit,
     isHeipa: cls.isHeipa,
     isTacho: cls.isTacho,
+    isKlebeband: cls.isKlebeband,
     isProduktion: cls.isProduktion,
     category: cls.category,
     codeType,
@@ -604,7 +612,7 @@ export function validateParsing(rawText, parsed) {
       issues.push({
         severity: 'error',
         kind: 'schilder-item-count',
-        msg: `Schilder: ожидалось ${skuCount} SKU-строк, распарсено ${parsed.pallets[0]?.items.length || 0}`,
+        msg: `Schilder: erwartet ${skuCount} SKU-Zeilen, geparst ${parsed.pallets[0]?.items.length || 0}`,
       });
     }
   } else {
@@ -614,7 +622,7 @@ export function validateParsing(rawText, parsed) {
       issues.push({
         severity: 'error',
         kind: 'pallet-count',
-        msg: `Палет в тексте: ${palletMatches.length}, распарсено: ${parsed.pallets.length}`,
+        msg: `Paletten im Text: ${palletMatches.length}, geparst: ${parsed.pallets.length}`,
       });
     }
 
@@ -638,7 +646,7 @@ export function validateParsing(rawText, parsed) {
           severity: 'error',
           kind: 'item-count',
           palletId: p.id,
-          msg: `${p.id}: ожидалось ${expected} артиклей, распарсено ${p.items.length}`,
+          msg: `${p.id}: erwartet ${expected} Artikel, geparst ${p.items.length}`,
         });
       }
     });
@@ -651,7 +659,7 @@ export function validateParsing(rawText, parsed) {
             severity: 'error',
             kind: 'missing-fnsku',
             palletId: p.id,
-            msg: `${p.id}: артикул без FNSKU — "${it.title?.slice(0, 40) || '—'}"`,
+            msg: `${p.id}: Artikel ohne FNSKU — "${it.title?.slice(0, 40) || '—'}"`,
           });
         }
       })
@@ -704,20 +712,20 @@ export function validateParsing(rawText, parsed) {
           severity: 'error',
           kind: 'zero-units',
           palletId: p.id,
-          msg: `${p.id} / ${it.fnsku || it.sku}: количество = 0 oder fehlt`,
+          msg: `${p.id} / ${it.fnsku || it.sku}: Menge = 0 oder fehlt`,
         });
       }
       if (parsed.format !== 'schilder') {
         if (!it.asin) {
           issues.push({
             severity: 'warn', kind: 'missing-asin', palletId: p.id,
-            msg: `${p.id} / ${it.fnsku}: пустой ASIN`,
+            msg: `${p.id} / ${it.fnsku}: ASIN leer`,
           });
         }
         if (!it.ean && !it.upc) {
           issues.push({
             severity: 'warn', kind: 'missing-code', palletId: p.id,
-            msg: `${p.id} / ${it.fnsku}: нет EAN/UPC`,
+            msg: `${p.id} / ${it.fnsku}: kein EAN/UPC`,
           });
         }
       }

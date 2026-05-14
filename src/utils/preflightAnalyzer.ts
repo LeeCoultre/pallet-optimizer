@@ -276,12 +276,17 @@ function pushCapacityFlags(flags, distribution) {
     }
   }
 
-  if ((distribution.noValidCount || 0) > 0) {
+  // Red flag is reserved for ESKU that ended up on NO pallet at all
+  // (the priority is: lose nothing). NO_VALID_PLACEMENT means the
+  // distributor still routed the carton to a least-bad pallet — that's
+  // a soft escalation, not a loss.
+  const unassignedCount = distribution.unassigned?.length || 0;
+  if (unassignedCount > 0) {
     flags.push({
       kind: 'distribution',
       severity: 'error',
-      code: 'NO_VALID_PLACEMENT',
-      message: `${distribution.noValidCount} ESKU-Karton(s) ohne gültige Platzierung — Hard-Constraint H1–H7 verletzt.`,
+      code: 'ESKU_UNASSIGNED',
+      message: `${unassignedCount} ESKU-Karton(s) konnten auf KEINER Palette platziert werden — manuelle Zuordnung erforderlich.`,
       target: {},
     });
   }

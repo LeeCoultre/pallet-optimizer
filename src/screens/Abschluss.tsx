@@ -16,15 +16,19 @@
    comes from (per-level: count × price/Pal).
 
    Pricing model (from the warehouse clipboard):
-     • L1 Thermorollen / L6 Tachorollen → 1.500 EUR / Pal (Rollen)
-     • All other levels                  →   500 EUR / Pal
+     • Rollen     — L1 Thermorollen + L2 Veit + L3 ÖKO + L7 Tachorollen
+                    → 1.500 EUR / Pal · 700 kg / Pal
+     • Produktion — L4 Klebeband + L5 Produktion + L6 Kernöl
+                    →   500 EUR / Pal · 250 kg / Pal
+   Both price AND weight are FIXED per pallet (independent of actual
+   sku_dimensions data) so the load list always matches accounting.
 */
 
 import React, { useMemo, useState } from 'react';
 import { useAppState } from '@/state.jsx';
 import {
   pruefenView, palletTimingRows, levelDistribution,
-  primaryLevel, itemTotalWeightKg, LEVEL_META,
+  primaryLevel, LEVEL_META,
 } from '@/utils/auftragHelpers.js';
 import {
   Page, Topbar, StepperBar,
@@ -32,16 +36,17 @@ import {
   Badge, Button, Kpi, T,
 } from '@/components/ui.jsx';
 
-/* Per-pallet pricing by primary level (mirrors the warehouse clipboard).
-   Tacho-Rollen (L6) are also "Rollen" — same rate as Thermo. */
-const PRICE_BY_LEVEL = {
-  1: 1500, // Thermorollen
-  2: 500,  // Produktion
-  3: 500,  // Heipa
-  4: 500,  // Veit
-  5: 500,  // Kernöl
-  6: 1500, // Tachorollen
-};
+/* Two pallet categories with fully fixed weight + price per pallet.
+   The Rollen family (thermal rolls of any kind, plus the Tacho cap)
+   is heavier and more valuable; everything else falls into Produktion. */
+const ROLLEN_LEVELS = new Set([1, 2, 3, 7]); // Thermo, Veit, ÖKO, Tacho
+
+const RATE_ROLLEN     = { price: 1500, weightKg: 700 };
+const RATE_PRODUKTION = { price:  500, weightKg: 250 };
+
+function rateForLevel(lvl) {
+  return ROLLEN_LEVELS.has(lvl) ? RATE_ROLLEN : RATE_PRODUKTION;
+}
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function AbschlussScreen() {
@@ -206,7 +211,7 @@ function HeroCard({ data }) {
       background: T.bg.surface,
       border: `1px solid ${T.border.primary}`,
       borderRadius: 20,
-      boxShadow: '0 1px 3px rgba(17,24,39,0.03), 0 16px 40px -22px rgba(17,24,39,0.08)',
+      boxShadow: 'none',
       overflow: 'hidden',
     }}>
       {/* Soft success halo top-right */}
@@ -843,10 +848,10 @@ function StickyBar({ queueRemaining, onSaveAndNext }) {
    ════════════════════════════════════════════════════════════════════════ */
 
 /* computeBilanz — sum + weight + per-level breakdown.
-   Each pallet's primary level (most-items winner) → fixed price/Pal
-   from PRICE_BY_LEVEL. Weight is the actual sum of itemTotalWeightKg
-   for every item on the pallet (real, not the clipboard's 700kg
-   shorthand). */
+   Each pallet's primary level (most-items winner) decides its category
+   (Rollen vs Produktion). Price AND weight per pallet are both fixed
+   by category — the load list and invoice are derived from pallet
+   count, not from the actual physical SKU weights. */
 function computeBilanz(pallets) {
   const buckets = {};   // level → { count, sum, weight, meta, pricePerPallet }
   let totalSum = 0;
@@ -856,23 +861,20 @@ function computeBilanz(pallets) {
   for (const p of pallets) {
     const lvl = primaryLevel(p.items) || 1;
     const meta = LEVEL_META[lvl] || LEVEL_META[1];
-    const price = PRICE_BY_LEVEL[lvl] ?? 500;
-    const weight = (p.items || []).reduce(
-      (s, it) => s + (itemTotalWeightKg(it) || 0), 0,
-    );
+    const rate = rateForLevel(lvl);
 
     if (!buckets[lvl]) {
       buckets[lvl] = {
         level: lvl, meta, count: 0, sum: 0, weight: 0,
-        pricePerPallet: price,
+        pricePerPallet: rate.price,
       };
     }
     buckets[lvl].count += 1;
-    buckets[lvl].sum += price;
-    buckets[lvl].weight += weight;
+    buckets[lvl].sum += rate.price;
+    buckets[lvl].weight += rate.weightKg;
 
-    totalSum += price;
-    totalWeight += weight;
+    totalSum += rate.price;
+    totalWeight += rate.weightKg;
     totalCount += 1;
   }
 

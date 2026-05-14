@@ -1,4 +1,4 @@
-/* Marathon · Design System v3 — переиспользуемые атомы.
+/* Marathon · Design System v3 — reusable atoms.
    Spec: DESIGN.md. */
 /* eslint-disable react-refresh/only-export-components -- design tokens (T,
    STEPS) and component atoms ship from one module on purpose. */
@@ -122,7 +122,7 @@ export function Page({ children, style }: { children?: ReactNode; style?: CSSPro
    crumbs: [{ label, muted?, onClick?, title? }, ...]
    If a crumb has onClick → renders as clickable Crumb (hover lift,
    accent on hover). The last crumb stays passive even if onClick set. */
-export function Topbar({ crumbs = [], right }: { crumbs?: Crumb[]; right?: ReactNode }) {
+export function Topbar({ crumbs = [], center, right }: { crumbs?: Crumb[]; center?: ReactNode; right?: ReactNode }) {
   return (
     <header style={{
       position: 'sticky',
@@ -145,6 +145,19 @@ export function Topbar({ crumbs = [], right }: { crumbs?: Crumb[]; right?: React
         </span>
       ))}
       <span style={{ flex: 1 }} />
+      {center && (
+        <span style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          pointerEvents: 'auto',
+        }}>
+          {center}
+        </span>
+      )}
       {right}
     </header>
   );
@@ -533,7 +546,7 @@ function StepCell({
 }
 
 /* ─── StudioFrame ────────────────────────────────────────────────────────
-   Premium «studio» wrapper для hero-блоков.
+   Premium "studio" wrapper for hero blocks.
 
    Combines three signals that say «this is the centerpiece of the
    screen»:
@@ -653,8 +666,7 @@ export function StudioFrame({
             background: T.bg.surface,
             border: `1px solid ${T.border.primary}`,
             borderRadius: 18,
-            /* Premium long shadow + faint accent ring on the underside. */
-            boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 22px 50px -24px rgba(17,24,39,0.20), 0 6px 14px -6px rgba(17,24,39,0.06)',
+            boxShadow: 'none',
             ...contentStyle,
           }}>
             {children}
@@ -735,7 +747,7 @@ export function SectionHeader({ title, sub, right }: { title?: ReactNode; sub?: 
   );
 }
 
-/* ─── Eyebrow (мини-метка над H1) ────────────────────────────────────── */
+/* ─── Eyebrow (mini label above H1) ────────────────────────────────────── */
 export function Eyebrow({ children }: { children?: ReactNode }) {
   return (
     <div style={{

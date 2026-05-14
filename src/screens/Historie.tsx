@@ -584,7 +584,7 @@ function RecordCard({ card, onClick }) {
         borderRadius: T.radius.lg,
         cursor: clickable ? 'pointer' : 'default',
         transition: 'all 160ms ease',
-        boxShadow: clickable && hover ? '0 1px 3px rgba(17,24,39,0.04), 0 8px 24px -16px rgba(99,102,241,0.20)' : 'none',
+        boxShadow: 'none',
         transform: clickable && hover ? 'translateY(-1px)' : 'none',
       }}
     >
@@ -1071,7 +1071,7 @@ function RowCard({
         cursor: 'pointer',
         transition: 'border-color 150ms, box-shadow 200ms',
         overflow: 'hidden',
-        boxShadow: isOpen ? '0 1px 3px rgba(17,24,39,0.04), 0 16px 40px -20px rgba(17,24,39,0.18)' : 'none',
+        boxShadow: 'none',
       }}
     >
       <div style={{

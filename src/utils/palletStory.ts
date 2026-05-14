@@ -157,18 +157,18 @@ function buildNarrative({ pallet, levels, eskuAssigned, fillPct, overloadFlags, 
     parts.push(`Soft-Limit überschritten: ${overloadFlags.join(', ')}. Bridge informieren.`);
   }
 
-  // Has L6 (Tachorollen) → it's the "top" pallet, focus last
+  // Has L7 (Tachorollen) → it's the "top" pallet, focus last
+  const hasL7 = levels.some((l) => l.level === 7);
   const hasL6 = levels.some((l) => l.level === 6);
-  const hasL5 = levels.some((l) => l.level === 5);
-  if (hasL6 && !pallet.isSingleSku) {
+  if (hasL7 && !pallet.isSingleSku) {
     parts.push('Tacho on top — als letzte Palette focusen.');
-  } else if (hasL5 && !pallet.isSingleSku) {
+  } else if (hasL6 && !pallet.isSingleSku) {
     parts.push('Kürbiskernöl on top — fragile Position.');
   }
 
   if (eskuAssigned.length > 0 && !pallet.isSingleSku) {
     const eskuLevels = [...new Set(eskuAssigned.map((it) =>
-      it.level || (it.title && it.title.toLowerCase().includes('tacho') ? 6 : 1)
+      it.level || (it.title && it.title.toLowerCase().includes('tacho') ? 7 : 1)
     ))].sort();
     parts.push(`ESKU auf ${eskuLevels.map((l) => `L${l}`).join('+')} verteilt.`);
   }

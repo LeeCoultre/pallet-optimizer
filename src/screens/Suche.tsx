@@ -555,9 +555,7 @@ function HeroInput({ inputRef, value, onChange, loading }) {
         background: T.bg.surface,
         border: `1px solid ${focused ? T.accent.main : T.border.primary}`,
         borderRadius: 16,
-        boxShadow: focused
-          ? '0 1px 3px rgba(17,24,39,0.04), 0 8px 32px -10px rgba(99,102,241,0.18)'
-          : '0 1px 2px rgba(17,24,39,0.03)',
+        boxShadow: 'none',
         transition: 'all 200ms',
         marginBottom: 14,
       }}>

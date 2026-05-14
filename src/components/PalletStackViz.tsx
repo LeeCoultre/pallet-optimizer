@@ -39,7 +39,7 @@ export default function PalletStackViz({ palletState, size = 'row', onClick, pul
 
   // Compute volume per level (cm³)
   const volByLevel = {};
-  for (let lvl = 1; lvl <= 6; lvl++) {
+  for (let lvl = 1; lvl <= 7; lvl++) {
     const items = palletState.byLevel?.[lvl] || [];
     volByLevel[lvl] = items.reduce((s, x) => s + (x.volCm3 || 0), 0);
   }
@@ -47,7 +47,7 @@ export default function PalletStackViz({ palletState, size = 'row', onClick, pul
 
   const levelHeights = {};
   let totalUsedHeight = 0;
-  for (let lvl = 1; lvl <= 6; lvl++) {
+  for (let lvl = 1; lvl <= 7; lvl++) {
     const h = Math.min(1, volByLevel[lvl] / palletVolCm3) * H;
     levelHeights[lvl] = h;
     totalUsedHeight += h;
@@ -57,10 +57,11 @@ export default function PalletStackViz({ palletState, size = 'row', onClick, pul
   const overloadW = palletState.overloadFlags?.has?.('OVERLOAD-W');
   const overloadV = palletState.overloadFlags?.has?.('OVERLOAD-V');
   const overloadCap = palletState.overloadFlags?.has?.('OVERLOAD-CAP');
-  const noValid = (palletState.byLevel ? Object.values(palletState.byLevel) : [])
-    .flat()
-    .some((x) => x.item?.placementMeta?.flags?.includes?.('NO_VALID_PLACEMENT'));
-  const flagged = overloadW || overloadV || overloadCap || noValid;
+  // NO_VALID_PLACEMENT is intentionally NOT a "flagged" trigger here:
+  // the carton was still placed (least-bad fallback), so the pallet
+  // itself isn't broken. Red flag is reserved for truly lost ESKU
+  // (distribution.unassigned), surfaced in the preflight panel.
+  const flagged = overloadW || overloadV || overloadCap;
 
   if (!isCard) {
     return (
@@ -112,7 +113,6 @@ export default function PalletStackViz({ palletState, size = 'row', onClick, pul
         overloadV={overloadV}
         overloadW={overloadW}
         overloadCap={overloadCap}
-        noValid={noValid}
         anyEsku={palletState.anyEsku}
       />
     </div>
@@ -132,7 +132,7 @@ function PalletFrame({
   // Stack bottom-up
   let yCursor = H;
   const layers = [];
-  for (let lvl = 1; lvl <= 6; lvl++) {
+  for (let lvl = 1; lvl <= 7; lvl++) {
     const h = levelHeights[lvl];
     if (h <= 0) continue;
     yCursor -= h;
@@ -328,7 +328,7 @@ function PalletFrame({
 /* ─── KPI rail: numbers + soft progress + free-space ─────────────────── */
 function KPIRail({
   volCm3, weightKg, fillPct, wgtPct, freeM3, freeKg,
-  overloadV, overloadW, overloadCap, noValid, anyEsku,
+  overloadV, overloadW, overloadCap, anyEsku,
 }) {
   const volTone = overloadV ? 'danger' : fillPct >= 90 ? 'warn' : 'normal';
   const wgtTone = overloadW ? 'danger' : wgtPct >= 90 ? 'warn' : 'normal';
@@ -352,11 +352,10 @@ function KPIRail({
         tone={wgtTone}
       />
       <FreeBlock m3={freeM3} kg={freeKg} overloadV={overloadV} overloadW={overloadW} />
-      {(anyEsku || overloadCap || noValid) && (
+      {(anyEsku || overloadCap) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {anyEsku && <Pill tone="accent">+ ESKU verteilt</Pill>}
           {overloadCap && <Pill tone="danger">Kapazität überlastet</Pill>}
-          {noValid && <Pill tone="danger">ESKU ohne Platzierung</Pill>}
         </div>
       )}
     </div>

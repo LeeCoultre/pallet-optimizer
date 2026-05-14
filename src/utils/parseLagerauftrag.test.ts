@@ -86,8 +86,16 @@ describe('classifyItem', () => {
     expect(c.category).toBe('tachographenrollen');
   });
 
-  it('classifies produktion (Klebeband, Sandsäcke, Kürbiskern)', () => {
-    expect(classifyItem('TK THERMALKING Klebeband 50m').category).toBe('produktion');
+  it('classifies klebeband as its own category (before produktion)', () => {
+    expect(classifyItem('TK THERMALKING Klebeband 50m').category).toBe('klebeband');
+    expect(classifyItem('Klebeband Standard 50m').category).toBe('klebeband');
+    expect(classifyItem('Paketband transparent').category).toBe('klebeband');
+    expect(classifyItem('Absperrband rot-weiß').category).toBe('klebeband');
+    expect(classifyItem('TK THERMALKING Klebeband 50m').isKlebeband).toBe(true);
+    expect(classifyItem('TK THERMALKING Klebeband 50m').isProduktion).toBe(false);
+  });
+
+  it('classifies produktion (Sandsäcke, Kürbiskern)', () => {
     expect(classifyItem('Sandsack 50x bedruckt').category).toBe('produktion');
     expect(classifyItem('Kürbiskernöl 1 L').category).toBe('produktion');
   });

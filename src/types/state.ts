@@ -75,7 +75,7 @@ export interface UseAppStateApi {
   setCurrentItemIdx: (idx: number) => void;
   markCodeCopied: (palletIdx: number, itemIdx: number) => void;
 
-  completeCurrentItem: (effectiveItemsCount?: number, effectiveItem?: unknown) => boolean;
+  completeCurrentItem: (effectiveItemsCount?: number, effectiveItem?: unknown, nextPalletIdxOverride?: number) => boolean;
   completeAndAdvance: () => void;
   cancelCurrent: () => void;
 

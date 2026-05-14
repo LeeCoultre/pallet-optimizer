@@ -60,7 +60,7 @@ export default function AuftragFinaleStage({
           background: T.bg.surface,
           border: `1px solid ${T.border.primary}`,
           borderRadius: 20,
-          boxShadow: '0 1px 3px rgba(17,24,39,0.04), 0 24px 56px -20px rgba(17,24,39,0.20)',
+          boxShadow: 'none',
           fontFamily: T.font.ui,
           textAlign: 'center',
           cursor: 'default',

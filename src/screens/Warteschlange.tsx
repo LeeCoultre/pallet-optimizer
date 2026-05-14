@@ -957,9 +957,7 @@ function EmptyHero({ onClick, busy, over, onDragOver, onDragLeave, onDrop }) {
           cursor: busy ? 'wait' : 'pointer',
           transition: 'background 240ms cubic-bezier(0.16, 1, 0.3, 1), border-color 240ms cubic-bezier(0.16, 1, 0.3, 1), transform 240ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 240ms cubic-bezier(0.16, 1, 0.3, 1)',
           transform: over ? 'scale(1.005)' : 'scale(1)',
-          boxShadow: over
-            ? `0 8px 32px -8px ${T.accent.main}40, 0 2px 8px rgba(17,24,39,0.04)`
-            : '0 1px 3px rgba(17,24,39,0.04), 0 8px 24px -12px rgba(17,24,39,0.06)',
+          boxShadow: 'none',
           marginBottom: 28,
         }}
       >
@@ -1148,7 +1146,7 @@ function QueueRowCard({
         background: bg,
         border: `1px solid ${borderColor}`,
         borderRadius: T.radius.lg,
-        boxShadow: isFirst ? '0 1px 3px rgba(17,24,39,0.04), 0 8px 24px -12px rgba(99,102,241,0.18)' : 'none',
+        boxShadow: 'none',
         opacity: isDragging ? 0.4 : 1,
         cursor: 'pointer',
         transition: 'border-color 150ms, background 150ms, box-shadow 200ms, opacity 150ms',
@@ -1359,7 +1357,7 @@ function LevelBars({ lvlCounts }: { lvlCounts?: Record<string, number> }) {
   const H = 28;
   return (
     <div
-      title="Level-Verteilung (L1 Thermo · L2 Öko · L3 Klebe · L4 Produktion · L5 Kernöl · L6 Tacho)"
+      title="Level-Verteilung (L1 Thermo · L2 Veit · L3 Öko · L4 Klebe · L5 Produktion · L6 Kernöl · L7 Tacho)"
       style={{
         display: 'inline-flex',
         alignItems: 'flex-end',
@@ -1368,7 +1366,7 @@ function LevelBars({ lvlCounts }: { lvlCounts?: Record<string, number> }) {
         flexShrink: 0,
       }}
     >
-      {[1, 2, 3, 4, 5, 6].map((lvl) => {
+      {[1, 2, 3, 4, 5, 6, 7].map((lvl) => {
         const v = lvlCounts?.[lvl] || 0;
         const h = v ? Math.max(2, Math.round((v / max) * H)) : 2;
         const meta = LEVEL_META[lvl];

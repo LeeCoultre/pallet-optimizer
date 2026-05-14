@@ -39,6 +39,7 @@ export interface ParsedItem {
   isVeit: boolean;
   isHeipa: boolean;
   isTacho: boolean;
+  isKlebeband: boolean;
   isProduktion: boolean;
   category: string | null;
   codeType: string | null;

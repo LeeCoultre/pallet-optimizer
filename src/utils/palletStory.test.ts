@@ -94,7 +94,7 @@ describe('buildPalletStory — headline rules (first-match-wins)', () => {
       pallet: mkPallet({ id: 'P1-B2', units: 100 }),
       items: [
         mkItem({ title: 'Thermo 57×18', units: 90, level: 1 }),
-        mkItem({ title: 'Klebeband',    units: 10, level: 3 }),
+        mkItem({ title: 'Klebeband',    units: 10, level: 4 }),
       ],
       eskuAssigned: [],
       palletState: mkPalletState({ volCm3: 0.5e6 }),
@@ -108,8 +108,8 @@ describe('buildPalletStory — headline rules (first-match-wins)', () => {
       pallet: mkPallet({ id: 'P1-B2', units: 100 }),
       items: [
         mkItem({ title: 'Thermo 57×18',     units: 30, level: 1 }),
-        mkItem({ title: 'ÖKO Thermo 57×40', units: 30, level: 2 }),
-        mkItem({ title: 'Klebeband',         units: 30, level: 3 }),
+        mkItem({ title: 'ÖKO Thermo 57×40', units: 30, level: 3 }),
+        mkItem({ title: 'Klebeband',         units: 30, level: 4 }),
       ],
       eskuAssigned: [],
       palletState: mkPalletState({ volCm3: 0.4e6 }),
@@ -120,12 +120,12 @@ describe('buildPalletStory — headline rules (first-match-wins)', () => {
 });
 
 describe('buildPalletStory — narrative + capacity', () => {
-  it('adds Tacho-on-top warning when L6 present', () => {
+  it('adds Tacho-on-top warning when L7 present', () => {
     const story = buildPalletStory({
       pallet: mkPallet({}),
       items: [
         mkItem({ title: 'Thermo 57×18', units: 50, level: 1 }),
-        mkItem({ title: 'Tacho 57×8',   units: 30, level: 6 }),
+        mkItem({ title: 'Tacho 57×8',   units: 30, level: 7 }),
       ],
       eskuAssigned: [],
       palletState: mkPalletState({ volCm3: 0.5e6 }),
@@ -164,7 +164,7 @@ describe('buildPalletStory — narrative + capacity', () => {
       pallet: mkPallet({}),
       items: [
         mkItem({ title: 'Thermo 57×18', units: 80, level: 1 }),
-        mkItem({ title: 'Klebeband',    units: 20, level: 3 }),
+        mkItem({ title: 'Klebeband',    units: 20, level: 4 }),
       ],
       eskuAssigned: [],
       palletState: mkPalletState({ volCm3: 0.5e6 }),
@@ -172,7 +172,7 @@ describe('buildPalletStory — narrative + capacity', () => {
     });
     expect(story.levels[0].level).toBe(1);
     expect(story.levels[0].pct).toBeCloseTo(0.8, 2);
-    expect(story.levels[1].level).toBe(3);
+    expect(story.levels[1].level).toBe(4);
   });
 });
 
