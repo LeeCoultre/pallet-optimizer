@@ -13,17 +13,19 @@
      • Accent tone-rail on left edge (warn/special variants)
    ───────────────────────────────────────────────────────────────────────── */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
-  formatItemTitle, getDisplayLevel, LEVEL_META,
+  formatItemTitle, getDisplayLevel, LEVEL_META, eskuOverrideKey,
 } from '@/utils/auftragHelpers.js';
 import PalletStackViz from './PalletStackViz.jsx';
+import EskuMovePopover from './EskuMovePopover.jsx';
 import { T } from './ui.jsx';
 
 const TOP_ITEMS_VISIBLE = 5;
 
 export default function PalletStoryCard({
   pallet, index, story, items, eskuAssigned, palletState,
+  allPallets, palletStates, eskuDist, eskuOverrides, onMoveEsku,
 }) {
   const [showAllItems, setShowAllItems] = useState(false);
   const [hover, setHover] = useState(false);
@@ -360,6 +362,12 @@ export default function PalletStoryCard({
                 key={`${row.source}-${i}`}
                 row={row}
                 isLast={i === visibleItems.length - 1}
+                currentPalletId={pallet.id}
+                allPallets={allPallets}
+                palletStates={palletStates}
+                eskuDist={eskuDist}
+                eskuOverrides={eskuOverrides}
+                onMoveEsku={onMoveEsku}
               />
             ))}
           </div>
@@ -521,7 +529,10 @@ function Divider() {
   );
 }
 
-function ItemRow({ row, isLast }) {
+function ItemRow({
+  row, isLast,
+  currentPalletId, allPallets, palletStates, eskuDist, eskuOverrides, onMoveEsku,
+}) {
   const it = row.item;
   const lvl = getDisplayLevel(it);
   const meta = LEVEL_META[lvl] || LEVEL_META[1];
@@ -533,6 +544,15 @@ function ItemRow({ row, isLast }) {
   const qtyUnit = isEsku ? 'Karton' : 'Stk';
   const title = formatItemTitle(it.title);
   const [hover, setHover] = useState(false);
+  const [popOpen, setPopOpen] = useState(false);
+  const triggerRef = useRef(null);
+
+  const canMove = isEsku && typeof onMoveEsku === 'function' && allPallets?.length > 1;
+  const itemKey = isEsku ? eskuOverrideKey(it) : '';
+  const isOverridden = isEsku && !!(eskuOverrides && itemKey && eskuOverrides[itemKey]);
+
+  const eskuBg = isEsku ? T.accent.bg : 'transparent';
+  const eskuHoverBg = isEsku ? `color-mix(in srgb, var(--accent) 14%, transparent)` : T.bg.surface2;
 
   return (
     <div
@@ -540,13 +560,14 @@ function ItemRow({ row, isLast }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
+        position: 'relative',
         display: 'grid',
         gridTemplateColumns: '12px 1fr auto auto',
         alignItems: 'center',
         gap: 14,
         padding: '12px 4px',
         borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
-        background: hover ? T.bg.surface2 : 'transparent',
+        background: hover ? eskuHoverBg : eskuBg,
         borderRadius: 6,
         margin: '0 -4px',
         paddingLeft: 12,
@@ -563,15 +584,40 @@ function ItemRow({ row, isLast }) {
 
       <div style={{ minWidth: 0 }}>
         <div style={{
-          fontSize: 13.5,
-          fontWeight: 500,
-          color: T.text.primary,
-          letterSpacing: '-0.005em',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          minWidth: 0,
         }}>
-          {title}
+          {isEsku && (
+            <span style={{
+              flexShrink: 0,
+              padding: '2px 7px',
+              fontSize: 9.5,
+              fontWeight: 800,
+              letterSpacing: '0.12em',
+              fontFamily: T.font.mono,
+              color: T.accent.text,
+              background: T.bg.surface,
+              border: `1px solid ${T.accent.border}`,
+              borderRadius: 4,
+              textTransform: 'uppercase',
+            }}>
+              ⬢ ESKU
+            </span>
+          )}
+          <div style={{
+            fontSize: 13.5,
+            fontWeight: isEsku ? 600 : 500,
+            color: T.text.primary,
+            letterSpacing: '-0.005em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}>
+            {title}
+          </div>
         </div>
         <div style={{
           marginTop: 3,
@@ -586,10 +632,10 @@ function ItemRow({ row, isLast }) {
           fontWeight: 600,
         }}>
           <span>L{lvl} {meta.shortName}</span>
-          {isEsku && (
+          {isOverridden && (
             <>
               <span style={{ color: T.border.strong }}>·</span>
-              <span style={{ color: T.accent.text }}>ESKU</span>
+              <span style={{ color: T.accent.text }} title="Manuell verschoben">↪ verschoben</span>
             </>
           )}
         </div>
@@ -622,6 +668,47 @@ function ItemRow({ row, isLast }) {
           {qtyUnit}
         </div>
       </div>
+
+      {canMove && (
+        <>
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setPopOpen((v) => !v); }}
+            title="ESKU auf andere Palette verschieben"
+            style={{
+              gridColumn: '4',
+              marginLeft: -8,
+              padding: '5px 9px',
+              fontSize: 10.5,
+              fontFamily: T.font.mono,
+              fontWeight: 700,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: isOverridden ? T.accent.text : T.text.subtle,
+              background: isOverridden ? T.accent.bg : 'transparent',
+              border: `1px solid ${isOverridden ? T.accent.border : T.border.primary}`,
+              borderRadius: 999,
+              cursor: 'pointer',
+              opacity: hover || isOverridden || popOpen ? 1 : 0.6,
+              transition: 'opacity 140ms, background 140ms',
+            }}
+          >
+            ↪
+          </button>
+          <EskuMovePopover
+            open={popOpen}
+            anchorEl={triggerRef.current}
+            pallets={allPallets}
+            palletStates={palletStates}
+            byPalletId={eskuDist}
+            currentPalletId={currentPalletId}
+            isOverridden={isOverridden}
+            onPick={(targetId) => onMoveEsku(itemKey, targetId)}
+            onClose={() => setPopOpen(false)}
+          />
+        </>
+      )}
     </div>
   );
 }

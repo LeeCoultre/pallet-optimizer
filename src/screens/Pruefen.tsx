@@ -25,7 +25,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '@/state.jsx';
 import {
-  pruefenView, distributeEinzelneSku, enrichItemDims,
+  pruefenView, distributeEinzelneSku, applyEskuOverrides, eskuOverrideKey,
+  enrichItemDims,
   levelDistribution, sortItemsForPallet, LEVEL_META,
   itemTotalWeightKg,
 } from '@/utils/auftragHelpers.js';
@@ -43,9 +44,10 @@ const AUTO_OVERVIEW_THRESHOLD = 15;
 
 /* ════════════════════════════════════════════════════════════════════════ */
 export default function PruefenScreen() {
-  const { current, goToStep, cancelCurrent } = useAppState();
+  const { current, goToStep, cancelCurrent, moveEskuToPallet } = useAppState();
   const rawPallets = current?.parsed?.pallets || [];
   const eskuItems  = current?.parsed?.einzelneSkuItems || [];
+  const eskuOverrides = current?.eskuOverrides || {};
 
   /* ── data: enrichment + distribution ─────────────────────────── */
   const allItems = useMemo(() => [
@@ -85,8 +87,11 @@ export default function PruefenScreen() {
     [current?.parsed, enrichedPallets],
   );
   const distribution = useMemo(
-    () => distributeEinzelneSku(enrichedPallets, enrichedEsku),
-    [enrichedPallets, enrichedEsku],
+    () => {
+      const auto = distributeEinzelneSku(enrichedPallets, enrichedEsku);
+      return applyEskuOverrides(auto, eskuOverrides, enrichedPallets);
+    },
+    [enrichedPallets, enrichedEsku, eskuOverrides],
   );
   const eskuDist = distribution.byPalletId;
   const palletStates = distribution.palletStates;
@@ -294,6 +299,8 @@ export default function PruefenScreen() {
             onTogglProblemOnly={() => setProblemOnly((v) => !v)}
             hiddenByFilter={hiddenByFilter}
             onJumpToPallet={handleJumpToPallet}
+            eskuOverrides={eskuOverrides}
+            onMoveEsku={moveEskuToPallet}
             mountDelay={hasPreflightFlags ? 260 : 180}
           />
         </main>
@@ -862,6 +869,7 @@ function PalletsSection({
   pallets, visiblePallets, enrichedPallets, eskuDist, eskuItems,
   palletStates, ranking, viewMode, onChangeViewMode,
   problemOnly, onTogglProblemOnly, hiddenByFilter, onJumpToPallet,
+  eskuOverrides, onMoveEsku,
   mountDelay = 0,
 }) {
   const total = pallets.length;
@@ -938,6 +946,8 @@ function PalletsSection({
         problemOnly={problemOnly}
         hiddenByFilter={hiddenByFilter}
         onJumpToPallet={onJumpToPallet}
+        eskuOverrides={eskuOverrides}
+        onMoveEsku={onMoveEsku}
       />
     </section>
   );
@@ -947,6 +957,7 @@ function PalletsBody({
   visiblePallets, enrichedPallets, eskuDist,
   palletStates, ranking, viewMode, problemOnly, hiddenByFilter,
   onJumpToPallet,
+  eskuOverrides, onMoveEsku,
 }) {
   if (visiblePallets.length === 0 && problemOnly) {
     return (
@@ -1020,6 +1031,11 @@ function PalletsBody({
             eskuAssigned={eskuAssigned}
             palletState={palletState}
             story={story}
+            allPallets={enrichedPallets}
+            palletStates={palletStates}
+            eskuDist={eskuDist}
+            eskuOverrides={eskuOverrides}
+            onMoveEsku={onMoveEsku}
           />
         );
       })}

@@ -18,6 +18,8 @@ import {
   sortItemsForPallet,
   sortPallets,
   distributeEinzelneSku,
+  applyEskuOverrides,
+  eskuOverrideKey,
   primaryLevel,
   itemTotalVolumeCm3,
   itemTotalWeightKg,
@@ -666,10 +668,11 @@ describe('distributeEinzelneSku — hard constraints', () => {
     expect(winnerEntries[0].placementMeta.flags).not.toContain('SPLIT-GROUP');
   });
 
-  it('format-match wins over least-filled — same format pallet gets the group even when fuller', () => {
-    // P1-B1: holds a 57x35 thermo (some volume already used) AND matches format.
-    // P1-B2: empty (more free volume) but no format on it.
-    // The group's format = same 57x35 → P1-B1 wins despite being fuller.
+  it('balance-mode: empty pallet wins over filled format-match pallet (SOP 2026-05-15)', () => {
+    // P1-B1: holds a 57x35 thermo AND matches the ESKU format.
+    // P1-B2: empty.
+    // New SOP — balance is primary; format-match is only a tie-breaker.
+    // ESKU goes to the LESS-FILLED pallet (P1-B2), not the format-match pallet.
     const p1 = mkPallet({
       id: 'P1-B1',
       items: [mkMixed({ title: 'Mixed thermo 57×35', units: 30, dim: { w: 57, h: 35 }, rollen: 50, fnsku: 'F1' })],
@@ -679,8 +682,47 @@ describe('distributeEinzelneSku — hard constraints', () => {
     esku.dim = { w: 57, h: 35 };
     esku.rollen = 50;
     const r = distributeEinzelneSku([p1, p2], [esku]);
+    expect(r.byPalletId['P1-B2'].length).toBeGreaterThan(0);
+    expect(r.byPalletId['P1-B1'].length).toBe(0);
+  });
+
+  it('under-filled pallet (<70%) relaxes H1-H4 — L1 ESKU goes on a pallet with L3 ÖKO', () => {
+    // P1-B1: has L3 ÖKO Mixed item, fill stays well under 70% threshold.
+    // Old H1-H4: 3 > 1 → L1 ESKU blocked → NO_VALID_PLACEMENT.
+    // New rule: pallet fillPct < 70% → relaxed → L1 lands cleanly.
+    const p1 = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'THERMALKING ÖKO Thermo 57×35', units: 20, dim: { w: 57, h: 35 }, rollen: 50, fnsku: 'O1' })],
+    });
+    const esku = mkEsku({ title: 'ESKU L1 thermo 57×35', cartons: 3, fnsku: 'EX' });
+    esku.dim = { w: 57, h: 35 };
+    esku.rollen = 50;
+    const r = distributeEinzelneSku([p1], [esku]);
+    expect(r.noValidCount).toBe(0);
     expect(r.byPalletId['P1-B1'].length).toBeGreaterThan(0);
-    expect(r.byPalletId['P1-B2'].length).toBe(0);
+  });
+
+  it('L7 Tacho on a pallet does NOT block lower-level ESKU (SOP 2026-05-15 exception)', () => {
+    // P1-B1: has L7 Tacho — under old H1-H4 this would block any L1-L4 ESKU.
+    //        New rule: Tacho occupies a pallet corner, not a layer, so it
+    //        doesn't block ESKU below.
+    // P1-B2: empty.
+    // ESKU is L1 Thermo (3 cartons). It MUST be eligible for both pallets.
+    // Balance → least-filled (P1-B2) wins, but the key invariant is that
+    // P1-B1 wasn't rejected by H1-H4 (otherwise no fallback would matter).
+    const p1 = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'SWIPARO Tachorollen', units: 50, rollen: 15, fnsku: 'T1' })],
+    });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo 57×35', cartons: 3, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 };
+    esku.rollen = 50;
+    const r = distributeEinzelneSku([p1, p2], [esku]);
+    // ESKU lands somewhere (NOT NO_VALID_PLACEMENT) — proves H1-H4 didn't block.
+    expect(r.noValidCount).toBe(0);
+    // Balance steers it to the empty pallet.
+    expect(r.byPalletId['P1-B2'].length).toBeGreaterThan(0);
   });
 
   it('no format match → group lands on LEAST-FILLED pallet', () => {
@@ -698,6 +740,100 @@ describe('distributeEinzelneSku — hard constraints', () => {
     const r = distributeEinzelneSku([p1, p2], [esku]);
     expect(r.byPalletId['P1-B2'].length).toBeGreaterThan(0);
     expect(r.byPalletId['P1-B1'].length).toBe(0);
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════ */
+describe('applyEskuOverrides — manual ESKU rerouting', () => {
+  function mkPallet({ id, items = [] as Array<Record<string, unknown>>, hasFourSideWarning = false }: { id: string; items?: Array<Record<string, unknown>>; hasFourSideWarning?: boolean }) {
+    return { id, items, hasFourSideWarning };
+  }
+
+  it('no overrides → returns the same distribution unchanged', () => {
+    const p1 = mkPallet({ id: 'P1-B1' });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo 57×35', cartons: 3, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 }; esku.rollen = 50;
+    const auto = distributeEinzelneSku([p1, p2], [esku]);
+    const res = applyEskuOverrides(auto, {}, [p1, p2]);
+    expect(res).toBe(auto);                          // same reference, no work
+  });
+
+  it('moves an ESKU group from its auto-target to a different pallet', () => {
+    const p1 = mkPallet({ id: 'P1-B1' });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo 57×35', cartons: 3, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 }; esku.rollen = 50;
+    const auto = distributeEinzelneSku([p1, p2], [esku]);
+    const autoPid = Object.keys(auto.byPalletId).find((id) => auto.byPalletId[id].length > 0)!;
+    const otherPid = autoPid === 'P1-B1' ? 'P1-B2' : 'P1-B1';
+
+    const key = eskuOverrideKey(esku);
+    const moved = applyEskuOverrides(auto, { [key]: otherPid }, [p1, p2]);
+    expect(moved.byPalletId[otherPid].length).toBe(1);
+    expect(moved.byPalletId[autoPid].length).toBe(0);
+    expect(moved.byPalletId[otherPid][0].placementMeta.manualOverride).toBe(true);
+    expect(moved.byPalletId[otherPid][0].placementMeta.autoTarget).toBe(autoPid);
+    expect(moved.byPalletId[otherPid][0].placementMeta.flags).toContain('MANUAL-MOVE');
+  });
+
+  it('H7 — refuses to move ESKU onto a Single-SKU pallet (hasFourSideWarning)', () => {
+    const single = mkPallet({
+      id: 'P1-B1',
+      items: [mkMixed({ title: 'Single-SKU thermo', units: 100, fnsku: 'M1' })],
+      hasFourSideWarning: true,
+    });
+    const normal = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo 57×35', cartons: 3, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 }; esku.rollen = 50;
+    const auto = distributeEinzelneSku([single, normal], [esku]);
+    expect(auto.byPalletId['P1-B2'].length).toBe(1);     // sanity
+
+    const key = eskuOverrideKey(esku);
+    const res = applyEskuOverrides(auto, { [key]: 'P1-B1' }, [single, normal]);
+    // Override rejected → distribution unchanged
+    expect(res.byPalletId['P1-B1'].length).toBe(0);
+    expect(res.byPalletId['P1-B2'].length).toBe(1);
+  });
+
+  it('unknown target palletId → override ignored', () => {
+    const p1 = mkPallet({ id: 'P1-B1' });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo', cartons: 2, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 }; esku.rollen = 50;
+    const auto = distributeEinzelneSku([p1, p2], [esku]);
+    const key = eskuOverrideKey(esku);
+    const res = applyEskuOverrides(auto, { [key]: 'NOPE' }, [p1, p2]);
+    expect(res.byPalletId).toEqual(auto.byPalletId);
+  });
+
+  it('recomputes palletStates after a move (target gets the ESKU vol/weight)', () => {
+    const p1 = mkPallet({ id: 'P1-B1' });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo 57×35', cartons: 5, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 }; esku.rollen = 50;
+    const auto = distributeEinzelneSku([p1, p2], [esku]);
+    const autoPid = Object.keys(auto.byPalletId).find((id) => auto.byPalletId[id].length > 0)!;
+    const otherPid = autoPid === 'P1-B1' ? 'P1-B2' : 'P1-B1';
+    expect(auto.palletStates[autoPid].volCm3).toBeGreaterThan(0);
+    expect(auto.palletStates[otherPid].volCm3).toBe(0);
+
+    const key = eskuOverrideKey(esku);
+    const moved = applyEskuOverrides(auto, { [key]: otherPid }, [p1, p2]);
+    expect(moved.palletStates[otherPid].volCm3).toBeGreaterThan(0);
+    expect(moved.palletStates[autoPid].volCm3).toBe(0);
+  });
+
+  it('no-op when override targets the already-assigned pallet', () => {
+    const p1 = mkPallet({ id: 'P1-B1' });
+    const p2 = mkPallet({ id: 'P1-B2' });
+    const esku = mkEsku({ title: 'ESKU thermo', cartons: 2, fnsku: 'EA' });
+    esku.dim = { w: 57, h: 35 }; esku.rollen = 50;
+    const auto = distributeEinzelneSku([p1, p2], [esku]);
+    const autoTarget = Object.keys(auto.byPalletId).find((id) => auto.byPalletId[id].length > 0)!;
+    const key = eskuOverrideKey(esku);
+    const res = applyEskuOverrides(auto, { [key]: autoTarget }, [p1, p2]);
+    expect(res).toBe(auto);
   });
 });
 

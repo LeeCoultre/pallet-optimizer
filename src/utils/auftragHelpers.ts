@@ -199,6 +199,16 @@ const PACK_COEFF      = 1.125;                 // Packing slack inside the carto
 const SWEET_SPOT_PCT  = 0.85;                  // Sweet-spot fill target
 const DEFAULT_KG_PER_CARTON = 0.55;            // fallback when no dimensions row
 
+// L7 Tachorollen scale physically linearly in `rollen`: Swip 6 = 2 × Swip 3
+// taped together, Swip 12 = 4×, etc. Amazon assigns ONE EAN (9120107187501)
+// to the whole family, so any sku_dimensions row keyed by that EAN
+// mis-sizes 14 of 15 variants. Solution: bypass dim lookup for Mixed L7
+// items and price each Einheit as `rollen × per-roll constants`. Constants
+// derived from Swip 3 (densest pack, least cardboard overhead):
+//   165 cm³ / 3 rolls = 55 cm³/roll;  0.09 kg / 3 = 0.030 kg/roll.
+const TACHO_VOL_PER_ROLL_CM3 = 55;
+const TACHO_KG_PER_ROLL      = 0.031;
+
 /* ── Volume / weight model ─────────────────────────────────────────────
    Two physically distinct paths:
 
@@ -364,6 +374,13 @@ export function itemTotalVolumeCm3(it) {
   }
   // Mixed: just sum per-Einheit volume (no per-Einheit Tara/PACK_COEFF)
   const u = it.units || 0;
+  // L7 Tachorollen — Einheit scales linearly in `rollen` (Swip 6 = 2× Swip 3
+  // taped, Swip 12 = 4×, etc.) and all variants share one Stamm-EAN. Per-roll
+  // constants are accurate to within ~5%; dim lookup against the shared EAN
+  // would mis-size every variant except the one the row was keyed for.
+  if (getDisplayLevel(it) === 7) {
+    return u * Math.max(1, it.rollen || 1) * TACHO_VOL_PER_ROLL_CM3;
+  }
   if (it.dimensions) {
     return u * it.dimensions.lengthCm * it.dimensions.widthCm * it.dimensions.heightCm;
   }
@@ -382,6 +399,10 @@ export function itemTotalWeightKg(it) {
     return cartons * DEFAULT_KG_PER_CARTON;
   }
   const u = it.units || 0;
+  // L7 Tachorollen — same per-roll model as itemTotalVolumeCm3.
+  if (getDisplayLevel(it) === 7) {
+    return u * Math.max(1, it.rollen || 1) * TACHO_KG_PER_ROLL;
+  }
   if (it.dimensions) return u * it.dimensions.weightKg;
   return u * mixedItemHeuristicKg(it);
 }
@@ -767,6 +788,10 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
       return b.length - a.length;
     });
 
+    // Tracks ESKU pressure per pallet across the WHOLE distribution
+    // pass — keys the balance-mode caps in pickPalletBalanced.
+    const eskuAddedThisPass = new Map();
+
     for (const group of orderedGroups) {
       for (const e of group) {
         // ATOMIC PLACEMENT — an ESKU FNSKU is one indivisible unit. The
@@ -775,10 +800,21 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
         // (warehouse SOP). Picking once for the whole group, never
         // splitting, also means the same SPLIT-GROUP flag never fires.
         const totalCartons = Math.max(1, e.cartons || 1);
-        const result = pickPalletAtomic(e, states, totalCartons);
+        // Try balance-mode first; fall back to existing atomic logic
+        // when the group is too big, format-unfamiliar, or caps exhausted.
+        const result =
+          pickPalletBalanced(e, states, totalCartons, eskuAddedThisPass) ??
+          pickPalletAtomic(e, states, totalCartons);
         const target = result.target;
         for (let i = 0; i < totalCartons; i++) target.add(e);
         const pid = target.pallet.id;
+        // Book this placement against the pass-cap so subsequent groups
+        // see the right pressure on this pallet.
+        const prev = eskuAddedThisPass.get(pid) ?? { cartons: 0, volCm3: 0 };
+        eskuAddedThisPass.set(pid, {
+          cartons: prev.cartons + totalCartons,
+          volCm3:  prev.volCm3  + totalCartons * e.volCm3,
+        });
         if (result.flags.includes('NO_VALID_PLACEMENT')) noValidCount += 1;
 
         byPalletId[pid].push({
@@ -825,6 +861,126 @@ export function distributeEinzelneSku(pallets, einzelneSkuItems) {
            overloadCount, overloadedPalletCount, noValidCount };
 }
 
+/* ─── ESKU key (stable identifier for manual overrides) ──────────────────
+   Same key used by distributeEinzelneSku to group atomically (line ~781).
+   Moving an ESKU by key means moving the WHOLE group — matches the
+   "atomic placement" SOP: all cartons of one FNSKU live on one pallet. */
+export function eskuOverrideKey(it) {
+  return it?.fnsku || it?.sku || it?.title || '';
+}
+
+/* ─── applyEskuOverrides ─────────────────────────────────────────────────
+   Re-routes ESKU items between pallets based on a manual overrides map
+   `{ [eskuKey]: targetPalletId }`. Returns the SAME shape as
+   distributeEinzelneSku so callers can swap in-place.
+
+   - Unknown keys / unknown targets are ignored (override skipped).
+   - H7 hasFourSideWarning pallets are blocked targets (single-SKU
+     rule is absolute — see CLAUDE.md memory `marathon_four_side_warning`).
+   - The move IS allowed to violate H1-H4 / OVERLOAD-W/-V (worker knows
+     better in some cases); we annotate placementMeta.manualOverride
+     and re-derive palletStates so OVERLOAD flags stay accurate.
+
+   Identity: ESKU items with the same fnsku/sku/title share one key
+   (they're already placed atomically by distributeEinzelneSku). Moving
+   the key moves all cartons of that group together — matches SOP. */
+export function applyEskuOverrides(distribution, overrides, enrichedPallets) {
+  if (!distribution || !overrides) return distribution;
+  const overrideEntries = (Object.entries(overrides) as Array<[string, string]>)
+    .filter(([, v]) => v != null && v !== '');
+  if (overrideEntries.length === 0) return distribution;
+
+  const palletById = new Map<string, any>((enrichedPallets || []).map((p) => [p.id, p]));
+  const validTargets = new Set<string>(Object.keys(distribution.byPalletId || {}));
+
+  // Build key → list of placed items (with their auto-assigned pid)
+  const placedByKey = new Map<string, Array<{ item: any; autoPid: string }>>();
+  const byPidEntries = Object.entries(distribution.byPalletId || {}) as Array<[string, any[]]>;
+  for (const [pid, items] of byPidEntries) {
+    for (const it of items) {
+      const k = eskuOverrideKey(it);
+      if (!placedByKey.has(k)) placedByKey.set(k, []);
+      placedByKey.get(k)!.push({ item: it, autoPid: pid });
+    }
+  }
+
+  // Resolve final target pid per key (drop invalid overrides)
+  const finalTargetByKey = new Map<string, string>();
+  let anyApplied = false;
+  for (const [key, targetPid] of overrideEntries) {
+    if (!placedByKey.has(key)) continue;
+    if (!validTargets.has(targetPid)) continue;
+    if (palletById.get(targetPid)?.hasFourSideWarning) continue;   // H7 absolute
+    const entries = placedByKey.get(key)!;
+    if (entries.every((e) => e.autoPid === targetPid)) continue;   // no-op
+    finalTargetByKey.set(key, targetPid);
+    anyApplied = true;
+  }
+  if (!anyApplied) return distribution;
+
+  // Build new byPalletId
+  const newByPalletId = {};
+  for (const pid of validTargets) newByPalletId[pid] = [];
+  const newReasons = { ...(distribution.reasons || {}) };
+
+  for (const [key, entries] of placedByKey.entries()) {
+    const target = finalTargetByKey.get(key);
+    for (const { item, autoPid } of entries) {
+      if (target && target !== autoPid) {
+        const moved = {
+          ...item,
+          placementMeta: {
+            ...(item.placementMeta || {}),
+            manualOverride: true,
+            autoTarget: autoPid,
+            flags: [...((item.placementMeta?.flags) || []), 'MANUAL-MOVE'],
+          },
+        };
+        newByPalletId[target].push(moved);
+        if (newReasons[key]) {
+          newReasons[key] = {
+            ...newReasons[key],
+            source: 'manual_override',
+            palletId: target,
+            autoTarget: autoPid,
+            flags: [...(newReasons[key].flags || []), 'MANUAL-MOVE'],
+          };
+        }
+      } else {
+        newByPalletId[autoPid].push(item);
+      }
+    }
+  }
+
+  // Recompute palletStates: rebuild Mixed baseline, then re-add the
+  // (possibly re-routed) ESKU items per pallet. We DO NOT block on
+  // H1-H4 or H7 here — placement is now manual — but overload flags
+  // and capacityFraction get a fresh, accurate read.
+  const newPalletStates = {};
+  let overloadCount = 0;
+  let overloadedPalletCount = 0;
+  for (const p of enrichedPallets || []) {
+    const ps = buildPalletState(p);
+    for (const eskuItem of newByPalletId[p.id] || []) {
+      const enriched = enrichEsku(eskuItem);
+      ps.add(enriched);
+    }
+    ps.fillPct = ps.volCm3 / PALLET_VOL_CM3;
+    newPalletStates[p.id] = ps;
+    if (ps.overloadFlags.size > 0) overloadedPalletCount += 1;
+    overloadCount += ps.overloadFlags.size;
+  }
+
+  return {
+    ...distribution,
+    byPalletId: newByPalletId,
+    palletStates: newPalletStates,
+    reasons: newReasons,
+    overloadCount,
+    overloadedPalletCount,
+  };
+}
+
 /* `formatKey` for capacity tracking. Same physical product (one
    sku_dimensions row) → one key; identifies items that share a
    `pallet_load_max` value. Falls back to a synthetic key from L×B×H
@@ -850,6 +1006,11 @@ function buildPalletState(p) {
   // Capacity tracking — { formatKey: cartons }, plus per-key max
   const formatCounts = {};
   const formatMax = {};
+  // Mixed-only format index — drives the ESKU balance-mode cap below.
+  // ESKU placements deliberately don't extend these maps: the cap is
+  // anchored to ORIGINAL Mixed content, not to ESKU that already landed.
+  const mixedFormatPerEinheit = new Map();  // formatSig → per-Einheit vol (cm³)
+  const mixedFormatTotalVol   = new Map();  // formatSig → total vol on pallet (cm³)
 
   for (const it of p.items || []) {
     const vol = itemTotalVolumeCm3(it);
@@ -857,6 +1018,16 @@ function buildPalletState(p) {
     volCm3 += vol;
     weightKg += wgt;
     formats.add(formatSig(it));
+    if (!it.isEinzelneSku) {
+      const sig = formatSig(it);
+      const u = it.units || 0;
+      if (u > 0) {
+        // per-Einheit is constant within a formatSig (rollen + dim identical),
+        // so re-writing the same value is harmless. Total vol accumulates.
+        mixedFormatPerEinheit.set(sig, vol / u);
+        mixedFormatTotalVol.set(sig, (mixedFormatTotalVol.get(sig) ?? 0) + vol);
+      }
+    }
     const lvl = getDisplayLevel(it);
     levels.add(lvl);
     byLevel[lvl].push({
@@ -907,6 +1078,7 @@ function buildPalletState(p) {
     volCm3, weightKg,
     formats, levels, brands, useItemIds, fnskus,
     formatCounts, formatMax,
+    mixedFormatPerEinheit, mixedFormatTotalVol,
     byLevel,
     overloadFlags,
     fillPct: volCm3 / PALLET_VOL_CM3,
@@ -966,15 +1138,27 @@ function enrichEsku(item) {
 /* H1-H4: a carton at level X may not sit BELOW any existing item of level Y > X.
    The pallet's level stack is monotonic from bottom (1) up to top (7).
 
-   Klebeband-ESKU exception: an L4 ESKU Klebeband carton is allowed to
-   sit on a pallet that already has L5 Produktion items. The rule
-   "Klebeband always goes before Produktion" applies to Mixed-Box
-   workflow; ESKU placement may co-locate them on the same pallet.
-   Fragile-cap levels (L6 Kernöl / L7 Tacho) still block. */
+   Relaxations (in evaluation order):
+   - L7 Tachorollen NEVER blocks — Tacho spools physically occupy a corner
+     of the pallet (~2% volume), not a full stack layer, so ESKU can sit
+     BESIDE them. Always applies.
+   - L4 Klebeband-ESKU may sit on L5 Produktion (Mixed-Box workflow rule;
+     ESKU is allowed to co-locate).
+   - L6 Kernöl ALWAYS blocks — fragile glass bottles must be on top, items
+     below them risk breakage if the pallet shifts. No threshold applies.
+   - All other Y > X violations relax when the pallet is < 70% full:
+     ESKU can occupy free corners beside higher-level items rather than
+     being strictly stacked under them. SOP 2026-05-15 part 2. */
+const LEVEL_ORDER_RELAX_THRESHOLD = 0.70;
+
 function violatesLevelOrder(carton, ps) {
+  const fillPct = ps.volCm3 / PALLET_VOL_CM3;
   for (const existingLevel of ps.levels) {
     if (existingLevel > carton.level) {
+      if (existingLevel === 7) continue;
       if (carton.level === 4 && existingLevel === 5) continue;
+      if (existingLevel === 6) return true;                    // Kernöl: hard
+      if (fillPct < LEVEL_ORDER_RELAX_THRESHOLD) continue;
       return true;
     }
   }
@@ -1095,6 +1279,89 @@ function scorePallet(carton, ps) {
   }
 
   return { score, breakdown };
+}
+
+/* ─── Balance-mode placement ───────────────────────────────────────────
+   SOP rule (2026-05-15, revised after seeing real warehouse data):
+   Balance pallet fill % as the primary criterion. ESKU groups go onto
+   the LEAST-LOADED pallet that passes hard constraints, with format-
+   match / useItem-match etc. acting only as tie-breakers via scorePallet.
+
+   Sanity-brake cap per pallet per pass:
+     • ≤ 7 ESKU cartons added
+     • added volume ≤ 7 × per-Einheit vol of the pallet's dominant Mixed
+       format (skipped when pallet has no Mixed items — no anchor)
+
+   When the least-loaded pallet has cap exhausted, the next-least-loaded
+   is tried; falls through until either a pallet accepts or no pallet
+   passes both hard constraints + cap → returns null and caller uses
+   the existing `pickPalletAtomic`.
+
+   Metric is `fillPct = volCm3 / PALLET_VOL_CM3` — currently equivalent
+   to absolute volCm3 since all pallets are 1.59 m³, but future-proof
+   for mixed-size pallets.
+
+   Hard-constraint relaxation that makes this useful in practice: L7
+   Tacho no longer blocks lower-level ESKU (see violatesLevelOrder). */
+function pickPalletBalanced(carton, states, totalCartons, eskuAddedThisPass) {
+  // Atomic groups bigger than the cap can never satisfy balance rules.
+  if (totalCartons > 7) return null;
+
+  const groupVol = carton.volCm3 * totalCartons;
+
+  let best: typeof states[number] | null = null;
+  let bestFill = Infinity;
+  let bestScore = -Infinity;
+  let bestBreakdown: Record<string, boolean | number> | null = null;
+
+  for (const ps of states) {
+    if (!passesHardConstraints(carton, ps)) continue;
+
+    // Per-pallet per-pass cap (sanity brake, prevents one pallet absorbing
+    // all ESKU in a 1.5 m³ slug at once).
+    const added = eskuAddedThisPass.get(ps.pallet.id) ?? { cartons: 0, volCm3: 0 };
+    if (added.cartons + totalCartons > 7) continue;
+
+    // Dominant Mixed format = the one with the largest total volume on
+    // this pallet right now. Its per-Einheit vol × 7 sets the volume cap.
+    // Pallets without Mixed items skip the volume cap (only carton cap).
+    let dominantPerE = 0;
+    let dominantTotal = -1;
+    for (const [sig, total] of ps.mixedFormatTotalVol) {
+      if (total > dominantTotal) {
+        dominantTotal = total;
+        dominantPerE = ps.mixedFormatPerEinheit.get(sig) ?? 0;
+      }
+    }
+    if (dominantPerE > 0) {
+      const volumeCap = dominantPerE * 7;
+      if (added.volCm3 + groupVol > volumeCap) continue;
+    }
+
+    // Balance primary; scorePallet (format-match, useItem, brand…) ties.
+    const fillPct = ps.volCm3 / PALLET_VOL_CM3;
+    const { score, breakdown } = scorePallet(carton, ps);
+    if (
+      fillPct < bestFill ||
+      (fillPct === bestFill && score > bestScore)
+    ) {
+      bestFill = fillPct;
+      bestScore = score;
+      best = ps;
+      bestBreakdown = { ...breakdown, balanceMode: true };
+    }
+  }
+
+  if (best === null) return null;
+
+  const overload = predictOverloadGroup(carton, best, totalCartons);
+  return {
+    target: best,
+    score: bestScore,
+    breakdown: bestBreakdown,
+    overload,
+    flags: [...overload],
+  };
 }
 
 /* Returns { target, score, breakdown, overload, flags }. Always returns

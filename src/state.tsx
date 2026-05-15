@@ -80,6 +80,35 @@ function clearCopiedKeys(auftragId: UUID): void {
   catch { /* ignore */ }
 }
 
+/* ─── ESKU overrides localStorage helpers ────────────────────────────────
+   Manual ESKU→Pallet reassignments made by the worker in Pruefen/Focus.
+   Persisted locally (same model as copiedKeys — UX layer, not server
+   state). Shape: `{ [eskuKey]: targetPalletId }`. Cleaned on cancel/
+   complete. The eskuKey is `fnsku || sku || title` — same key used by
+   distributeEinzelneSku to group atomically. */
+const EO_PREFIX = 'marathon.eskuOverrides.';
+const EO_KEY = (auftragId: UUID) => `${EO_PREFIX}${auftragId}`;
+
+function readEskuOverrides(auftragId: UUID | undefined | null): Record<string, string> {
+  if (!auftragId || typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(EO_KEY(auftragId));
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function writeEskuOverrides(auftragId: UUID, obj: Record<string, string>): void {
+  if (!auftragId || typeof window === 'undefined') return;
+  try { window.localStorage.setItem(EO_KEY(auftragId), JSON.stringify(obj)); }
+  catch { /* quota / private mode — silent */ }
+}
+
+function clearEskuOverrides(auftragId: UUID): void {
+  if (!auftragId || typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(EO_KEY(auftragId)); }
+  catch { /* ignore */ }
+}
+
 /* ─── Adapters: backend (camelCase via marathonApi) → legacy localStorage shape ── */
 
 export function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): LegacyAuftrag | null {
@@ -108,6 +137,7 @@ export function toLegacy(a: AuftragDetail | AuftragSummary | null | undefined): 
     currentItemIdx:   detail.currentItemIdx ?? 0,
     completedKeys:    detail.completedKeys ?? {},
     copiedKeys:       readCopiedKeys(a.id),
+    eskuOverrides:    readEskuOverrides(a.id),
     palletTimings:    a.palletTimings ?? {},
 
     assignedToUserId:   a.assignedToUserId,
@@ -204,10 +234,11 @@ export function useAppState(): UseAppStateApi {
     [all],
   );
   const [copiedKeysVersion, setCopiedKeysVersion] = useState(0);
+  const [eskuOverridesVersion, setEskuOverridesVersion] = useState(0);
   const current = useMemo(
     () => toLegacy(currentSrc),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentSrc, copiedKeysVersion],
+    [currentSrc, copiedKeysVersion, eskuOverridesVersion],
   );
 
   const history: LegacyHistoryItem[] = useMemo(
@@ -280,6 +311,7 @@ export function useAppState(): UseAppStateApi {
     },
     onSuccess: (_data, id) => {
       clearCopiedKeys(id);
+      clearEskuOverrides(id);
       // history may have changed if cancel re-queued an Auftrag (rare),
       // but the auftraege list is already in the right shape locally.
       qc.invalidateQueries({ queryKey: ['history'] });
@@ -331,6 +363,7 @@ export function useAppState(): UseAppStateApi {
     mutationFn: completeAuftrag,
     onSuccess: async (_data, id: UUID) => {
       clearCopiedKeys(id);
+      clearEskuOverrides(id);
       invalidateAll();
       const fresh = await listAuftraege();
       const next = fresh.find((a) => a.status === 'queued');
@@ -491,6 +524,23 @@ export function useAppState(): UseAppStateApi {
     setCopiedKeysVersion((v) => v + 1);
   }, [current?.id]);
 
+  const moveEskuToPallet = useCallback((eskuKey: string, palletId: string | null) => {
+    if (!current?.id || !eskuKey) return;
+    const prev = readEskuOverrides(current.id);
+    const next = { ...prev };
+    if (palletId == null || palletId === '') delete next[eskuKey];
+    else next[eskuKey] = palletId;
+    if (JSON.stringify(prev) === JSON.stringify(next)) return;
+    writeEskuOverrides(current.id, next);
+    setEskuOverridesVersion((v) => v + 1);
+  }, [current?.id]);
+
+  const resetEskuOverrides = useCallback(() => {
+    if (!current?.id) return;
+    clearEskuOverrides(current.id);
+    setEskuOverridesVersion((v) => v + 1);
+  }, [current?.id]);
+
   const completeCurrentItem = useCallback((effectiveItemsCount?: number, effectiveItem: unknown = null, nextPalletIdxOverride?: number): boolean => {
     if (!current?.parsed) return false;
     const pallet = current.parsed.pallets[current.currentPalletIdx];
@@ -565,6 +615,7 @@ export function useAppState(): UseAppStateApi {
     addFiles, removeFromQueue, reorderQueue: reorderQueueAction, reorderQueueTo, clearQueue,
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
+    moveEskuToPallet, resetEskuOverrides,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   }), [
@@ -572,6 +623,7 @@ export function useAppState(): UseAppStateApi {
     addFiles, removeFromQueue, reorderQueueAction, reorderQueueTo, clearQueue,
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
+    moveEskuToPallet, resetEskuOverrides,
     completeCurrentItem, completeAndAdvance, cancelCurrent,
     removeHistoryEntry, clearHistory,
   ]);

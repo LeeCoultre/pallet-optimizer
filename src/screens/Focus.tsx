@@ -28,11 +28,11 @@
    Persistence: copiedKeys is server-backed via /api/auftraege/.../
    progress copied_keys JSONB. Reload no longer wipes chip state. */
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '@/state.jsx';
 import {
-  focusItemView, sortItemsForPallet, distributeEinzelneSku,
+  focusItemView, sortItemsForPallet, distributeEinzelneSku, applyEskuOverrides, eskuOverrideKey,
   enrichItemDims, getDisplayLevel, LEVEL_META, formatItemTitle,
   extractProduktionPerCarton, singleSkuClusterKey,
 } from '@/utils/auftragHelpers.js';
@@ -41,6 +41,7 @@ import { detectWiederholt } from '@/utils/wiederholtLogic.js';
 import { Page, Topbar, Button, Badge, StudioFrame, T } from '@/components/ui.jsx';
 import PalletInterlude, { resetSkipCount } from '@/components/PalletInterlude.jsx';
 import AuftragFinaleStage from '@/components/AuftragFinaleStage.jsx';
+import EskuMovePopover from '@/components/EskuMovePopover.jsx';
 
 const SCHNELL_KEY = 'marathon.focus.schnellmodus';
 
@@ -64,8 +65,10 @@ export default function FocusScreen() {
   const {
     current,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
+    moveEskuToPallet,
     completeCurrentItem, cancelCurrent, goToStep,
   } = useAppState();
+  const eskuOverrides = current?.eskuOverrides || {};
 
   /* Async dim/weight enrichment (cached 5min, same key as Pruefen). */
   const sourcePallets = current?.parsed?.pallets || [];
@@ -98,8 +101,11 @@ export default function FocusScreen() {
     return rawEsku.map((it, i) => dimsQ.data[palletItemsCount + i] || it);
   }, [rawEsku, sourcePallets, dimsQ.data]);
   const distribution = useMemo(
-    () => distributeEinzelneSku(enrichedSourcePallets, enrichedEsku),
-    [enrichedSourcePallets, enrichedEsku],
+    () => {
+      const auto = distributeEinzelneSku(enrichedSourcePallets, enrichedEsku);
+      return applyEskuOverrides(auto, eskuOverrides, enrichedSourcePallets);
+    },
+    [enrichedSourcePallets, enrichedEsku, eskuOverrides],
   );
   const palletStates = distribution.palletStates;
 
@@ -691,7 +697,9 @@ export default function FocusScreen() {
         >
           <ArticleHeroCard
             item={item}
+            rawItem={rawItem}
             palletId={shortPalletId(pallet)}
+            currentPalletObjId={pallet?.id}
             itemIdx={itemIdx}
             itemCount={pallet.items.length}
             copiedCode={codeCopied ? item?.code : null}
@@ -701,6 +709,11 @@ export default function FocusScreen() {
             zen={zen}
             reCopyTick={reCopyTick}
             wiederholt={currentWiederholt}
+            allPallets={enrichedSourcePallets}
+            palletStates={palletStates}
+            eskuDist={distribution.byPalletId}
+            eskuOverrides={eskuOverrides}
+            onMoveEsku={moveEskuToPallet}
           />
 
           {/* Pallet flow — visual twin of ArticleHeroCard above it.
@@ -890,15 +903,21 @@ export default function FocusScreen() {
    divider between columns is a hairline.
    ════════════════════════════════════════════════════════════════════════ */
 function ArticleHeroCard({
-  item, palletId, itemIdx, itemCount,
+  item, rawItem, palletId, currentPalletObjId, itemIdx, itemCount,
   copiedCode, flashUse, onCopyCode, onCopyUse,
   zen = false,
   compact = false,
   reCopyTick = 0,
   wiederholt = null,
+  allPallets, palletStates, eskuDist, eskuOverrides, onMoveEsku,
 }) {
   const cat = item.levelMeta || LEVEL_META[1];
   const haloColor = cat.color || T.accent.main;
+  const moveTriggerRef = useRef(null);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const canMoveEsku = item.isEsku && typeof onMoveEsku === 'function' && allPallets?.length > 1;
+  const moveKey = item.isEsku ? eskuOverrideKey(rawItem || item) : '';
+  const isMoved = item.isEsku && !!(eskuOverrides && moveKey && eskuOverrides[moveKey]);
 
   return (
     <div style={{
@@ -949,7 +968,51 @@ function ArticleHeroCard({
           {item.placementFlags?.length > 0 && (
             <Badge tone="warn">{item.placementFlags.join(' · ')}</Badge>
           )}
+          {canMoveEsku && (
+            <button
+              ref={moveTriggerRef}
+              type="button"
+              onClick={() => setMoveOpen((v) => !v)}
+              title="ESKU auf andere Palette verschieben"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '5px 12px',
+                fontSize: 11,
+                fontFamily: T.font.mono,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: isMoved ? T.accent.text : T.text.subtle,
+                background: isMoved ? T.accent.bg : T.bg.surface2,
+                border: `1px solid ${isMoved ? T.accent.border : T.border.primary}`,
+                borderRadius: 999,
+                cursor: 'pointer',
+                transition: 'background 140ms, border-color 140ms',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = T.accent.main;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = isMoved ? T.accent.border : T.border.primary;
+              }}
+            >
+              ↪ {isMoved ? 'verschoben' : 'Palette wechseln'}
+            </button>
+          )}
         </div>
+        <EskuMovePopover
+          open={moveOpen}
+          anchorEl={moveTriggerRef.current}
+          pallets={allPallets}
+          palletStates={palletStates}
+          byPalletId={eskuDist}
+          currentPalletId={currentPalletObjId}
+          isOverridden={isMoved}
+          onPick={(targetId) => onMoveEsku?.(moveKey, targetId)}
+          onClose={() => setMoveOpen(false)}
+        />
 
         {/* Two columns — article LEFT, codes RIGHT */}
         <div style={{

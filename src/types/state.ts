@@ -38,6 +38,10 @@ export interface LegacyAuftrag {
   currentItemIdx: number;
   completedKeys: CompletedKeys;
   copiedKeys: Record<string, number>;
+  /** Manual ESKU→Pallet overrides set by the worker in Pruefen/Focus.
+   *  Key = `fnsku || sku || title` (same group key used by
+   *  distributeEinzelneSku). Value = target palletId. */
+  eskuOverrides: Record<string, string>;
   palletTimings: PalletTimings;
 
   assignedToUserId: UUID | null | undefined;
@@ -74,6 +78,12 @@ export interface UseAppStateApi {
   setCurrentPalletIdx: (idx: number) => void;
   setCurrentItemIdx: (idx: number) => void;
   markCodeCopied: (palletIdx: number, itemIdx: number) => void;
+
+  /** Move an ESKU group to a different pallet. Pass `null` to revert
+   *  to the auto-assigned target. eskuKey = `fnsku || sku || title`. */
+  moveEskuToPallet: (eskuKey: string, palletId: string | null) => void;
+  /** Drop all manual ESKU overrides for the current Auftrag. */
+  resetEskuOverrides: () => void;
 
   completeCurrentItem: (effectiveItemsCount?: number, effectiveItem?: unknown, nextPalletIdxOverride?: number) => boolean;
   completeAndAdvance: () => void;
