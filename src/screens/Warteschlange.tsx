@@ -1214,20 +1214,27 @@ function QueueRowCard({
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      onClick={onSelect}
+      onClick={() => {
+        onSelect?.();
+        if (!isError) onToggleExpand?.();
+      }}
       style={{
         position: 'relative',
         padding: '20px 24px',
         background: bg,
-        border: `1px solid ${borderColor}`,
-        borderRadius: isExpanded
-          ? `${T.radius.lg} ${T.radius.lg} 0 0`
-          : T.radius.lg,
+        borderStyle: 'solid',
+        borderColor,
+        borderTopWidth: 1,
+        borderLeftWidth: 1,
+        borderRightWidth: 1,
         borderBottomWidth: isExpanded ? 0 : 1,
+        borderRadius: isExpanded
+          ? `${T.radius.lg}px ${T.radius.lg}px 0 0`
+          : T.radius.lg,
         boxShadow: 'none',
         opacity: isDragging ? 0.4 : 1,
         cursor: 'pointer',
-        transition: 'border-color 150ms, background 150ms, box-shadow 200ms, opacity 150ms, border-radius 150ms',
+        transition: 'border-color 150ms, background 150ms, box-shadow 200ms, opacity 150ms',
         display: 'grid',
         gridTemplateColumns: 'auto auto 1fr auto',
         alignItems: 'center',
@@ -1394,22 +1401,6 @@ function QueueRowCard({
         gap: 4,
         flexShrink: 0,
       }} onClick={(e) => e.stopPropagation()}>
-        <IconBtn
-          onClick={onToggleExpand}
-          disabled={isError}
-          title={isExpanded ? 'Vorschau schließen' : 'Paletten-Vorschau'}
-          active={isExpanded}
-        >
-          <svg
-            width="14" height="14" viewBox="0 0 14 14" fill="none"
-            style={{
-              transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-              transition: 'transform 180ms',
-            }}
-          >
-            <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </IconBtn>
         <IconBtn onClick={onUp} disabled={!onUp} title="Nach oben">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M3 9l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -1451,11 +1442,32 @@ function QueueRowCard({
    Inline accordion under a queue row. Read-only — surfaces what the
    worker will see in Pruefen so they can prioritize without entering
    the workflow. Detail is lazy-fetched (queue-list payload is slim)
-   and cached forever — queue rows are immutable until startEntry. */
+   and cached forever — queue rows are immutable until startEntry.
+   Visually the panel reads as a continuation of the queue-row card:
+   it carries the same outer border colour, snaps under the row with
+   no double-border seam, and uses a flat surface tone so it doesn't
+   compete with the row's accent. */
+type PreviewItem = {
+  title?: string;
+  units?: number;
+  fnsku?: string;
+  sku?: string;
+  ean?: string;
+  level?: number;
+  category?: string;
+  useItem?: string | null;
+};
+type PreviewPallet = {
+  id?: string;
+  hasFourSideWarning?: boolean;
+  items?: PreviewItem[];
+  einzelneSkuItems?: unknown[];
+};
+
 function PalletPreviewPanel({
   entry, borderColor,
 }: {
-  entry: { id: string; parsed?: { pallets?: unknown[]; einzelneSkuItems?: unknown[]; meta?: { totalUnits?: number } } | null | undefined };
+  entry: { id: string; parsed?: { pallets?: unknown[]; einzelneSkuItems?: unknown[] } | null | undefined };
   borderColor: string;
 }) {
   /* Reuse Historie's ['auftrag', id] cache — same fetcher, same
@@ -1466,8 +1478,6 @@ function PalletPreviewPanel({
     queryFn: () => getAuftrag(entry.id),
     staleTime: Infinity,
     refetchInterval: false,
-    /* If the entry came in with `parsed` already populated (post-upload
-       Detail seed), short-circuit the fetch entirely. */
     enabled: !entry.parsed?.pallets,
     initialData: entry.parsed?.pallets ? (entry as unknown as Awaited<ReturnType<typeof getAuftrag>>) : undefined,
   });
@@ -1476,69 +1486,105 @@ function PalletPreviewPanel({
     | { pallets?: unknown[]; einzelneSkuItems?: unknown[] }
     | null
     | undefined;
-  const pallets = (parsed?.pallets as Array<{ id?: string; hasFourSideWarning?: boolean; items?: Array<{ title?: string; bezeichnung?: string; einheit?: string; menge?: number; fnsku?: string; sku?: string; ean?: string; level?: number; category?: string }> }> | undefined) || [];
-  const einzelneSkuItems = (parsed?.einzelneSkuItems as Array<unknown>) || [];
+  const pallets = (parsed?.pallets as PreviewPallet[] | undefined) || [];
+  const einzelneSkuItems = (parsed?.einzelneSkuItems as unknown[]) || [];
 
   const sortedPallets = useMemo(
-    () => (pallets.length ? sortPallets(pallets) : []),
+    () => (pallets.length ? (sortPallets(pallets) as PreviewPallet[]) : []),
     [pallets],
   );
 
-  const containerStyle: React.CSSProperties = {
-    border: `1px solid ${borderColor}`,
-    borderTop: 'none',
-    borderRadius: `0 0 ${T.radius.lg} ${T.radius.lg}`,
+  /* Shell sits flush against the row above: same border colour, no top
+     border, no top radius — they read as one card. */
+  const shell: React.CSSProperties = {
+    borderStyle: 'solid',
+    borderColor,
+    borderTopWidth: 0,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderBottomLeftRadius: T.radius.lg,
+    borderBottomRightRadius: T.radius.lg,
     background: T.bg.surface,
-    padding: '18px 24px 22px',
     fontFamily: T.font.ui,
+    overflow: 'hidden',
   };
 
   if (detailQ.isPending && !parsed) {
     return (
-      <div style={{ ...containerStyle, display: 'flex', alignItems: 'center', gap: 10, color: T.text.subtle, fontSize: 13 }}>
+      <div style={{ ...shell, padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 10, color: T.text.subtle, fontSize: 13 }}>
         <Spinner /> Vorschau wird geladen…
       </div>
     );
   }
   if (detailQ.isError && !parsed) {
     return (
-      <div style={{ ...containerStyle, color: T.status.danger.text, fontSize: 13 }}>
+      <div style={{ ...shell, padding: '20px 24px', color: T.status.danger.text, fontSize: 13 }}>
         Vorschau konnte nicht geladen werden.
       </div>
     );
   }
   if (!sortedPallets.length) {
     return (
-      <div style={{ ...containerStyle, color: T.text.subtle, fontSize: 13 }}>
+      <div style={{ ...shell, padding: '20px 24px', color: T.text.subtle, fontSize: 13 }}>
         Keine Paletten in diesem Auftrag.
       </div>
     );
   }
 
+  const totalUnits = sortedPallets.reduce((s, p) => {
+    return s + (p.items || []).reduce((u, it) => u + (Number(it.units) || 0), 0);
+  }, 0);
+  const totalItems = sortedPallets.reduce((s, p) => s + (p.items?.length || 0), 0);
+
   return (
-    <div style={containerStyle}>
+    <div style={shell}>
+      {/* Subtle separator line, then a compact summary band */}
       <div style={{
+        height: 1,
+        background: T.border.subtle,
+        margin: '0 24px',
+      }} />
+      <div style={{
+        padding: '14px 24px 6px',
         display: 'flex',
         alignItems: 'baseline',
         justifyContent: 'space-between',
-        marginBottom: 12,
         gap: 12,
+        flexWrap: 'wrap',
       }}>
-        <span style={{ fontSize: 12.5, color: T.text.faint, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-          Paletten-Vorschau
+        <span style={{
+          fontSize: 11,
+          color: T.text.faint,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          fontWeight: 500,
+        }}>
+          Vorschau
         </span>
-        <span style={{ fontSize: 12, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
-          {sortedPallets.length} Paletten · {einzelneSkuItems.length} ESKU gesamt
+        <span style={{
+          fontSize: 12,
+          color: T.text.faint,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '-0.005em',
+        }}>
+          {sortedPallets.length} Paletten · {totalItems} Positionen · {totalUnits.toLocaleString('de-DE')} Einheiten
+          {einzelneSkuItems.length > 0 && ` · ${einzelneSkuItems.length} ESKU`}
         </span>
       </div>
+
       <div style={{
-        display: 'grid',
-        gap: 10,
-        maxHeight: 360,
+        padding: '6px 0 8px',
+        maxHeight: 460,
         overflowY: 'auto',
       }}>
         {sortedPallets.map((p, idx) => (
-          <PalletPreviewRow key={p.id || idx} pallet={p} index={idx} />
+          <PalletPreviewSection
+            key={p.id || idx}
+            pallet={p}
+            index={idx}
+            isLast={idx === sortedPallets.length - 1}
+          />
         ))}
       </div>
     </div>
@@ -1546,19 +1592,21 @@ function PalletPreviewPanel({
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function PalletPreviewRow({
-  pallet, index,
+function PalletPreviewSection({
+  pallet, index, isLast,
 }: {
-  pallet: { id?: string; hasFourSideWarning?: boolean; items?: Array<{ title?: string; bezeichnung?: string; einheit?: string; menge?: number; fnsku?: string; sku?: string; ean?: string; level?: number; category?: string }>; einzelneSkuItems?: Array<unknown> };
+  pallet: PreviewPallet;
   index: number;
+  isLast: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const items = pallet.items || [];
-  const eskuOnPallet = (pallet as { einzelneSkuItems?: Array<unknown> }).einzelneSkuItems?.length || 0;
-  const totalUnits = items.reduce((s, it) => s + (Number(it.menge) || 0), 0);
+  const eskuOnPallet = pallet.einzelneSkuItems?.length || 0;
+  const totalUnits = items.reduce((s, it) => s + (Number(it.units) || 0), 0);
   const palletLabel = pallet.id || `P${index + 1}`;
 
-  const copy = () => {
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!pallet.id || typeof navigator === 'undefined' || !navigator.clipboard) return;
     navigator.clipboard.writeText(pallet.id).then(
       () => { setCopied(true); setTimeout(() => setCopied(false), 1400); },
@@ -1567,12 +1615,11 @@ function PalletPreviewRow({
   };
 
   return (
-    <div style={{
-      border: `1px solid ${T.border.primary}`,
-      borderRadius: T.radius.md,
-      background: T.bg.page,
-      padding: '12px 14px',
+    <section style={{
+      padding: '10px 24px 14px',
+      borderBottom: isLast ? 'none' : `1px solid ${T.border.subtle}`,
     }}>
+      {/* Header row: pallet label + badges */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
@@ -1580,12 +1627,23 @@ function PalletPreviewRow({
         flexWrap: 'wrap',
         marginBottom: items.length ? 10 : 0,
       }}>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 11,
+          fontWeight: 600,
+          color: T.text.faint,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '0.04em',
+          minWidth: 22,
+        }}>
+          {String(index + 1).padStart(2, '0')}
+        </span>
         <button
           onClick={copy}
-          title="Paletten-ID kopieren"
+          title={pallet.id ? 'Paletten-ID kopieren' : ''}
           style={{
             fontFamily: T.font.mono,
-            fontSize: 13,
+            fontSize: 13.5,
             fontWeight: 500,
             color: T.text.primary,
             background: 'transparent',
@@ -1595,54 +1653,72 @@ function PalletPreviewRow({
             letterSpacing: '-0.01em',
           }}
         >
-          Palette {index + 1} · {palletLabel}
-          {copied && <span style={{ marginLeft: 8, fontSize: 11, color: T.accent.text }}>kopiert</span>}
+          {palletLabel}
+          {copied && (
+            <span style={{ marginLeft: 8, fontSize: 11, color: T.accent.text, letterSpacing: 0 }}>
+              kopiert
+            </span>
+          )}
         </button>
-        <Badge tone="neutral">{items.length} Pos.</Badge>
-        <Badge tone="neutral">{totalUnits.toLocaleString('de-DE')} Einh.</Badge>
+        <span style={{
+          fontSize: 12,
+          color: T.text.faint,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {items.length} Pos. · {totalUnits.toLocaleString('de-DE')} Einh.
+        </span>
+        <span style={{ flex: 1 }} />
         {pallet.hasFourSideWarning && <Badge tone="warn">4-Seiten</Badge>}
         {eskuOnPallet > 0 && <Badge tone="accent">ESKU {eskuOnPallet}</Badge>}
       </div>
+
+      {/* Items list */}
       {items.length > 0 && (
-        <div style={{ display: 'grid', gap: 4 }}>
+        <ol style={{
+          listStyle: 'none',
+          margin: 0,
+          padding: 0,
+          display: 'grid',
+          gap: 0,
+        }}>
           {items.map((it, i) => (
             <PalletPreviewItem key={i} item={it} />
           ))}
-        </div>
+        </ol>
       )}
-    </div>
+    </section>
   );
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function PalletPreviewItem({
-  item,
-}: {
-  item: { title?: string; bezeichnung?: string; einheit?: string; menge?: number; fnsku?: string; sku?: string; ean?: string; level?: number; category?: string };
-}) {
+function PalletPreviewItem({ item }: { item: PreviewItem }) {
   const lvl = getDisplayLevel(item) as number;
   const meta = LEVEL_META[lvl] || LEVEL_META[1];
   const code = item.fnsku || item.sku || item.ean || '—';
-  const title = formatItemTitle(item.title || item.bezeichnung || '');
-  const qty = Number(item.menge) || 0;
+  const title = formatItemTitle(item.title || '');
+  const qty = Number(item.units) || 0;
   return (
-    <div style={{
+    <li style={{
       display: 'grid',
-      gridTemplateColumns: 'auto 1fr auto auto',
+      gridTemplateColumns: '24px minmax(0, 1fr) auto auto',
       alignItems: 'center',
-      gap: 10,
-      fontSize: 12.5,
+      gap: 12,
+      fontSize: 13,
       color: T.text.secondary,
-      padding: '4px 0',
-      borderTop: `1px dashed ${T.border.subtle}`,
+      padding: '7px 0',
+      borderTop: `1px solid ${T.border.subtle}`,
     }}>
       <span
         title={meta.name}
         style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 22,
+          height: 18,
           fontFamily: T.font.mono,
           fontSize: 10.5,
           fontWeight: 600,
-          padding: '2px 6px',
           borderRadius: T.radius.sm,
           background: meta.bg,
           color: meta.text,
@@ -1651,12 +1727,16 @@ function PalletPreviewItem({
       >
         L{lvl}
       </span>
-      <span style={{
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        color: T.text.primary,
-      }} title={item.title || item.bezeichnung || ''}>
+      <span
+        title={item.title || ''}
+        style={{
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          color: T.text.primary,
+          letterSpacing: '-0.005em',
+        }}
+      >
         {title || '—'}
       </span>
       <span style={{
@@ -1669,13 +1749,16 @@ function PalletPreviewItem({
       </span>
       <span style={{
         fontVariantNumeric: 'tabular-nums',
-        color: T.text.subtle,
-        minWidth: 48,
+        fontFamily: T.font.mono,
+        fontSize: 12,
+        color: qty ? T.text.primary : T.text.faint,
+        minWidth: 56,
         textAlign: 'right',
+        letterSpacing: '-0.005em',
       }}>
-        {qty.toLocaleString('de-DE')}× {item.einheit || ''}
+        {qty ? `${qty.toLocaleString('de-DE')}×` : '—'}
       </span>
-    </div>
+    </li>
   );
 }
 
