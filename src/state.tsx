@@ -481,7 +481,17 @@ export function useAppState(): UseAppStateApi {
       );
       return;
     }
-    const target = entryId || queue[0]?.id;
+    /* Strict order: only the queue head (first non-error row) may start.
+       Error rows are skipped so a single broken parse doesn't lock the
+       rest of the shift. Smart-sort / DnD remain the way to reorder. */
+    const headId = queue.find((q) => q.status !== 'error')?.id;
+    if (entryId && headId && entryId !== headId) {
+      alert(
+        'Bitte zuerst den obersten Auftrag starten oder die Reihenfolge ändern.'
+      );
+      return;
+    }
+    const target = entryId || headId || queue[0]?.id;
     if (!target) return;
 
     /* Pre-warm the sku-dimensions query so Pruefen mounts with the

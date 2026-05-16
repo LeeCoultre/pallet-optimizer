@@ -17,6 +17,7 @@
 */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAppState } from '@/state.jsx';
 import {
   Page, Topbar, Card, Eyebrow, PageH1, Lead,
@@ -24,7 +25,9 @@ import {
 } from '@/components/ui.jsx';
 import {
   estimateOrderSeconds, getDisplayLevel, LEVEL_META,
+  sortPallets, formatItemTitle,
 } from '@/utils/auftragHelpers.js';
+import { getAuftrag } from '@/marathonApi.js';
 
 /* ════════════════════════════════════════════════════════════════════════ */
 const SORT_MODES = [
@@ -61,6 +64,8 @@ export default function WarteschlangeScreen({ onRoute }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [dragFromIdx, setDragFromIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [expandedId, setExpandedId]   = useState<string | null>(null);
+  const [flash, setFlash]             = useState<string | null>(null);
 
   const inputRef  = useRef<HTMLInputElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -105,6 +110,29 @@ export default function WarteschlangeScreen({ onRoute }) {
       setSelectedIdx(Math.max(0, visible.length - 1));
     }
   }, [visible.length, selectedIdx]);
+
+  /* Queue head — first non-error row in true queue order (NOT visible
+     order). Error rows are skipped so a broken parse doesn't lock the
+     shift. Used by both UI gating and Enter hotkey to enforce the rule
+     that Sortieren is binding. */
+  const headId = useMemo(
+    () => queue.find((q) => q.status !== 'error')?.id ?? null,
+    [queue],
+  );
+
+  /* Close the open Vorschau if the expanded entry left the queue. */
+  useEffect(() => {
+    if (expandedId && !queue.some((q) => q.id === expandedId)) {
+      setExpandedId(null);
+    }
+  }, [queue, expandedId]);
+
+  /* Auto-dismiss flash messages after 2.5s. */
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 2500);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   /* ── totals for the hero KPI strip ───────────────────────────── */
   const totals = useMemo(
@@ -214,10 +242,13 @@ export default function WarteschlangeScreen({ onRoute }) {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const target = visible[selectedIdx];
-        if (target && !current && target.status !== 'error') {
-          startEntry(target.id);
-          if (onRoute) onRoute('workspace');
+        if (!target || current || target.status === 'error') return;
+        if (headId && target.id !== headId) {
+          setFlash('Reihenfolge beachten — erst den obersten Auftrag starten.');
+          return;
         }
+        startEntry(target.id);
+        if (onRoute) onRoute('workspace');
       } else if (e.key === 'x' || e.key === 'Delete') {
         e.preventDefault();
         const target = visible[selectedIdx];
@@ -227,7 +258,7 @@ export default function WarteschlangeScreen({ onRoute }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [
-    visible, selectedIdx, queue, current, searchQuery,
+    visible, selectedIdx, queue, current, searchQuery, headId,
     startEntry, removeFromQueue, reorderQueue, onRoute,
   ]);
 
@@ -344,14 +375,20 @@ export default function WarteschlangeScreen({ onRoute }) {
                 key={entry.id}
                 entry={entry}
                 queueIdx={queue.findIndex((q) => q.id === entry.id)}
-                isFirst={displayIdx === 0 && !current && !searchQuery && filterMode === 'all'}
+                isHead={entry.id === headId}
                 isSelected={displayIdx === selectedIdx}
                 hasCurrent={!!current}
+                isExpanded={expandedId === entry.id}
                 isDragging={dragFromIdx === displayIdx}
                 isDropAbove={dragFromIdx !== null && dragOverIdx === displayIdx && dragFromIdx > displayIdx}
                 isDropBelow={dragFromIdx !== null && dragOverIdx === displayIdx && dragFromIdx < displayIdx}
                 onSelect={() => setSelectedIdx(displayIdx)}
+                onToggleExpand={() => setExpandedId((cur) => (cur === entry.id ? null : entry.id))}
                 onStart={() => {
+                  if (headId && entry.id !== headId) {
+                    setFlash('Reihenfolge beachten — erst den obersten Auftrag starten.');
+                    return;
+                  }
                   startEntry(entry.id);
                   if (onRoute) onRoute('workspace');
                 }}
@@ -405,6 +442,31 @@ export default function WarteschlangeScreen({ onRoute }) {
         {/* KEYBOARD CHEAT-SHEET */}
         {hasQueue && <KbdHints />}
       </main>
+
+      {/* FLASH — strict-order violation, drag-to-top hint, etc. */}
+      {flash && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 32,
+            transform: 'translateX(-50%)',
+            padding: '12px 20px',
+            background: T.text.primary,
+            color: T.bg.page,
+            fontFamily: T.font.ui,
+            fontSize: 13,
+            letterSpacing: '-0.005em',
+            borderRadius: T.radius.md,
+            boxShadow: '0 8px 28px rgba(0,0,0,0.18)',
+            zIndex: 1000,
+          }}
+        >
+          {flash}
+        </div>
+      )}
 
       <style>{`
         @keyframes mr-q-pulse {
@@ -1110,9 +1172,9 @@ function TipCard({ eyebrow, title, body }) {
 
 /* ════════ Queue row card ═══════════════════════════════════════════════ */
 function QueueRowCard({
-  entry, queueIdx, isFirst, isSelected, hasCurrent,
+  entry, queueIdx, isHead, isSelected, hasCurrent, isExpanded,
   isDragging, isDropAbove, isDropBelow,
-  onSelect, onStart, onRemove, onUp, onDown,
+  onSelect, onToggleExpand, onStart, onRemove, onUp, onDown,
   onDragStart, onDragOver, onDrop, onDragEnd,
 }) {
   const fba = entry.parsed?.meta?.sendungsnummer
@@ -1124,15 +1186,28 @@ function QueueRowCard({
   const fp = entry._fp;
 
   /* Visual state stack */
-  const borderColor = isFirst
+  const borderColor = isHead
     ? T.accent.main
     : isSelected
     ? T.text.primary
     : T.border.primary;
-  const bg = isFirst ? T.accent.bg : T.bg.surface;
+  const bg = isHead ? T.accent.bg : T.bg.surface;
   const dropLineColor = T.accent.main;
 
+  /* Start button is reachable only on the head row; everything else is
+     visually disabled with an explanatory tooltip. Error rows stay
+     disabled regardless (they can't be started anyway). */
+  const startEnabled = isHead && !hasCurrent && !isError;
+  const startTitle = isError
+    ? 'Auftrag mit Parse-Fehler kann nicht gestartet werden.'
+    : hasCurrent
+    ? 'Aktiver Auftrag noch nicht abgeschlossen.'
+    : !isHead
+    ? 'Erst die obenstehenden Aufträge starten. Reihenfolge mit ↑/↓ oder „Sortieren" anpassen.'
+    : undefined;
+
   return (
+    <div style={{ display: 'grid', gap: 0 }}>
     <div
       draggable
       onDragStart={onDragStart}
@@ -1145,11 +1220,14 @@ function QueueRowCard({
         padding: '20px 24px',
         background: bg,
         border: `1px solid ${borderColor}`,
-        borderRadius: T.radius.lg,
+        borderRadius: isExpanded
+          ? `${T.radius.lg} ${T.radius.lg} 0 0`
+          : T.radius.lg,
+        borderBottomWidth: isExpanded ? 0 : 1,
         boxShadow: 'none',
         opacity: isDragging ? 0.4 : 1,
         cursor: 'pointer',
-        transition: 'border-color 150ms, background 150ms, box-shadow 200ms, opacity 150ms',
+        transition: 'border-color 150ms, background 150ms, box-shadow 200ms, opacity 150ms, border-radius 150ms',
         display: 'grid',
         gridTemplateColumns: 'auto auto 1fr auto',
         alignItems: 'center',
@@ -1203,7 +1281,7 @@ function QueueRowCard({
         flex: '0 0 36px',
         fontSize: 12.5,
         fontFamily: T.font.mono,
-        color: isFirst ? T.accent.text : T.text.faint,
+        color: isHead ? T.accent.text : T.text.faint,
         fontVariantNumeric: 'tabular-nums',
         fontWeight: 500,
         textAlign: 'right',
@@ -1238,7 +1316,7 @@ function QueueRowCard({
             : validErrors > 0 ? <Badge tone="danger">{validErrors} Fehler</Badge>
             : validWarns > 0 ? <Badge tone="warn">{validWarns} Warnungen</Badge>
             : <Badge tone="success">Validiert</Badge>}
-          {isFirst && <Badge tone="accent">Nächster</Badge>}
+          {isHead && <Badge tone="accent">Nächster</Badge>}
         </div>
 
         {/* Sub line: filename + relative time */}
@@ -1316,6 +1394,22 @@ function QueueRowCard({
         gap: 4,
         flexShrink: 0,
       }} onClick={(e) => e.stopPropagation()}>
+        <IconBtn
+          onClick={onToggleExpand}
+          disabled={isError}
+          title={isExpanded ? 'Vorschau schließen' : 'Paletten-Vorschau'}
+          active={isExpanded}
+        >
+          <svg
+            width="14" height="14" viewBox="0 0 14 14" fill="none"
+            style={{
+              transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 180ms',
+            }}
+          >
+            <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </IconBtn>
         <IconBtn onClick={onUp} disabled={!onUp} title="Nach oben">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M3 9l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -1334,18 +1428,276 @@ function QueueRowCard({
         <span style={{ width: 8 }} />
         <Button
           size="sm"
-          variant={isFirst && !hasCurrent ? 'primary' : 'ghost'}
+          variant={startEnabled ? 'primary' : 'ghost'}
           onClick={onStart}
-          disabled={isError || hasCurrent}
-          title={hasCurrent ? 'Aktiver Auftrag noch nicht abgeschlossen' : undefined}
+          disabled={!startEnabled}
+          title={startTitle}
         >
-          {isFirst && !hasCurrent ? 'Starten' : 'Wählen'}
+          {startEnabled ? 'Starten' : 'Wählen'}
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path d="M3 6h6m0 0L6 3m3 3L6 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </Button>
       </div>
     </div>
+    {isExpanded && !isError && (
+      <PalletPreviewPanel entry={entry} borderColor={borderColor} />
+    )}
+    </div>
+  );
+}
+
+/* ════════ Pallet-Vorschau panel ════════════════════════════════════════
+   Inline accordion under a queue row. Read-only — surfaces what the
+   worker will see in Pruefen so they can prioritize without entering
+   the workflow. Detail is lazy-fetched (queue-list payload is slim)
+   and cached forever — queue rows are immutable until startEntry. */
+function PalletPreviewPanel({
+  entry, borderColor,
+}: {
+  entry: { id: string; parsed?: { pallets?: unknown[]; einzelneSkuItems?: unknown[]; meta?: { totalUnits?: number } } | null | undefined };
+  borderColor: string;
+}) {
+  /* Reuse Historie's ['auftrag', id] cache — same fetcher, same
+     immutability assumption — so re-opening a row that was previewed
+     before (or seen in Historie) hits cache without HTTP. */
+  const detailQ = useQuery({
+    queryKey: ['auftrag', entry.id],
+    queryFn: () => getAuftrag(entry.id),
+    staleTime: Infinity,
+    refetchInterval: false,
+    /* If the entry came in with `parsed` already populated (post-upload
+       Detail seed), short-circuit the fetch entirely. */
+    enabled: !entry.parsed?.pallets,
+    initialData: entry.parsed?.pallets ? (entry as unknown as Awaited<ReturnType<typeof getAuftrag>>) : undefined,
+  });
+
+  const parsed = (detailQ.data?.parsed ?? entry.parsed) as
+    | { pallets?: unknown[]; einzelneSkuItems?: unknown[] }
+    | null
+    | undefined;
+  const pallets = (parsed?.pallets as Array<{ id?: string; hasFourSideWarning?: boolean; items?: Array<{ title?: string; bezeichnung?: string; einheit?: string; menge?: number; fnsku?: string; sku?: string; ean?: string; level?: number; category?: string }> }> | undefined) || [];
+  const einzelneSkuItems = (parsed?.einzelneSkuItems as Array<unknown>) || [];
+
+  const sortedPallets = useMemo(
+    () => (pallets.length ? sortPallets(pallets) : []),
+    [pallets],
+  );
+
+  const containerStyle: React.CSSProperties = {
+    border: `1px solid ${borderColor}`,
+    borderTop: 'none',
+    borderRadius: `0 0 ${T.radius.lg} ${T.radius.lg}`,
+    background: T.bg.surface,
+    padding: '18px 24px 22px',
+    fontFamily: T.font.ui,
+  };
+
+  if (detailQ.isPending && !parsed) {
+    return (
+      <div style={{ ...containerStyle, display: 'flex', alignItems: 'center', gap: 10, color: T.text.subtle, fontSize: 13 }}>
+        <Spinner /> Vorschau wird geladen…
+      </div>
+    );
+  }
+  if (detailQ.isError && !parsed) {
+    return (
+      <div style={{ ...containerStyle, color: T.status.danger.text, fontSize: 13 }}>
+        Vorschau konnte nicht geladen werden.
+      </div>
+    );
+  }
+  if (!sortedPallets.length) {
+    return (
+      <div style={{ ...containerStyle, color: T.text.subtle, fontSize: 13 }}>
+        Keine Paletten in diesem Auftrag.
+      </div>
+    );
+  }
+
+  return (
+    <div style={containerStyle}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        marginBottom: 12,
+        gap: 12,
+      }}>
+        <span style={{ fontSize: 12.5, color: T.text.faint, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+          Paletten-Vorschau
+        </span>
+        <span style={{ fontSize: 12, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
+          {sortedPallets.length} Paletten · {einzelneSkuItems.length} ESKU gesamt
+        </span>
+      </div>
+      <div style={{
+        display: 'grid',
+        gap: 10,
+        maxHeight: 360,
+        overflowY: 'auto',
+      }}>
+        {sortedPallets.map((p, idx) => (
+          <PalletPreviewRow key={p.id || idx} pallet={p} index={idx} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+function PalletPreviewRow({
+  pallet, index,
+}: {
+  pallet: { id?: string; hasFourSideWarning?: boolean; items?: Array<{ title?: string; bezeichnung?: string; einheit?: string; menge?: number; fnsku?: string; sku?: string; ean?: string; level?: number; category?: string }>; einzelneSkuItems?: Array<unknown> };
+  index: number;
+}) {
+  const [copied, setCopied] = useState(false);
+  const items = pallet.items || [];
+  const eskuOnPallet = (pallet as { einzelneSkuItems?: Array<unknown> }).einzelneSkuItems?.length || 0;
+  const totalUnits = items.reduce((s, it) => s + (Number(it.menge) || 0), 0);
+  const palletLabel = pallet.id || `P${index + 1}`;
+
+  const copy = () => {
+    if (!pallet.id || typeof navigator === 'undefined' || !navigator.clipboard) return;
+    navigator.clipboard.writeText(pallet.id).then(
+      () => { setCopied(true); setTimeout(() => setCopied(false), 1400); },
+      () => { /* clipboard denied — silent */ },
+    );
+  };
+
+  return (
+    <div style={{
+      border: `1px solid ${T.border.primary}`,
+      borderRadius: T.radius.md,
+      background: T.bg.page,
+      padding: '12px 14px',
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+        marginBottom: items.length ? 10 : 0,
+      }}>
+        <button
+          onClick={copy}
+          title="Paletten-ID kopieren"
+          style={{
+            fontFamily: T.font.mono,
+            fontSize: 13,
+            fontWeight: 500,
+            color: T.text.primary,
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            cursor: pallet.id ? 'pointer' : 'default',
+            letterSpacing: '-0.01em',
+          }}
+        >
+          Palette {index + 1} · {palletLabel}
+          {copied && <span style={{ marginLeft: 8, fontSize: 11, color: T.accent.text }}>kopiert</span>}
+        </button>
+        <Badge tone="neutral">{items.length} Pos.</Badge>
+        <Badge tone="neutral">{totalUnits.toLocaleString('de-DE')} Einh.</Badge>
+        {pallet.hasFourSideWarning && <Badge tone="warn">4-Seiten</Badge>}
+        {eskuOnPallet > 0 && <Badge tone="accent">ESKU {eskuOnPallet}</Badge>}
+      </div>
+      {items.length > 0 && (
+        <div style={{ display: 'grid', gap: 4 }}>
+          {items.map((it, i) => (
+            <PalletPreviewItem key={i} item={it} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+function PalletPreviewItem({
+  item,
+}: {
+  item: { title?: string; bezeichnung?: string; einheit?: string; menge?: number; fnsku?: string; sku?: string; ean?: string; level?: number; category?: string };
+}) {
+  const lvl = getDisplayLevel(item) as number;
+  const meta = LEVEL_META[lvl] || LEVEL_META[1];
+  const code = item.fnsku || item.sku || item.ean || '—';
+  const title = formatItemTitle(item.title || item.bezeichnung || '');
+  const qty = Number(item.menge) || 0;
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'auto 1fr auto auto',
+      alignItems: 'center',
+      gap: 10,
+      fontSize: 12.5,
+      color: T.text.secondary,
+      padding: '4px 0',
+      borderTop: `1px dashed ${T.border.subtle}`,
+    }}>
+      <span
+        title={meta.name}
+        style={{
+          fontFamily: T.font.mono,
+          fontSize: 10.5,
+          fontWeight: 600,
+          padding: '2px 6px',
+          borderRadius: T.radius.sm,
+          background: meta.bg,
+          color: meta.text,
+          letterSpacing: '0.02em',
+        }}
+      >
+        L{lvl}
+      </span>
+      <span style={{
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        color: T.text.primary,
+      }} title={item.title || item.bezeichnung || ''}>
+        {title || '—'}
+      </span>
+      <span style={{
+        fontFamily: T.font.mono,
+        fontSize: 11.5,
+        color: T.text.faint,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {code}
+      </span>
+      <span style={{
+        fontVariantNumeric: 'tabular-nums',
+        color: T.text.subtle,
+        minWidth: 48,
+        textAlign: 'right',
+      }}>
+        {qty.toLocaleString('de-DE')}× {item.einheit || ''}
+      </span>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────── */
+function Spinner() {
+  /* SVG-native rotation — avoids needing a CSS keyframe declaration. */
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <g>
+        <circle cx="7" cy="7" r="5" stroke={T.border.strong} strokeWidth="1.5" opacity="0.3" />
+        <path d="M12 7a5 5 0 0 0-5-5" stroke={T.accent.main} strokeWidth="1.5" strokeLinecap="round" />
+        <animateTransform
+          attributeName="transform"
+          attributeType="XML"
+          type="rotate"
+          from="0 7 7"
+          to="360 7 7"
+          dur="0.8s"
+          repeatCount="indefinite"
+        />
+      </g>
+    </svg>
   );
 }
 
@@ -1434,8 +1786,9 @@ function Stat({ label, value, accent }: { label?: React.ReactNode; value?: React
 }
 
 /* ──────────────────────────────────────────────────────────────────────── */
-function IconBtn({ onClick, disabled, title, children }: { onClick?: (e: React.MouseEvent) => void; disabled?: boolean; title?: string; children?: React.ReactNode }) {
+function IconBtn({ onClick, disabled, title, active, children }: { onClick?: (e: React.MouseEvent) => void; disabled?: boolean; title?: string; active?: boolean; children?: React.ReactNode }) {
   const [hover, setHover] = useState(false);
+  const lit = !disabled && (hover || active);
   return (
     <button
       onClick={onClick}
@@ -1448,10 +1801,10 @@ function IconBtn({ onClick, disabled, title, children }: { onClick?: (e: React.M
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: !disabled && hover ? T.bg.surface3 : 'transparent',
+        background: active ? T.bg.surface3 : lit ? T.bg.surface3 : 'transparent',
         border: '1px solid transparent',
         borderRadius: T.radius.sm,
-        color: !disabled && hover ? T.text.primary : T.text.subtle,
+        color: lit ? T.text.primary : T.text.subtle,
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.3 : 1,
         transition: 'background 150ms, color 150ms',
