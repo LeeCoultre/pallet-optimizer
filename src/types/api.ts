@@ -427,3 +427,38 @@ export interface XlsxExportRange {
   from?: string;
   to?: string;
 }
+
+/* ─── Reports (Berichte analytics aggregates) ─────── */
+
+export interface LevelBucket {
+  level: number;
+  units: number;
+  rollen: number;
+  auftragCount: number;
+}
+
+/* date is YYYY-MM-DD; values keys are level numbers as JSON strings */
+export interface DailyLevelBucket {
+  date: string;
+  values: Record<string, number>;
+}
+
+export interface HeatmapCell {
+  date: string;
+  count: number;
+  units: number;
+}
+
+export interface ReportsAggregates {
+  byLevel: LevelBucket[];
+  dailyByLevel: DailyLevelBucket[];
+  rollenByDay: DailyLevelBucket[];
+  heatmap: HeatmapCell[];
+  days: number;
+}
+
+export interface ReportsQuery {
+  days?: number;
+  /* Comma-separated level filter, e.g. "1,3,7" */
+  levels?: string;
+}

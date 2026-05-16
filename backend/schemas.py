@@ -391,3 +391,45 @@ class AuftragDetail(AuftragSummary):
             current_item_idx=row.current_item_idx,
             completed_keys=row.completed_keys or {},
         )
+
+
+# ─── Reports — aggregates for the Berichte analytics sections ────────
+# Filled by the in-memory aggregator that scans completed Aufträge in
+# the lookback window. All counts are derived from parsed.pallets[].items
+# (+ parsed.einzelneSkuItems), level mirrors the frontend's getLevel()
+# title regex — see backend/levels.py.
+
+class LevelBucket(BaseModel):
+    """One row in the byLevel breakdown — total units/rolls/auftrag count
+    per physical level (1=Thermo … 7=Tacho)."""
+    level: int
+    units: int
+    rollen: int
+    auftrag_count: int  # distinct Aufträge that contain ≥1 item of this level
+
+
+class DailyLevelBucket(BaseModel):
+    """One day in dailyByLevel / rollenByDay. `values` maps level → metric
+    (units or rollen depending on the field). Levels with zero value for
+    the day are omitted to keep the payload tight."""
+    date: str  # YYYY-MM-DD (UTC date of finished_at)
+    values: dict[int, int] = Field(default_factory=dict)
+
+
+class HeatmapCell(BaseModel):
+    """One day cell in the 30-day calendar heatmap."""
+    date: str  # YYYY-MM-DD
+    count: int  # completed Aufträge on this date
+    units: int  # total Einheiten processed on this date
+
+
+class ReportsAggregates(BaseModel):
+    """Server-side aggregates for the Berichte analytics widgets.
+    The 4 sections (Format-Verteilung, Aktivität-Heatmap, Level-Stack,
+    Rollen-Durchsatz) are derived from these slices."""
+    by_level: list[LevelBucket] = Field(default_factory=list)
+    daily_by_level: list[DailyLevelBucket] = Field(default_factory=list)
+    rollen_by_day: list[DailyLevelBucket] = Field(default_factory=list)
+    heatmap: list[HeatmapCell] = Field(default_factory=list)
+    # Lookback window the server actually applied (clamped to ≤90).
+    days: int

@@ -32,6 +32,7 @@ import { downloadAuftraegeXlsx, getHistory } from '@/marathonApi.js';
 import {
   Page, Topbar, Eyebrow, Lead, StudioFrame, T,
 } from '@/components/ui.jsx';
+import BerichteAnalytics from './BerichteAnalytics.jsx';
 
 const RECENT_KEY = 'marathon.berichte.recent';
 const RECENT_MAX = 8;
@@ -259,7 +260,12 @@ export default function BerichteScreen() {
           </Lead>
         </header>
 
-        {/* HERO KPI STRIP */}
+        {/* ANALYTIK — global overview, independent from the export date
+            range below. User sees "how are we doing" first, then drills
+            into a specific date window for the export. */}
+        <BerichteAnalytics />
+
+        {/* HERO KPI STRIP — scoped to the export date range */}
         <KpiStrip current={summary} previous={summaryPrev} />
 
         {/* STUDIO FRAME — main form */}

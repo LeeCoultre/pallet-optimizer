@@ -18,6 +18,7 @@ from .routers import (
     exports,
     history,
     packing,
+    reports,
     search,
     sku_dimensions,
     users,
@@ -98,6 +99,7 @@ app.include_router(sku_dimensions.router)  # /api/sku-dimensions/*, /api/admin/s
 app.include_router(search.router)     # /api/search
 app.include_router(activity.router)   # /api/activity/live, /api/activity/shift
 app.include_router(exports.router)    # /api/exports/auftraege.xlsx
+app.include_router(reports.router)    # /api/reports/aggregates
 
 
 @app.get("/health")

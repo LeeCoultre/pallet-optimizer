@@ -28,6 +28,8 @@ import type {
   AuftragReorderItem,
   AuftragSummary,
   HistoryPage,
+  ReportsAggregates,
+  ReportsQuery,
   SearchQuery,
   SearchResults,
   ShiftInfo,
@@ -211,6 +213,18 @@ export const getActivityLive = (limit = 50): Promise<ActivityFeed> =>
 
 export const getMyShift = (): Promise<ShiftInfo> =>
   call('GET', '/api/activity/shift');
+
+/* ─── Reports (Berichte analytics aggregates) ─────────────────────────
+ * Backend aggregates parsed blobs over a lookback window (≤90 days) and
+ * returns the 4 slices the analytics sections consume. Frontend treats
+ * the response as immutable for `staleTime` purposes — values change
+ * only when an Auftrag completes (~minutes), so 30s polling is plenty. */
+export const getReportsAggregates = (params: ReportsQuery = {}): Promise<ReportsAggregates> => {
+  const qsParams: Record<string, unknown> = {};
+  if (params.days != null) qsParams.days = params.days;
+  if (params.levels) qsParams.levels = params.levels;
+  return call('GET', `/api/reports/aggregates${qs(qsParams)}`);
+};
 
 export const downloadAuftraegeXlsx = async ({ from, to }: XlsxExportRange = {}): Promise<XlsxExportResult> => {
   const params: Record<string, string> = {};
