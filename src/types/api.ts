@@ -12,7 +12,7 @@ export type ISODateString = string;
 /* ─── Enums ──────────────────────────────────────────── */
 
 export type UserRole = 'admin' | 'user';
-export type AuftragStatus = 'queued' | 'in_progress' | 'completed' | 'error';
+export type AuftragStatus = 'queued' | 'in_progress' | 'completed' | 'error' | 'cancelled';
 export type WorkflowStep = 'upload' | 'pruefen' | 'focus' | 'abschluss';
 
 /* ─── Parser shapes (OPAQUE — owned by parseLagerauftrag.js) ── */
@@ -66,6 +66,8 @@ export interface Parsed {
   meta: ParsedMeta;
   pallets: ParsedPallet[];
   einzelneSkuItems?: ParsedItem[];
+  /** Set when the worker stornierts the Auftrag from Focus. */
+  cancellation?: CancellationInfo;
   [extra: string]: unknown;
 }
 
@@ -153,6 +155,37 @@ export interface WorkflowProgressPatch {
   currentItemIdx?: number;
   completedKeys?: CompletedKeys;
   palletTimings?: PalletTimings;
+}
+
+/** One flagged article in a Stornierung. `palletId` references
+ *  parsed.pallets[].id so the Historie expand can highlight even
+ *  after pallet reorder. */
+export interface AbortItemPayload {
+  palletId?: string | null;
+  itemIdx?: number | null;
+  code?: string | null;
+  title?: string | null;
+  reason?: string | null;
+}
+
+export interface WorkflowAbortPayload {
+  items: AbortItemPayload[];
+  note?: string | null;
+}
+
+/** Server-stored cancellation block, appended onto parsed when the
+ *  worker stornierts an Auftrag. Lives under parsed.cancellation. */
+export interface CancellationInfo {
+  items: Array<{
+    palletId: string | null;
+    itemIdx: number | null;
+    code: string | null;
+    title: string | null;
+    reason: string | null;
+  }>;
+  note: string | null;
+  at: ISODateString;
+  by: { id: UUID; name: string } | null;
 }
 
 export interface AuftragReorderItem {

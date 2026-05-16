@@ -1,17 +1,21 @@
 // @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
-/* ─────────────────────────────────────────────────────────────────────────
-   PalletStoryCard — Cinematic Hero + Data Cockpit redesign.
+/* PalletStoryCard — 3-zone redesign.
 
-   Visual anatomy:
-     • Large background "01" decorative typo number (top-right corner)
-     • Floating fill-badge pill (top-left corner, accent tint)
-     • Hero block: stack viz (left, 140×180) + headline cinema (right)
-     • Hairline divider → Levels full-width bar with chips
-     • Hairline divider → Items as detailed 2-line rows
-     • Hairline divider → Footer micro stats (m³, kg, fill%)
-     • Hover-lift: translateY(-2px) + deeper shadow
-     • Accent tone-rail on left edge (warn/special variants)
-   ───────────────────────────────────────────────────────────────────────── */
+   Zones:
+     1. Stack-hero (left rail, 100×200)
+     2. Identity + headline + items (right column)
+     3. Capacity-line (one mono row at bottom)
+
+   Removed vs. previous version:
+     • Decorative giant "01" watermark, accent halo, floating fill-badge
+     • Subtitle line + narrative paragraph (duplicated headline)
+     • Separate Levels-Verteilung section (bar + chip-row — both gone)
+     • Per-item level text chip (color dot now carries the tooltip)
+     • Footer 4-stat grid + Formate counter
+     • All eyebrow labels and 3 dividers (now just 1)
+
+   Tone is signalled by a single colored dot leading the headline.
+*/
 
 import { useRef, useState } from 'react';
 import {
@@ -22,13 +26,16 @@ import EskuMovePopover from './EskuMovePopover.jsx';
 import { T } from './ui.jsx';
 
 const TOP_ITEMS_VISIBLE = 5;
+const PALLET_VOL_M3 = 1.59;
+const PALLET_WEIGHT_KG = 700;
 
 export default function PalletStoryCard({
-  pallet, index, story, items, eskuAssigned, palletState,
+  pallet, story, items, eskuAssigned, palletState,
   allPallets, palletStates, eskuDist, eskuOverrides, onMoveEsku,
 }) {
   const [showAllItems, setShowAllItems] = useState(false);
   const [hover, setHover] = useState(false);
+
   const accentMeta = LEVEL_META[pallet.level] || LEVEL_META[1];
 
   const ranked = [
@@ -38,18 +45,14 @@ export default function PalletStoryCard({
   const visibleItems = showAllItems ? ranked : ranked.slice(0, TOP_ITEMS_VISIBLE);
   const hiddenCount = ranked.length - visibleItems.length;
 
-  const fillPct = Math.min(1.5, story.capacity.fillPct ?? story.capacity.volumePct);
+  const cap = story.capacity;
+  const fillPct = cap.fillPct ?? cap.volumePct;
   const fillValue = Math.round(fillPct * 100);
-  const fillTone = fillPct > 1 ? T.status.danger
-    : fillPct >= 0.95 ? T.status.warn
-    : fillPct >= 0.5  ? null
-    : null;
-  const fillBadgeColor = fillTone?.main || T.accent.main;
-  const fillBadgeBg = fillTone?.bg || T.accent.bg;
-  const fillBadgeBorder = fillTone?.border || T.accent.border;
-  const fillBadgeText = fillTone?.text || T.accent.text;
+  const overWeight = cap.weightPct > 1;
+  const overVolume = cap.volumePct > 1;
+  const overFill = fillPct > 1;
 
-  const indexLabel = String(index + 1).padStart(2, '0');
+  const toneColor = mapToneColor(story.tone);
 
   return (
     <article
@@ -58,477 +61,260 @@ export default function PalletStoryCard({
       onMouseLeave={() => setHover(false)}
       style={{
         position: 'relative',
-        padding: '28px 32px 24px',
+        padding: 24,
         background: T.bg.surface,
         border: `1px solid ${T.border.primary}`,
-        borderRadius: 22,
+        borderRadius: 18,
         scrollMarginTop: 80,
-        overflow: 'hidden',
-        transform: hover ? 'translateY(-2px)' : 'translateY(0)',
+        display: 'grid',
+        gridTemplateColumns: '100px 1fr',
+        gap: 24,
+        transform: hover ? 'translateY(-1px)' : 'translateY(0)',
         boxShadow: hover
-          ? '0 4px 12px rgba(17,24,39,0.04), 0 24px 48px -20px rgba(17,24,39,0.12)'
-          : '0 1px 3px rgba(17,24,39,0.03), 0 12px 32px -20px rgba(17,24,39,0.06)',
-        transition: 'transform 240ms cubic-bezier(0.16,1,0.3,1), box-shadow 240ms cubic-bezier(0.16,1,0.3,1)',
+          ? '0 18px 36px -22px rgba(17,24,39,0.11)'
+          : '0 8px 24px -20px rgba(17,24,39,0.05)',
+        transition: 'transform 220ms cubic-bezier(0.16,1,0.3,1), box-shadow 220ms cubic-bezier(0.16,1,0.3,1)',
       }}
     >
-      {/* Decorative giant index number — top-right corner */}
-      <div aria-hidden style={{
-        position: 'absolute',
-        top: -22,
-        right: 16,
-        fontFamily: T.font.mono,
-        fontSize: 200,
-        fontWeight: 700,
-        color: T.text.primary,
-        opacity: 0.025,
-        letterSpacing: '-0.05em',
-        lineHeight: 1,
-        pointerEvents: 'none',
-        userSelect: 'none',
-      }}>
-        {indexLabel}
-      </div>
-
-      {/* Soft accent halo top-right */}
-      <div aria-hidden style={{
-        position: 'absolute',
-        top: -120,
-        right: -120,
-        width: 280,
-        height: 280,
-        background: `radial-gradient(circle, ${accentMeta.color}08 0%, transparent 60%)`,
-        pointerEvents: 'none',
-      }} />
-
-      {/* Floating fill-badge — top-left */}
+      {/* ─── ZONE 1 — Stack hero ─────────────────────────────── */}
       <div style={{
-        position: 'absolute',
-        top: 22,
-        right: 32,
-        zIndex: 2,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 10,
       }}>
-        <div style={{
-          display: 'inline-flex',
-          alignItems: 'baseline',
-          gap: 6,
-          padding: '7px 13px',
-          background: fillBadgeBg,
-          border: `1px solid ${fillBadgeBorder}`,
-          borderRadius: 999,
+        <PalletStackViz palletState={palletState} size="story" />
+        <span style={{
           fontFamily: T.font.mono,
-          fontVariantNumeric: 'tabular-nums',
+          fontSize: 12,
+          fontWeight: 600,
+          color: T.text.primary,
+          letterSpacing: '-0.005em',
         }}>
-          <span style={{
-            fontSize: 18,
-            fontWeight: 700,
-            color: fillBadgeColor,
-            letterSpacing: '-0.025em',
-            lineHeight: 1,
-          }}>
-            {fillValue}<span style={{ fontSize: 11, fontWeight: 500, opacity: 0.7, marginLeft: 1 }}>%</span>
-          </span>
-          <span style={{
-            fontSize: 9.5,
-            color: fillBadgeText,
-            opacity: 0.7,
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-            fontWeight: 600,
-          }}>
-            FILL
-          </span>
-        </div>
+          {pallet.id}
+        </span>
       </div>
 
-      {/* HERO BLOCK */}
-      <div style={{
-        position: 'relative',
-        display: 'grid',
-        gridTemplateColumns: '140px 1fr',
-        gap: 28,
-        marginRight: 110, /* leave space for fill badge */
-      }}>
-        {/* Stack viz */}
+      {/* ─── ZONE 2 — Identity + items ───────────────────────── */}
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/* Chip row */}
         <div style={{
           display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
+          alignItems: 'center',
           gap: 8,
+          flexWrap: 'wrap',
         }}>
-          <PalletStackViz palletState={palletState} size="story" />
+          <LevelChip meta={accentMeta} level={pallet.level} />
+          {eskuAssigned.length > 0 && <EskuChip count={eskuAssigned.length} />}
+        </div>
+
+        {/* Headline (with leading tone-dot) */}
+        <h3 style={{
+          margin: '12px 0 0',
+          fontSize: 20,
+          fontWeight: 500,
+          color: T.text.primary,
+          letterSpacing: '-0.02em',
+          lineHeight: 1.2,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          minWidth: 0,
+        }}>
           <span style={{
-            fontFamily: T.font.mono,
-            fontSize: 9.5,
-            color: T.text.faint,
-            letterSpacing: '0.12em',
-            textTransform: 'uppercase',
-            fontWeight: 500,
-          }}>
-            unten → oben
+            width: 8, height: 8,
+            borderRadius: '50%',
+            background: toneColor,
+            flexShrink: 0,
+            boxShadow: `0 0 0 3px ${toneColor}22`,
+          }} />
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {story.headline}
           </span>
-        </div>
+        </h3>
 
-        {/* Right column: header chip-row → BIG headline → narrative */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-          {/* Header chips */}
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            flexWrap: 'wrap',
-          }}>
-            <span style={{
-              fontFamily: T.font.mono,
-              fontSize: 11,
-              color: T.text.faint,
-              letterSpacing: '0.04em',
-            }}>
-              {indexLabel}
-            </span>
-            <span style={{
-              fontFamily: T.font.mono,
-              fontSize: 13.5,
-              color: T.text.primary,
-              fontWeight: 600,
-              letterSpacing: '-0.005em',
-            }}>
-              {pallet.id}
-            </span>
-            <span style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '3px 9px',
-              background: accentMeta.bg,
-              border: `1px solid ${accentMeta.color}30`,
-              borderRadius: 999,
-              fontSize: 10.5,
-              fontFamily: T.font.mono,
-              fontWeight: 700,
-              color: accentMeta.text,
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
-            }}>
-              <span style={{
-                width: 7, height: 7,
-                background: accentMeta.color,
-                borderRadius: 2,
-              }} />
-              L{pallet.level} {accentMeta.shortName}
-            </span>
-            {eskuAssigned.length > 0 && (
-              <span style={{
-                fontSize: 10.5,
-                color: T.accent.text,
-                fontWeight: 700,
-                fontFamily: T.font.mono,
-                padding: '3px 9px',
-                background: T.accent.bg,
-                border: `1px solid ${T.accent.border}`,
-                borderRadius: 999,
-                letterSpacing: '0.04em',
-                textTransform: 'uppercase',
-              }}>
-                +{eskuAssigned.length} ESKU
-              </span>
-            )}
-          </div>
-
-          {/* CINEMATIC HEADLINE — type-tag + content split */}
-          <div>
-            <SplitHeadlineHero headline={story.headline} tone={story.tone} />
-            <div style={{
-              marginTop: 8,
-              fontSize: 12,
-              color: T.text.subtle,
-              fontFamily: T.font.mono,
-              fontVariantNumeric: 'tabular-nums',
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
-              fontWeight: 500,
-            }}>
-              {story.subtitle}
-            </div>
-          </div>
-
-          {/* Narrative */}
-          {story.narrative && (
-            <p style={{
-              margin: 0,
-              fontSize: 13.5,
-              color: T.text.subtle,
-              lineHeight: 1.6,
-              letterSpacing: '-0.005em',
-              maxWidth: 580,
-            }}>
-              {story.narrative}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* DIVIDER */}
-      <Divider />
-
-      {/* LEVELS — full width visualization */}
-      {story.levels.length > 0 && (
-        <>
-          <SectionEyebrow>Levels-Verteilung</SectionEyebrow>
-          <div style={{
-            marginTop: 10,
-            display: 'flex',
-            height: 10,
-            background: T.bg.surface3,
-            borderRadius: 999,
-            overflow: 'hidden',
-          }}>
-            {story.levels.map((l) => (
-              <div
-                key={l.level}
-                title={`L${l.level} ${l.name} · ${l.units} (${Math.round(l.pct * 100)}%)`}
-                style={{
-                  width: `${l.pct * 100}%`,
-                  background: l.color,
-                  transition: 'width 600ms cubic-bezier(0.16, 1, 0.3, 1)',
-                }}
-              />
-            ))}
-          </div>
-          <div style={{
-            marginTop: 12,
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 16,
-          }}>
-            {story.levels.map((l) => (
-              <span key={l.level} style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-                fontSize: 12,
-                fontFamily: T.font.ui,
-              }}>
-                <span style={{
-                  width: 9, height: 9,
-                  borderRadius: 2,
-                  background: l.color,
-                }} />
-                <span style={{ color: T.text.primary, fontWeight: 500 }}>
-                  L{l.level}
-                </span>
-                <span style={{ color: T.text.subtle }}>{l.name}</span>
-                <span style={{
-                  color: l.color,
-                  fontWeight: 700,
-                  fontFamily: T.font.mono,
-                  fontVariantNumeric: 'tabular-nums',
-                }}>
-                  {Math.round(l.pct * 100)}%
-                </span>
-              </span>
-            ))}
-          </div>
-
-          <Divider />
-        </>
-      )}
-
-      {/* ITEMS */}
-      {visibleItems.length > 0 && (
-        <>
-          <div style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: 10,
-            marginBottom: 10,
-          }}>
-            <SectionEyebrow>Artikel</SectionEyebrow>
-            <span style={{
-              fontSize: 11,
-              color: T.text.faint,
-              fontFamily: T.font.mono,
-              fontVariantNumeric: 'tabular-nums',
-            }}>
-              {showAllItems ? ranked.length : `${visibleItems.length}${hiddenCount > 0 ? ' / ' + ranked.length : ''}`}
-            </span>
-          </div>
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 0,
-          }}>
-            {visibleItems.map((row, i) => (
-              <ItemRow
-                key={`${row.source}-${i}`}
-                row={row}
-                isLast={i === visibleItems.length - 1}
-                currentPalletId={pallet.id}
-                allPallets={allPallets}
-                palletStates={palletStates}
-                eskuDist={eskuDist}
-                eskuOverrides={eskuOverrides}
-                onMoveEsku={onMoveEsku}
-              />
-            ))}
-          </div>
+        {/* Items */}
+        <div style={{ marginTop: 16 }}>
+          {visibleItems.map((row, i) => (
+            <ItemRow
+              key={`${row.source}-${i}`}
+              row={row}
+              isLast={i === visibleItems.length - 1}
+              currentPalletId={pallet.id}
+              allPallets={allPallets}
+              palletStates={palletStates}
+              eskuDist={eskuDist}
+              eskuOverrides={eskuOverrides}
+              onMoveEsku={onMoveEsku}
+            />
+          ))}
 
           {(hiddenCount > 0 || (showAllItems && ranked.length > TOP_ITEMS_VISIBLE)) && (
             <button
               type="button"
               onClick={() => setShowAllItems((v) => !v)}
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                marginTop: 12,
-                padding: '6px 12px',
+                marginTop: 8,
+                padding: '4px 2px',
                 fontSize: 11.5,
                 fontWeight: 500,
                 color: T.text.subtle,
                 background: 'transparent',
-                border: `1px solid ${T.border.primary}`,
-                borderRadius: 999,
+                border: 0,
                 cursor: 'pointer',
                 fontFamily: T.font.ui,
                 letterSpacing: '-0.005em',
-                transition: 'all 160ms',
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = T.text.subtle;
-                e.currentTarget.style.color = T.text.primary;
-                e.currentTarget.style.background = T.bg.surface2;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = T.border.primary;
-                e.currentTarget.style.color = T.text.subtle;
-                e.currentTarget.style.background = 'transparent';
-              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = T.text.primary; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = T.text.subtle; }}
             >
-              {showAllItems ? 'weniger anzeigen' : `+${hiddenCount} weitere`}
+              {showAllItems ? '— weniger' : `+${hiddenCount} weitere`}
             </button>
           )}
+        </div>
 
-          <Divider />
-        </>
-      )}
+        {/* Single divider */}
+        <div style={{
+          height: 1,
+          background: T.border.primary,
+          margin: '16px 0',
+        }} />
 
-      {/* FOOTER — micro stats */}
-      <div style={{
-        display: 'flex',
-        gap: 28,
-        flexWrap: 'wrap',
-        fontFamily: T.font.mono,
-      }}>
-        <FooterStat
-          value={story.capacity.volumeM3.toFixed(2)}
-          unit="m³"
-          label="Volumen"
-          hot={story.capacity.volumePct >= 0.95}
+        {/* ─── ZONE 3 — Capacity line ─────────────────────────── */}
+        <CapacityLine
+          cap={cap}
+          fillValue={fillValue}
+          overWeight={overWeight}
+          overVolume={overVolume}
+          overFill={overFill}
         />
-        <FooterStat
-          value={Math.round(story.capacity.weightKg).toLocaleString('de-DE')}
-          unit="kg"
-          label="Gewicht"
-          hot={story.capacity.weightPct >= 0.95}
-        />
-        <FooterStat
-          value={fillValue}
-          unit="%"
-          label="Auslastung"
-          hot={fillPct > 1}
-        />
-        {pallet.formats?.length > 0 && (
-          <FooterStat
-            value={pallet.formats.length}
-            unit=""
-            label={`Format${pallet.formats.length === 1 ? '' : 'e'}`}
-          />
-        )}
       </div>
     </article>
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════ */
-
-/* ─── SplitHeadlineHero ──────────────────────────────────────────────
-   Cinematic version of SplitHeadline (used by PalletMiniCard). Splits
-   the story headline by " · " into a tone-colored tag (top) and a
-   large content phrase (bottom). When no separator, the whole
-   headline becomes the big content line.
-   ──────────────────────────────────────────────────────────────────── */
-const TONE_TAG_COLOR_HERO = {
-  warn:    T.status.warn.text,
-  accent:  T.accent.text,
-  cool:    '#1E40AF',
-  special: T.text.primary,
-  danger:  T.status.danger.text,
-  neutral: T.text.subtle,
-};
-
-function SplitHeadlineHero({ headline, tone }) {
-  if (!headline) return null;
-  const parts = headline.split(' · ');
-  const hasSplit = parts.length >= 2;
-  const tag = hasSplit ? parts[0] : null;
-  const content = hasSplit ? parts.slice(1).join(' · ') : headline;
-  const tagColor = TONE_TAG_COLOR_HERO[tone] || T.text.subtle;
-
-  return (
-    <div>
-      {tag && (
-        <div style={{
-          fontSize: 11,
-          fontWeight: 700,
-          color: tagColor,
-          textTransform: 'uppercase',
-          letterSpacing: '0.16em',
-          fontFamily: T.font.mono,
-          lineHeight: 1.1,
-          marginBottom: 8,
-        }}>
-          {tag}
-        </div>
-      )}
-      <h3 style={{
-        margin: 0,
-        fontSize: 'clamp(24px, 2.8vw, 32px)',
-        fontWeight: 500,
-        color: T.text.primary,
-        letterSpacing: '-0.028em',
-        lineHeight: 1.08,
-      }}>
-        {content}
-      </h3>
-    </div>
-  );
+/* ════════════════════════════════════════════════════════════════════════
+   Small atoms — chips, capacity line.
+   ════════════════════════════════════════════════════════════════════════ */
+function mapToneColor(tone) {
+  if (tone === 'warn' || tone === 'special') return T.status.warn.main;
+  if (tone === 'danger') return T.status.danger.main;
+  if (tone === 'accent') return T.accent.main;
+  if (tone === 'cool')   return '#3B82F6';
+  return T.status.success.main;
 }
 
-function SectionEyebrow({ children }) {
+function LevelChip({ meta, level }) {
   return (
     <span style={{
-      fontSize: 9.5,
-      fontWeight: 700,
-      color: T.text.faint,
-      textTransform: 'uppercase',
-      letterSpacing: '0.16em',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7,
+      padding: '3px 9px',
+      background: meta.bg,
+      border: `1px solid ${meta.color}30`,
+      borderRadius: 999,
+      fontSize: 11,
       fontFamily: T.font.mono,
+      fontWeight: 700,
+      color: meta.text,
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase',
     }}>
-      {children}
+      <span style={{ width: 7, height: 7, background: meta.color, borderRadius: 2 }} />
+      L{level} {meta.shortName}
     </span>
   );
 }
 
-function Divider() {
+function EskuChip({ count }) {
   return (
-    <div style={{
-      height: 1,
-      background: T.border.primary,
-      margin: '20px 0',
-    }} />
+    <span style={{
+      fontSize: 11,
+      color: T.accent.text,
+      fontWeight: 700,
+      fontFamily: T.font.mono,
+      padding: '3px 9px',
+      background: T.accent.bg,
+      border: `1px solid ${T.accent.border}`,
+      borderRadius: 999,
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase',
+    }}>
+      +{count} ESKU
+    </span>
   );
 }
 
+function CapacityLine({ cap, fillValue, overWeight, overVolume, overFill }) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: 14,
+      flexWrap: 'wrap',
+      fontFamily: T.font.mono,
+      fontVariantNumeric: 'tabular-nums',
+      fontSize: 12.5,
+      letterSpacing: '-0.005em',
+    }}>
+      <CapPart
+        value={`${cap.volumeM3.toFixed(2)} / ${PALLET_VOL_M3.toFixed(2)}`}
+        unit="m³"
+        hot={overVolume}
+      />
+      <Sep />
+      <CapPart
+        value={`${Math.round(cap.weightKg)} / ${PALLET_WEIGHT_KG}`}
+        unit="kg"
+        hot={overWeight}
+      />
+      <Sep />
+      <CapPart
+        value={`${fillValue}%`}
+        unit="Auslastung"
+        unitLow
+        hot={overFill}
+      />
+    </div>
+  );
+}
+
+function Sep() {
+  return <span style={{ color: T.border.strong }}>·</span>;
+}
+
+function CapPart({ value, unit, hot, unitLow }) {
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'baseline',
+      gap: 5,
+    }}>
+      <span style={{
+        color: hot ? T.status.danger.text : T.text.primary,
+        fontWeight: 600,
+      }}>
+        {value}
+      </span>
+      <span style={{
+        fontSize: unitLow ? 10 : 11,
+        color: hot ? T.status.danger.text : T.text.faint,
+        textTransform: unitLow ? 'uppercase' : 'none',
+        letterSpacing: unitLow ? '0.08em' : 'normal',
+        fontWeight: unitLow ? 600 : 500,
+      }}>
+        {unit}
+      </span>
+    </span>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ItemRow — collapsed by default. Click row → toggle full detail panel
+   (mirrors Focus.PalletListOverlay's ArticleDetailPanel: title + every
+   code we have + meta chips). ESKU move stays on the row.
+   ════════════════════════════════════════════════════════════════════════ */
 function ItemRow({
   row, isLast,
   currentPalletId, allPallets, palletStates, eskuDist, eskuOverrides, onMoveEsku,
@@ -541,48 +327,58 @@ function ItemRow({
   const qty = isEsku
     ? (cartonsHere ?? it.einzelneSku?.cartonsCount ?? 1)
     : (it.units || 0);
-  const qtyUnit = isEsku ? 'Karton' : 'Stk';
+  const qtyUnit = isEsku ? 'Krt' : 'Stk';
   const title = formatItemTitle(it.title);
   const [hover, setHover] = useState(false);
   const [popOpen, setPopOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const triggerRef = useRef(null);
 
   const canMove = isEsku && typeof onMoveEsku === 'function' && allPallets?.length > 1;
   const itemKey = isEsku ? eskuOverrideKey(it) : '';
   const isOverridden = isEsku && !!(eskuOverrides && itemKey && eskuOverrides[itemKey]);
 
-  const eskuBg = isEsku ? T.accent.bg : 'transparent';
-  const eskuHoverBg = isEsku ? `color-mix(in srgb, var(--accent) 14%, transparent)` : T.bg.surface2;
-
   return (
-    <div
-      title={it.title}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        position: 'relative',
-        display: 'grid',
-        gridTemplateColumns: '12px 1fr auto auto',
-        alignItems: 'center',
-        gap: 14,
-        padding: '12px 4px',
-        borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
-        background: hover ? eskuHoverBg : eskuBg,
-        borderRadius: 6,
-        margin: '0 -4px',
-        paddingLeft: 12,
-        paddingRight: 12,
-        transition: 'background 140ms',
-      }}
-    >
-      <span title={`L${lvl} · ${meta.name}`} style={{
-        width: 10, height: 10,
-        borderRadius: 2,
-        background: meta.color,
-        flexShrink: 0,
-      }} />
+    <div style={{
+      borderBottom: !isLast ? `1px solid ${T.border.subtle}` : 'none',
+      margin: '0 -8px',
+    }}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        title={isEsku && isOverridden ? `${it.title}\n· Manuell verschoben` : it.title}
+        style={{
+          position: 'relative',
+          display: 'grid',
+          gridTemplateColumns: '8px 1fr auto auto',
+          alignItems: 'center',
+          gap: 12,
+          padding: '8px',
+          background: expanded
+            ? (isEsku ? T.accent.bg : T.bg.surface2)
+            : hover ? (isEsku ? T.accent.bg : T.bg.surface2) : 'transparent',
+          borderRadius: 4,
+          cursor: 'pointer',
+          transition: 'background 140ms',
+        }}
+      >
+        <span style={{
+          width: 8, height: 8,
+          borderRadius: 2,
+          background: meta.color,
+          flexShrink: 0,
+        }} />
 
-      <div style={{ minWidth: 0 }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -592,22 +388,22 @@ function ItemRow({
           {isEsku && (
             <span style={{
               flexShrink: 0,
-              padding: '2px 7px',
-              fontSize: 9.5,
+              padding: '1px 5px',
+              fontSize: 9,
               fontWeight: 800,
-              letterSpacing: '0.12em',
+              letterSpacing: '0.1em',
               fontFamily: T.font.mono,
               color: T.accent.text,
               background: T.bg.surface,
               border: `1px solid ${T.accent.border}`,
-              borderRadius: 4,
+              borderRadius: 3,
               textTransform: 'uppercase',
             }}>
-              ⬢ ESKU
+              ESKU{isOverridden ? '·↪' : ''}
             </span>
           )}
-          <div style={{
-            fontSize: 13.5,
+          <span style={{
+            fontSize: 13,
             fontWeight: isEsku ? 600 : 500,
             color: T.text.primary,
             letterSpacing: '-0.005em',
@@ -617,145 +413,244 @@ function ItemRow({
             minWidth: 0,
           }}>
             {title}
-          </div>
+          </span>
         </div>
-        <div style={{
-          marginTop: 3,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 10.5,
-          color: T.text.faint,
-          fontFamily: T.font.mono,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
-          fontWeight: 600,
-        }}>
-          <span>L{lvl} {meta.shortName}</span>
-          {isOverridden && (
-            <>
-              <span style={{ color: T.border.strong }}>·</span>
-              <span style={{ color: T.accent.text }} title="Manuell verschoben">↪ verschoben</span>
-            </>
-          )}
-        </div>
-      </div>
 
-      <div style={{
-        textAlign: 'right',
-        flexShrink: 0,
-      }}>
         <div style={{
-          fontSize: 18,
-          fontWeight: 600,
-          color: T.text.primary,
+          textAlign: 'right',
           fontFamily: T.font.mono,
           fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.02em',
-          lineHeight: 1,
+          whiteSpace: 'nowrap',
         }}>
-          {qty.toLocaleString('de-DE')}
+          <span style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: T.text.primary,
+            letterSpacing: '-0.01em',
+          }}>
+            {qty.toLocaleString('de-DE')}
+          </span>
+          <span style={{
+            marginLeft: 4,
+            fontSize: 10,
+            color: T.text.faint,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            fontWeight: 600,
+          }}>
+            {qtyUnit}
+          </span>
         </div>
+
         <div style={{
-          marginTop: 4,
-          fontSize: 9.5,
-          color: T.text.faint,
-          fontFamily: T.font.mono,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
         }}>
-          {qtyUnit}
+          {canMove && (
+            <>
+              <button
+                ref={triggerRef}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setPopOpen((v) => !v); }}
+                title="ESKU auf andere Palette verschieben"
+                style={{
+                  width: 22, height: 22,
+                  padding: 0,
+                  fontSize: 12,
+                  fontFamily: T.font.mono,
+                  fontWeight: 700,
+                  color: isOverridden ? T.accent.text : T.text.subtle,
+                  background: isOverridden ? T.accent.bg : 'transparent',
+                  border: `1px solid ${isOverridden ? T.accent.border : T.border.primary}`,
+                  borderRadius: 999,
+                  cursor: 'pointer',
+                  opacity: hover || isOverridden || popOpen ? 1 : 0,
+                  transition: 'opacity 140ms, background 140ms',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                ↪
+              </button>
+              <EskuMovePopover
+                open={popOpen}
+                anchorEl={triggerRef.current}
+                pallets={allPallets}
+                palletStates={palletStates}
+                byPalletId={eskuDist}
+                currentPalletId={currentPalletId}
+                isOverridden={isOverridden}
+                onPick={(targetId) => onMoveEsku(itemKey, targetId)}
+                onClose={() => setPopOpen(false)}
+              />
+            </>
+          )}
+          <span
+            aria-hidden
+            style={{
+              width: 16, height: 16,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: T.text.faint,
+              transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 180ms cubic-bezier(0.16,1,0.3,1)',
+              opacity: hover || expanded ? 1 : 0.55,
+            }}
+          >
+            <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+              <path d="M2 1l4 3.5-4 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
         </div>
       </div>
 
-      {canMove && (
-        <>
-          <button
-            ref={triggerRef}
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setPopOpen((v) => !v); }}
-            title="ESKU auf andere Palette verschieben"
-            style={{
-              gridColumn: '4',
-              marginLeft: -8,
-              padding: '5px 9px',
-              fontSize: 10.5,
-              fontFamily: T.font.mono,
-              fontWeight: 700,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              color: isOverridden ? T.accent.text : T.text.subtle,
-              background: isOverridden ? T.accent.bg : 'transparent',
-              border: `1px solid ${isOverridden ? T.accent.border : T.border.primary}`,
-              borderRadius: 999,
-              cursor: 'pointer',
-              opacity: hover || isOverridden || popOpen ? 1 : 0.6,
-              transition: 'opacity 140ms, background 140ms',
-            }}
-          >
-            ↪
-          </button>
-          <EskuMovePopover
-            open={popOpen}
-            anchorEl={triggerRef.current}
-            pallets={allPallets}
-            palletStates={palletStates}
-            byPalletId={eskuDist}
-            currentPalletId={currentPalletId}
-            isOverridden={isOverridden}
-            onPick={(targetId) => onMoveEsku(itemKey, targetId)}
-            onClose={() => setPopOpen(false)}
-          />
-        </>
-      )}
+      {expanded && <ItemDetailPanel item={it} level={lvl} levelMeta={meta} isEsku={isEsku} />}
     </div>
   );
 }
 
-function FooterStat({ value, unit, label, hot }) {
+/* ════════════════════════════════════════════════════════════════════════
+   ItemDetailPanel — full read-only article info, mirrors the panel in
+   Focus.PalletListOverlay. Title + every code we have + meta chips.
+   ════════════════════════════════════════════════════════════════════════ */
+function ItemDetailPanel({ item, level, levelMeta, isEsku }) {
+  const codes: Array<[string, string | null | undefined]> = [
+    ['FNSKU',    item.fnsku],
+    ['SKU',      item.sku],
+    ['EAN',      item.ean],
+    ['ASIN',     item.asin],
+    ['Use-Item', item.useItem],
+  ];
+  const visibleCodes = codes.filter(([, v]) => v);
+  const flags = (item.placementMeta?.flags || []) as unknown[];
+  const lst = deriveLstLabel(item.title || '');
+  const eskuCartons = isEsku
+    ? (item.placementMeta?.cartonsHere ?? item.einzelneSku?.cartonsCount ?? null)
+    : null;
+  const eskuPacksPerCarton = isEsku ? (item.einzelneSku?.packsPerCarton ?? null) : null;
+
   return (
     <div style={{
+      padding: '12px 16px 14px 28px',
+      background: T.bg.surface2,
+      borderTop: `1px dashed ${T.border.subtle}`,
       display: 'flex',
       flexDirection: 'column',
-      gap: 3,
+      gap: 12,
+      animation: 'mp-prf-rise 220ms cubic-bezier(0.16,1,0.3,1)',
     }}>
+      <DetailField label="Titel" value={item.title || '—'} multiline />
+
+      {visibleCodes.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '8px 18px',
+        }}>
+          {visibleCodes.map(([k, v]) => (
+            <DetailField key={k} label={k} value={String(v)} mono />
+          ))}
+        </div>
+      )}
+
+      {item.dimStr && (
+        <DetailField label="Maße" value={item.dimStr} mono />
+      )}
+
       <div style={{
         display: 'flex',
-        alignItems: 'baseline',
-        gap: 3,
+        flexWrap: 'wrap',
+        gap: '6px 8px',
+        alignItems: 'center',
       }}>
-        <span style={{
-          fontSize: 16,
-          fontWeight: 600,
-          color: hot ? T.status.warn.text : T.text.primary,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.02em',
-          lineHeight: 1,
-        }}>
-          {value}
-        </span>
-        {unit && (
-          <span style={{
-            fontSize: 11,
-            color: hot ? T.status.warn.text : T.text.faint,
-            fontWeight: 500,
-            opacity: 0.85,
-          }}>
-            {unit}
-          </span>
+        <PillChip>
+          <span style={{ width: 6, height: 6, background: levelMeta.color, borderRadius: 2, marginRight: 5 }} />
+          L{level} {levelMeta.name}
+        </PillChip>
+        {item.units != null && !isEsku && (
+          <PillChip>× {item.units.toLocaleString('de-DE')} Stück</PillChip>
         )}
-      </div>
-      <div style={{
-        fontSize: 9.5,
-        color: T.text.faint,
-        fontFamily: T.font.mono,
-        letterSpacing: '0.12em',
-        textTransform: 'uppercase',
-        fontWeight: 600,
-      }}>
-        {label}
+        {isEsku && eskuCartons != null && (
+          <PillChip accent>⬢ ESKU · {eskuCartons} Karton{eskuCartons === 1 ? '' : 's'}</PillChip>
+        )}
+        {isEsku && eskuPacksPerCarton != null && (
+          <PillChip>{eskuPacksPerCarton} Einh./Karton</PillChip>
+        )}
+        {lst && <PillChip>{lst}</PillChip>}
+        {flags.map((f, k) => (
+          <PillChip key={k} warn>{String(f)}</PillChip>
+        ))}
       </div>
     </div>
   );
+}
+
+function DetailField({ label, value, mono, multiline }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{
+        fontFamily: T.font.mono,
+        fontSize: 10,
+        fontWeight: 600,
+        color: T.text.faint,
+        letterSpacing: '0.14em',
+        textTransform: 'uppercase',
+        marginBottom: 3,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontFamily: mono ? T.font.mono : 'inherit',
+        fontSize: 13,
+        fontWeight: 500,
+        color: T.text.primary,
+        wordBreak: mono ? 'break-all' : 'break-word',
+        lineHeight: multiline ? 1.45 : 1.3,
+        letterSpacing: '-0.005em',
+      }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function PillChip({ children, accent, warn }) {
+  const palette = warn
+    ? { bg: T.status.warn.bg, color: T.status.warn.text, border: T.status.warn.border }
+    : accent
+    ? { bg: T.accent.bg, color: T.accent.text, border: T.accent.border }
+    : { bg: T.bg.surface, color: T.text.secondary, border: T.border.primary };
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      fontFamily: T.font.mono,
+      fontSize: 10.5,
+      fontWeight: 600,
+      padding: '2px 8px',
+      background: palette.bg,
+      color: palette.color,
+      border: `1px solid ${palette.border}`,
+      borderRadius: 999,
+      letterSpacing: '0.04em',
+    }}>
+      {children}
+    </span>
+  );
+}
+
+/* Local mirror of focusItemView's LST detection — no need to import the
+   whole helper just for one boolean. */
+function deriveLstLabel(title) {
+  if (!title) return null;
+  const t = title;
+  if (/\bmit\s+lst\b/i.test(t)) return 'mit LST';
+  if (/\bohne\s+lst\b/i.test(t)) return 'ohne LST';
+  if (/\bohne\s+(?:sepa[-\s]*)?lastschrift(?:text)?\b/i.test(t)) return 'ohne LST';
+  if (/\b(?:sepa[-\s]*)?lastschrift(?:text)?\b/i.test(t)) return 'mit LST';
+  if (/\bsepa[-\s]*druck\b/i.test(t)) return 'mit LST';
+  return null;
 }

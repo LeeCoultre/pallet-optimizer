@@ -1,20 +1,13 @@
 // @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
-/* PalletInterlude — proper pallet-completion checkpoint.
+/* PalletInterlude — minimalist pallet-completion checkpoint.
 
-   This is NOT an auto-advance ceremony. It's a hard gate that forces
-   the worker to mentally and physically separate the just-finished
-   pallet from the next one. Without this, items intended for pallet
-   B might end up on pallet A because the worker hadn't yet wrapped
-   up A's physical handling (label, secure, clear the floor).
+   One canvas, two calm zones separated by a single hairline:
+     1. ✓ Abgeschlossen  → big pallet ID, time underneath
+     2. Nächste Palette  → next ID + count + one level-tinted dot per item
 
-   Three sections:
-     1. ✓ ABGESCHLOSSEN  — stats of the just-finished pallet
-     2. CHECKLIST        — physical-task reminders
-     3. NÄCHSTE PALETTE  — preview (ID + item count + level fingerprint)
-
-   Dismissal: explicit click on the action button OR Space / Enter.
-   Click on the dimmer overlay does NOT dismiss. Reduce-motion shrinks
-   the entry animation but never removes the gate. */
+   The gate is still hard (Space / Enter confirms; overlay click does
+   not dismiss), the visual language is just quieter — no nested
+   surfaces, no stat dots, no row dividers around the body. */
 
 import { useEffect } from 'react';
 import { Button, T } from './ui.jsx';
@@ -22,12 +15,12 @@ import { LEVEL_META, getDisplayLevel } from '@/utils/auftragHelpers.js';
 
 export default function PalletInterlude({
   pallet,            // { id, itemCount, weightKg, volCm3, durationMs }
-  nextPallet,        // { id, items, ... } — full pallet object so we can render fingerprint
+  nextPallet,        // { id, items, ... }
+  nextHints,         // [{ tone: 'danger'|'warn'|'info', label, detail? }]
   reducedMotion = false,
   onComplete,
 }) {
-  /* Space / Enter advance to next pallet. No keyboard shortcut for
-     "click overlay to skip" — gate is explicit. */
+  const hints = nextHints || [];
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === ' ' || e.key === 'Enter') {
@@ -40,9 +33,7 @@ export default function PalletInterlude({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onComplete]);
 
-  const m3 = ((pallet?.volCm3 || 0) / 1e6).toFixed(2);
-  const kg = Math.round(pallet?.weightKg || 0);
-  const time = fmt(pallet?.durationMs || 0);
+  const time = fmtDuration(pallet?.durationMs || 0);
   const fadeMs = reducedMotion ? 100 : 280;
 
   return (
@@ -62,103 +53,64 @@ export default function PalletInterlude({
       <div
         style={{
           width: '100%',
-          maxWidth: 540,
+          maxWidth: 480,
           background: T.bg.surface,
           border: `1px solid ${T.border.primary}`,
-          borderRadius: 18,
-          boxShadow: 'none',
+          borderRadius: 16,
+          padding: '32px 36px 28px',
           fontFamily: T.font.ui,
-          overflow: 'hidden',
           animation: `interlude-card-in ${fadeMs * 1.4}ms cubic-bezier(0.16, 1, 0.3, 1) both`,
         }}
       >
-        {/* ── 1. DONE section ── */}
-        <div style={{ padding: '24px 28px 20px' }}>
-          <SectionEyebrow color={T.status.success.text} icon={<CheckIcon />}>
-            Palette abgeschlossen
-          </SectionEyebrow>
-          <div style={{
-            marginTop: 8,
+        {/* 1 ─ ABGESCHLOSSEN ─────────────────────────────────────────── */}
+        <Eyebrow color={T.status.success.text} icon={<CheckIcon />}>
+          Abgeschlossen
+        </Eyebrow>
+        <div style={{
+          marginTop: 10,
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 14,
+          flexWrap: 'wrap',
+        }}>
+          <span style={{
             fontFamily: T.font.mono,
-            fontSize: 'clamp(28px, 3.6vw, 40px)',
+            fontSize: 'clamp(32px, 4.2vw, 44px)',
             fontWeight: 500,
             letterSpacing: '-0.025em',
             color: T.text.primary,
-            lineHeight: 1.05,
+            lineHeight: 1,
           }}>
             {pallet?.id || '—'}
-          </div>
-          <div style={{
-            marginTop: 8,
-            fontSize: 12.5,
-            color: T.text.subtle,
+          </span>
+          <span style={{
             fontFamily: T.font.mono,
+            fontSize: 13,
+            color: T.text.faint,
             fontVariantNumeric: 'tabular-nums',
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 10,
-            alignItems: 'center',
+            letterSpacing: '0.02em',
           }}>
-            <span>{pallet?.itemCount ?? '—'} Art</span>
-            <Dot />
-            <span>{kg} kg</span>
-            <Dot />
-            <span>{m3} m³</span>
-            <Dot />
-            <span>{time}</span>
-          </div>
+            {time}
+          </span>
         </div>
 
-        {/* ── 2. CHECKLIST section ── */}
-        <div style={{
-          padding: '18px 28px',
-          borderTop: `1px solid ${T.border.subtle}`,
-          background: T.bg.surface2,
-        }}>
-          <SectionEyebrow>Vor dem nächsten Schritt</SectionEyebrow>
-          <ul style={{
-            margin: '10px 0 0 0',
-            padding: 0,
-            listStyle: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-          }}>
-            <ChecklistItem>Palette gesichert und abgelegt</ChecklistItem>
-            <ChecklistItem>Etikett angebracht</ChecklistItem>
-            <ChecklistItem>Arbeitsbereich frei für nächste Palette</ChecklistItem>
-          </ul>
-        </div>
+        {nextPallet && <Hairline />}
 
-        {/* ── 3. NEXT section ── */}
+        {/* 2 ─ NÄCHSTE PALETTE ──────────────────────────────────────── */}
         {nextPallet && (
-          <div style={{
-            padding: '18px 28px 20px',
-            borderTop: `1px solid ${T.border.subtle}`,
-          }}>
-            <SectionEyebrow color={T.accent.text}>Nächste Palette</SectionEyebrow>
+          <>
+            <Eyebrow>Nächste Palette</Eyebrow>
             <NextPalletPreview pallet={nextPallet} />
-          </div>
+            {hints.length > 0 && <HintList hints={hints} />}
+          </>
         )}
 
-        {/* ── Action ── */}
+        {/* Action ─ right-aligned, no preface label */}
         <div style={{
-          padding: '16px 28px',
-          borderTop: `1px solid ${T.border.subtle}`,
-          background: T.bg.surface,
+          marginTop: 28,
           display: 'flex',
-          alignItems: 'center',
-          gap: 12,
+          justifyContent: 'flex-end',
         }}>
-          <span style={{
-            flex: 1,
-            fontSize: 11.5,
-            color: T.text.subtle,
-            fontFamily: T.font.mono,
-            letterSpacing: '0.04em',
-          }}>
-            Bereit?
-          </span>
           <Button variant="primary" onClick={onComplete}
                   title="Nächste Palette starten (Space)">
             {nextPallet ? `${nextPallet.id} starten` : 'Weiter'}
@@ -181,8 +133,19 @@ export default function PalletInterlude({
   );
 }
 
-/* ── Section eyebrow (small mono caps with optional icon) ── */
-function SectionEyebrow({ children, color, icon }) {
+/* ── Hairline divider — single rule, generous breathing room ───────── */
+function Hairline() {
+  return (
+    <div style={{
+      height: 1,
+      background: T.border.subtle,
+      margin: '24px 0',
+    }} />
+  );
+}
+
+/* ── Section eyebrow ── */
+function Eyebrow({ children, color, icon }) {
   return (
     <div style={{
       display: 'inline-flex',
@@ -191,9 +154,9 @@ function SectionEyebrow({ children, color, icon }) {
       fontSize: 10.5,
       fontWeight: 600,
       fontFamily: T.font.mono,
-      color: color || T.text.subtle,
+      color: color || T.text.faint,
       textTransform: 'uppercase',
-      letterSpacing: '0.16em',
+      letterSpacing: '0.18em',
     }}>
       {icon}
       <span>{children}</span>
@@ -201,33 +164,9 @@ function SectionEyebrow({ children, color, icon }) {
   );
 }
 
-/* ── Checklist item (◇ bullet, diamond hint without forcing tick state) ── */
-function ChecklistItem({ children }) {
-  return (
-    <li style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      fontSize: 13,
-      color: T.text.secondary,
-      lineHeight: 1.4,
-    }}>
-      <span style={{
-        flexShrink: 0,
-        width: 14, height: 14,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        border: `1px solid ${T.border.strong}`,
-        borderRadius: 3,
-        background: T.bg.surface,
-      }} />
-      <span>{children}</span>
-    </li>
-  );
-}
-
-/* ── Next-pallet preview: ID + item count + level fingerprint stripe ── */
+/* ── Next-pallet preview: ID + count on one line, one short line
+   per item below — each tinted to its level. No eyebrow inside;
+   the section already carries one above the hairline. ──────────── */
 function NextPalletPreview({ pallet }) {
   const items = pallet?.items || [];
   const total = items.length;
@@ -255,31 +194,36 @@ function NextPalletPreview({ pallet }) {
         </span>
         <span style={{
           fontSize: 12.5,
-          color: T.text.subtle,
+          color: T.text.faint,
           fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '0.02em',
         }}>
           {total} Artikel
         </span>
       </div>
 
-      {/* Level fingerprint mini-stripe — same vocabulary as the StickyBar */}
       <div style={{
         display: 'flex',
-        gap: 1.5,
-        height: 6,
+        alignItems: 'center',
+        gap: 6,
+        flexWrap: 'wrap',
+        marginTop: 4,
       }}>
         {items.map((it, j) => {
           const lvl = it.level || getDisplayLevel(it) || 1;
           const meta = LEVEL_META[lvl] || LEVEL_META[1];
           return (
-            <span key={j} style={{
-              flex: '1 1 0',
-              minWidth: 4,
-              height: '100%',
-              background: meta.color,
-              opacity: 0.55,
-              borderRadius: 1.5,
-            }} />
+            <span
+              key={j}
+              aria-hidden
+              style={{
+                width: 22,
+                height: 3,
+                borderRadius: 2,
+                background: meta.color,
+                opacity: 0.8,
+              }}
+            />
           );
         })}
       </div>
@@ -287,11 +231,77 @@ function NextPalletPreview({ pallet }) {
   );
 }
 
-/* ── Atoms ── */
-function Dot() {
-  return <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'rgba(15,23,42,0.20)' }} />;
+/* ── Hint strip — surfaces what's worth a second look about the next
+   pallet (4-Seiten-Warnung, OVERLOAD-W/V, ESKU presence, item count).
+   Renders nothing when the hint list is empty so a clean pallet
+   produces a clean card. Each hint reads as a single line: tone-tinted
+   leading dot · label · optional muted detail. Wrapped in its own
+   non-bordered block so it sits inside the "Nächste Palette" zone
+   without visually competing with the level-line rhythm above. */
+function HintList({ hints }) {
+  return (
+    <ul style={{
+      margin: '14px 0 0 0',
+      padding: 0,
+      listStyle: 'none',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+    }}>
+      {hints.map((h, i) => (
+        <HintLine key={i} tone={h.tone} label={h.label} detail={h.detail} />
+      ))}
+    </ul>
+  );
 }
 
+function HintLine({ tone, label, detail }) {
+  const palette = tone === 'danger'
+    ? { dot: T.status.danger.main, text: T.status.danger.text }
+    : tone === 'warn'
+    ? { dot: T.status.warn.main,   text: T.status.warn.text }
+    : { dot: T.accent.main,        text: T.text.primary };
+  return (
+    <li style={{
+      display: 'grid',
+      gridTemplateColumns: 'auto auto 1fr',
+      alignItems: 'center',
+      gap: 10,
+      fontSize: 13,
+      lineHeight: 1.4,
+    }}>
+      <span aria-hidden style={{
+        width: 7, height: 7,
+        borderRadius: '50%',
+        background: palette.dot,
+        flexShrink: 0,
+      }} />
+      <span style={{
+        color: palette.text,
+        fontWeight: 600,
+        letterSpacing: '-0.005em',
+        whiteSpace: 'nowrap',
+      }}>
+        {label}
+      </span>
+      {detail && (
+        <span style={{
+          color: T.text.faint,
+          fontFamily: T.font.mono,
+          fontSize: 11.5,
+          fontVariantNumeric: 'tabular-nums',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          · {detail}
+        </span>
+      )}
+    </li>
+  );
+}
+
+/* ── Atoms ── */
 function Kbd({ children, onPrimary }) {
   return (
     <span style={{
@@ -320,16 +330,23 @@ function CheckIcon() {
   );
 }
 
-function fmt(ms) {
-  if (!ms || ms < 0) return '0:00';
+/* Duration formatter — produces `Xh Ym` once the elapsed time crosses
+   one hour, `Mm Ss` underneath, and `Ss` for sub-minute. Previous fmt
+   collapsed everything into `m:ss`, which produced unreadable strings
+   like `3843:12` for the warehouse's long-tail (workers stepping away
+   mid-pallet). Anchors mono digits to a single visual rhythm. */
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '0s';
   const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
   const m = Math.floor(sec / 60);
   const s = sec % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
+  if (m < 60) return s === 0 ? `${m}m` : `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm === 0 ? `${h}h` : `${h}h ${mm}m`;
 }
 
-/* Legacy export kept as a no-op — Focus.tsx still imports `resetSkipCount`.
-   The auto-advance heuristic is gone, but the import + call site remain
-   so we don't have to touch the Focus screen during freeze week. */
+/* Legacy export kept as a no-op — Focus.tsx still imports `resetSkipCount`. */
 /* eslint-disable react-refresh/only-export-components -- legacy no-op export */
 export function resetSkipCount() { /* deprecated */ }

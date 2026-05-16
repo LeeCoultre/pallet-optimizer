@@ -39,6 +39,7 @@ import type {
   UserResponse,
   UUID,
   UserRole,
+  WorkflowAbortPayload,
   WorkflowProgressPatch,
   XlsxExportRange,
   XlsxExportResult,
@@ -152,6 +153,7 @@ export const startAuftrag    = (id: UUID): Promise<AuftragDetail>               
 export const updateProgress  = (id: UUID, p: WorkflowProgressPatch): Promise<AuftragDetail> => call('PATCH', `/api/auftraege/${id}/progress`, p);
 export const completeAuftrag = (id: UUID): Promise<AuftragDetail>                       => call('POST',  `/api/auftraege/${id}/complete`);
 export const cancelAuftrag   = (id: UUID): Promise<AuftragDetail>                       => call('POST',  `/api/auftraege/${id}/cancel`);
+export const abortAuftrag    = (id: UUID, payload: WorkflowAbortPayload): Promise<AuftragDetail> => call('POST',  `/api/auftraege/${id}/abort`, payload);
 
 /* ─── History ───────────────────────────────────────── */
 export const getHistory = (limit = 50, offset = 0): Promise<HistoryPage> =>

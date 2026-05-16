@@ -77,3 +77,65 @@ async def test_cancel_returns_to_queue(client, admin, as_user):
     assert body["assigned_to_user_id"] is None
     assert body["completed_keys"] == {}
     assert body["pallet_timings"] == {}
+
+
+async def test_abort_terminates_into_history(client, admin, as_user):
+    """Storno: in_progress → cancelled, with flagged-article reasons
+    persisted under parsed.cancellation and the row showing up in
+    /api/history alongside completed ones."""
+    as_user(admin)
+    r = await client.post("/api/auftraege", json=make_payload(
+        file_name="abort.docx", fba="AB-1",
+        pallets=[{"id": "P1", "items": [{"sku": "A"}, {"sku": "B"}]}],
+    ))
+    a_id = r.json()["id"]
+    await client.post(f"/api/auftraege/{a_id}/start")
+
+    r = await client.post(f"/api/auftraege/{a_id}/abort", json={
+        "items": [
+            {"pallet_id": "P1", "item_idx": 0, "code": "A",
+             "title": "Sku A", "reason": "Karton beschädigt"},
+        ],
+        "note": "Reklamation",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "cancelled"
+    assert body["finished_at"] is not None
+    assert body["duration_sec"] is not None and body["duration_sec"] >= 0
+    canc = body["parsed"]["cancellation"]
+    assert canc["note"] == "Reklamation"
+    assert canc["by"]["name"] == "TestAdmin"
+    assert canc["items"][0]["palletId"] == "P1"
+    assert canc["items"][0]["reason"] == "Karton beschädigt"
+
+    # No longer in active list
+    r = await client.get("/api/auftraege")
+    assert all(x["id"] != a_id for x in r.json())
+
+    # Shows up in history
+    r = await client.get("/api/history")
+    items = r.json()["items"]
+    assert any(x["id"] == a_id and x["status"] == "cancelled" for x in items)
+
+
+async def test_abort_requires_in_progress(client, admin, as_user):
+    """Cannot storno a queued (not started) Auftrag."""
+    as_user(admin)
+    r = await client.post("/api/auftraege", json=make_payload())
+    a_id = r.json()["id"]
+
+    r = await client.post(f"/api/auftraege/{a_id}/abort", json={"items": []})
+    assert r.status_code == 409
+
+
+async def test_abort_other_user_forbidden(client, admin, user, as_user):
+    """A different user cannot storno someone else's in_progress row."""
+    as_user(admin)
+    r = await client.post("/api/auftraege", json=make_payload())
+    a_id = r.json()["id"]
+    await client.post(f"/api/auftraege/{a_id}/start")
+
+    as_user(user)
+    r = await client.post(f"/api/auftraege/{a_id}/abort", json={"items": []})
+    assert r.status_code == 403

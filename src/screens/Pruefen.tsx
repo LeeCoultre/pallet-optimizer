@@ -103,6 +103,76 @@ export default function PruefenScreen() {
     warnings: validation.warningCount || 0,
   };
 
+  /* ── Parser warnings aggregation ───────────────────────────────────
+     Each parsed item may carry `parseWarnings[]` set by the strict
+     classifiers in parseLagerauftrag.ts. We surface them here so the
+     worker reviews them BEFORE entering Focus. High-severity ones
+     block Focus until acknowledged; low/medium are informational. */
+  const parseWarnings = useMemo(() => {
+    const out: Array<{
+      key: string;
+      palletId: string;
+      itemIdx: number;
+      item: any;
+      warnings: any[];
+      maxSeverity: 'low' | 'medium' | 'high';
+    }> = [];
+    const addItems = (items: any[], palletId: string) => {
+      items.forEach((it, idx) => {
+        const ws = (it?.parseWarnings || []) as any[];
+        if (!ws.length) return;
+        const sev = ws.reduce((m: 'low' | 'medium' | 'high', w: any) =>
+          w.severity === 'high' ? 'high'
+          : (w.severity === 'medium' && m !== 'high') ? 'medium'
+          : m,
+        'low' as 'low' | 'medium' | 'high');
+        out.push({
+          key: `${palletId}|${idx}`,
+          palletId,
+          itemIdx: idx,
+          item: it,
+          warnings: ws,
+          maxSeverity: sev,
+        });
+      });
+    };
+    (current?.parsed?.pallets || []).forEach((p: any) => addItems(p.items || [], p.id));
+    addItems(current?.parsed?.einzelneSkuItems || [], 'ESKU');
+    return out;
+  }, [current?.parsed]);
+
+  /* ── Acknowledged warnings — persisted in localStorage keyed by
+     Auftrag id + item key. Worker clicks "Akzeptieren" → that item's
+     warning is muted (but still visible, just no longer blocks). */
+  const ackKey = `marathon.pruefen.parseAcks.${current?.id || 'none'}`;
+  const [acked, setAcked] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(ackKey);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+  const ackOne = (key: string) => {
+    setAcked((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      try { localStorage.setItem(ackKey, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const ackAll = () => {
+    setAcked((prev) => {
+      const next = new Set(prev);
+      parseWarnings.forEach((w) => next.add(w.key));
+      try { localStorage.setItem(ackKey, JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  /* High-severity warnings that haven't been acknowledged block Focus. */
+  const blockingWarnings = parseWarnings.filter(
+    (w) => w.maxSeverity === 'high' && !acked.has(w.key),
+  );
+
   const briefing = useMemo(
     () => analyzeAuftrag({
       parsed: current?.parsed,
@@ -134,6 +204,7 @@ export default function PruefenScreen() {
   };
 
   const [problemOnly, setProblemOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const handleJumpToPallet = (palletId) => {
     if (viewMode !== 'story') switchViewMode('story');
@@ -148,13 +219,53 @@ export default function PruefenScreen() {
     [view?.pallets, palletStates],
   );
 
-  const visiblePallets = useMemo(() => {
-    if (!problemOnly) return view?.pallets || [];
-    return (view?.pallets || []).filter((p) => {
-      const st = palletStates[p.id];
-      return st && Array.isArray(st.flags) && st.flags.length > 0;
+  /* Build a per-pallet search index once — flattened searchable
+     string per pallet covers id + every item's FNSKU / EAN / SKU /
+     ASIN / useItem / title. Lower-cased so the query comparison is
+     case-insensitive.
+
+     Source must be the item-carrying enrichedPallets, NOT view.pallets
+     (the latter is `pruefenView()` output which only carries summary
+     fields like {id, level, articles}, no items). ESKU items are
+     pre-distributed via `distribution.byPalletId`, so we also fold
+     them in so a worker searching for an ESKU code lands on the
+     correct destination pallet. */
+  const palletSearchIndex = useMemo(() => {
+    const idx = new Map<string, string>();
+    enrichedPallets.forEach((p: any) => {
+      const parts: string[] = [String(p.id || '').toLowerCase()];
+      const items = [
+        ...(p.items || []),
+        ...(eskuDist?.[p.id] || []),
+      ];
+      items.forEach((it: any) => {
+        if (it.fnsku)   parts.push(String(it.fnsku).toLowerCase());
+        if (it.ean)     parts.push(String(it.ean).toLowerCase());
+        if (it.sku)     parts.push(String(it.sku).toLowerCase());
+        if (it.asin)    parts.push(String(it.asin).toLowerCase());
+        if (it.useItem) parts.push(String(it.useItem).toLowerCase());
+        if (it.title)   parts.push(String(it.title).toLowerCase());
+      });
+      idx.set(p.id, parts.join(' '));
     });
-  }, [view?.pallets, palletStates, problemOnly]);
+    return idx;
+  }, [enrichedPallets, eskuDist]);
+
+  const searchQ = searchQuery.trim().toLowerCase();
+
+  const visiblePallets = useMemo(() => {
+    let arr = view?.pallets || [];
+    if (problemOnly) {
+      arr = arr.filter((p) => {
+        const st = palletStates[p.id];
+        return st && Array.isArray(st.flags) && st.flags.length > 0;
+      });
+    }
+    if (searchQ) {
+      arr = arr.filter((p) => (palletSearchIndex.get(p.id) || '').includes(searchQ));
+    }
+    return arr;
+  }, [view?.pallets, palletStates, problemOnly, searchQ, palletSearchIndex]);
 
   const hiddenByFilter = (view?.pallets?.length || 0) - visiblePallets.length;
 
@@ -175,25 +286,40 @@ export default function PruefenScreen() {
     return () => obs.disconnect();
   }, [visiblePallets.length]);
 
-  /* ── Keyboard F → Focus ─────────────────────────────────────── */
+  /* ── Keyboard F → Focus. Blocked also by unacknowledged
+     high-severity parser warnings — the worker must explicitly
+     acknowledge ambiguous parses before moving on. */
+  const focusBlocked = validView.errors > 0 || blockingWarnings.length > 0;
   const onStartFocus = () => {
-    if (validView.errors === 0) goToStep('focus');
+    if (!focusBlocked) goToStep('focus');
   };
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key !== 'f' && e.key !== 'F') return;
       const t = e.target;
       const tag = t?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable) return;
+      const inField = tag === 'INPUT' || tag === 'TEXTAREA' || t?.isContentEditable;
+      /* Slash → focus the first visible search field. Works only when
+         the worker isn't already typing somewhere else. */
+      if (e.key === '/' && !inField && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const input = document.querySelector<HTMLInputElement>('input[data-pruefen-search]');
+        if (input) {
+          e.preventDefault();
+          input.focus();
+          input.select();
+          return;
+        }
+      }
+      if (e.key !== 'f' && e.key !== 'F') return;
+      if (inField) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (validView.errors === 0) {
+      if (!focusBlocked) {
         e.preventDefault();
         goToStep('focus');
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [validView.errors, goToStep]);
+  }, [focusBlocked, goToStep]);
 
   if (!view) {
     return (
@@ -231,6 +357,8 @@ export default function PruefenScreen() {
         onToggleProblem={() => setProblemOnly((v) => !v)}
         viewMode={viewMode}
         onChangeViewMode={switchViewMode}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
       />
 
       <div className="mp-prf-canvas" style={{ minHeight: 'calc(100vh - 200px)' }}>
@@ -274,6 +402,19 @@ export default function PruefenScreen() {
             </div>
           </StudioFrame>
 
+          {/* Parser warnings — only renders when items carry warnings.
+              High-severity rows block Focus until acknowledged. */}
+          {parseWarnings.length > 0 && (
+            <div style={{ animation: `mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) ${hasPreflightFlags ? 160 : 120}ms backwards` }}>
+              <ParseWarningsPanel
+                warnings={parseWarnings}
+                acked={acked}
+                onAckOne={ackOne}
+                onAckAll={ackAll}
+              />
+            </div>
+          )}
+
           {/* SECONDARY: collapsible Levels disclosure */}
           <div style={{ animation: `mp-prf-rise 480ms cubic-bezier(0.16,1,0.3,1) ${hasPreflightFlags ? 180 : 140}ms backwards` }}>
             <LevelsDisclosure
@@ -302,6 +443,8 @@ export default function PruefenScreen() {
             eskuOverrides={eskuOverrides}
             onMoveEsku={moveEskuToPallet}
             mountDelay={hasPreflightFlags ? 260 : 180}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
           />
         </main>
       </div>
@@ -312,8 +455,348 @@ export default function PruefenScreen() {
         overloadCount={distribution.overloadCount}
         noValidCount={distribution.noValidCount}
         onStartFocus={onStartFocus}
+        blockedReason={
+          blockingWarnings.length > 0
+            ? `${blockingWarnings.length} ungeklärte Parser-Warnungen zuerst akzeptieren`
+            : null
+        }
       />
     </Page>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   PARSE WARNINGS PANEL — surfaces parser-detected ambiguities per item.
+
+   Severity stripe on the left:
+     low      — quiet T.text.faint stripe; informational, auto-OK
+     medium   — yellow T.status.warn.main; review recommended
+     high     — red T.status.danger.main; blocks Focus until ack'd
+
+   Each row carries: pallet/item position, item title, FNSKU/units,
+   then a wrapped list of reasons. "Akzeptieren" mutes that row; "Alle
+   akzeptieren" mutes everything in one go. Ack'd rows stay visible
+   but with reduced opacity + ✓ chip so the worker still sees them.
+   ════════════════════════════════════════════════════════════════════════ */
+function ParseWarningsPanel({
+  warnings, acked, onAckOne, onAckAll,
+}: {
+  warnings: Array<{
+    key: string;
+    palletId: string;
+    itemIdx: number;
+    item: any;
+    warnings: any[];
+    maxSeverity: 'low' | 'medium' | 'high';
+  }>;
+  acked: Set<string>;
+  onAckOne: (key: string) => void;
+  onAckAll: () => void;
+}) {
+  const counts = useMemo(() => {
+    let low = 0, medium = 0, high = 0, unacked = 0;
+    for (const w of warnings) {
+      const sev = w.maxSeverity;
+      if (sev === 'low') low += 1;
+      else if (sev === 'medium') medium += 1;
+      else high += 1;
+      if (!acked.has(w.key)) unacked += 1;
+    }
+    return { low, medium, high, unacked };
+  }, [warnings, acked]);
+
+  const allAcked = counts.unacked === 0;
+  const headerColor =
+    counts.high > 0 && !allAcked ? T.status.danger.main
+    : counts.medium > 0 && !allAcked ? T.status.warn.main
+    : T.text.subtle;
+
+  return (
+    <div style={{
+      background: T.bg.surface,
+      border: `1px solid ${T.border.primary}`,
+      borderRadius: 14,
+      overflow: 'hidden',
+    }}>
+      {/* Header — count summary + bulk-ack */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '14px 18px',
+        borderBottom: `1px solid ${T.border.subtle}`,
+        background: T.bg.surface2,
+      }}>
+        <span aria-hidden style={{
+          width: 8, height: 8, borderRadius: '50%',
+          background: headerColor,
+          boxShadow: `0 0 0 3px ${headerColor}22`,
+        }} />
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 10.5,
+          fontWeight: 700,
+          letterSpacing: '0.16em',
+          textTransform: 'uppercase',
+          color: T.text.faint,
+        }}>
+          Parser-Warnungen
+        </span>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 11.5,
+          fontWeight: 600,
+          color: T.text.primary,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {warnings.length}
+          {counts.unacked > 0 && (
+            <span style={{ color: T.text.subtle, fontWeight: 500 }}>
+              {' '}· {counts.unacked} offen
+            </span>
+          )}
+        </span>
+        {counts.high > 0 && !allAcked && (
+          <span style={{
+            padding: '2px 8px',
+            background: T.status.danger.bg,
+            color: T.status.danger.text,
+            border: `1px solid ${T.status.danger.border}`,
+            borderRadius: 999,
+            fontFamily: T.font.mono,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.10em',
+            textTransform: 'uppercase',
+          }}>
+            Focus blockiert · {counts.high} kritisch
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {!allAcked && (
+          <Button variant="ghost" size="sm" onClick={onAckAll}
+                  title="Alle Warnungen als gesichtet markieren">
+            Alle akzeptieren
+          </Button>
+        )}
+      </div>
+
+      {/* List of warning rows */}
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {warnings.map((w, idx) => (
+          <ParseWarningRow
+            key={w.key}
+            row={w}
+            isAcked={acked.has(w.key)}
+            isLast={idx === warnings.length - 1}
+            onAck={() => onAckOne(w.key)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ParseWarningRow({
+  row, isAcked, isLast, onAck,
+}: {
+  row: { key: string; palletId: string; itemIdx: number; item: any; warnings: any[]; maxSeverity: 'low' | 'medium' | 'high' };
+  isAcked: boolean;
+  isLast: boolean;
+  onAck: () => void;
+}) {
+  const stripeColor =
+    row.maxSeverity === 'high' ? T.status.danger.main
+    : row.maxSeverity === 'medium' ? T.status.warn.main
+    : T.border.strong;
+  const item = row.item || {};
+  const title = (item.title || '').replace(/\s+/g, ' ').slice(0, 80);
+
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '4px 1fr auto',
+      gap: 0,
+      borderBottom: isLast ? 'none' : `1px solid ${T.border.subtle}`,
+      opacity: isAcked ? 0.5 : 1,
+      transition: 'opacity 240ms ease',
+    }}>
+      {/* Severity stripe */}
+      <span aria-hidden style={{ background: stripeColor }} />
+
+      {/* Content */}
+      <div style={{
+        padding: '12px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        minWidth: 0,
+      }}>
+        {/* Position + title */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 10,
+          minWidth: 0,
+        }}>
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 10.5,
+            fontWeight: 700,
+            letterSpacing: '0.10em',
+            textTransform: 'uppercase',
+            color: T.text.faint,
+            flexShrink: 0,
+          }}>
+            {row.palletId} · #{row.itemIdx + 1}
+          </span>
+          <span style={{
+            fontFamily: T.font.ui,
+            fontSize: 13,
+            fontWeight: 500,
+            color: T.text.primary,
+            letterSpacing: '-0.005em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}>
+            {title || '—'}
+          </span>
+        </div>
+
+        {/* Field values */}
+        <div style={{
+          display: 'flex',
+          gap: 14,
+          fontFamily: T.font.mono,
+          fontSize: 11,
+          color: T.text.subtle,
+          fontVariantNumeric: 'tabular-nums',
+          flexWrap: 'wrap',
+        }}>
+          <span>
+            <span style={{ color: T.text.faint, marginRight: 4 }}>FNSKU</span>
+            <span style={{ color: T.text.primary, fontWeight: 600 }}>
+              {item.fnsku || '—'}
+            </span>
+          </span>
+          <span>
+            <span style={{ color: T.text.faint, marginRight: 4 }}>Menge</span>
+            <span style={{ color: T.text.primary, fontWeight: 600 }}>
+              {item.units ?? '—'}
+            </span>
+          </span>
+          {item.ean && (
+            <span>
+              <span style={{ color: T.text.faint, marginRight: 4 }}>EAN</span>
+              <span style={{ color: T.text.primary, fontWeight: 600 }}>
+                {item.ean}
+              </span>
+            </span>
+          )}
+          {item.useItem && (
+            <span>
+              <span style={{ color: T.text.faint, marginRight: 4 }}>use_item</span>
+              <span style={{ color: T.text.primary, fontWeight: 600, maxWidth: 220, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'bottom' }}>
+                {item.useItem}
+              </span>
+            </span>
+          )}
+        </div>
+
+        {/* Warning reasons */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 2 }}>
+          {row.warnings.map((w: any, j: number) => {
+            const sevColor =
+              w.severity === 'high' ? T.status.danger.text
+              : w.severity === 'medium' ? T.status.warn.text
+              : T.text.subtle;
+            const sevGlyph =
+              w.severity === 'high' ? '✗'
+              : w.severity === 'medium' ? '!'
+              : '·';
+            return (
+              <div key={j} style={{
+                fontFamily: T.font.ui,
+                fontSize: 12,
+                color: sevColor,
+                display: 'flex',
+                gap: 8,
+                alignItems: 'baseline',
+              }}>
+                <span aria-hidden style={{
+                  fontFamily: T.font.mono,
+                  fontWeight: 800,
+                  flexShrink: 0,
+                  width: 12,
+                }}>
+                  {sevGlyph}
+                </span>
+                <span style={{ flex: 1 }}>
+                  <span style={{ fontWeight: 600 }}>{w.field}</span>
+                  {': '}{w.reason}
+                  {w.original && (
+                    <span style={{ marginLeft: 6, color: T.text.faint, fontFamily: T.font.mono, fontSize: 11 }}>
+                      ({w.original}
+                      {w.corrected && (
+                        <>
+                          {' → '}
+                          <span style={{ color: T.text.primary, fontWeight: 600 }}>{w.corrected}</span>
+                        </>
+                      )}
+                      )
+                    </span>
+                  )}
+                  {w.candidates?.length > 0 && (
+                    <span style={{
+                      marginLeft: 6,
+                      color: T.text.faint,
+                      fontFamily: T.font.mono,
+                      fontSize: 11,
+                    }}>
+                      [{w.candidates.join(', ')}]
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Ack button (right gutter) */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 14px',
+      }}>
+        {isAcked ? (
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '4px 10px',
+            background: T.status.success.bg,
+            color: T.status.success.text,
+            border: `1px solid ${T.status.success.border}`,
+            borderRadius: 999,
+            fontFamily: T.font.mono,
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.10em',
+            textTransform: 'uppercase',
+          }}>
+            ✓ akzeptiert
+          </span>
+        ) : (
+          <Button variant="ghost" size="sm" onClick={onAck}
+                  title="Diese Warnung als gesichtet markieren">
+            Akzeptieren
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -871,9 +1354,16 @@ function PalletsSection({
   problemOnly, onTogglProblemOnly, hiddenByFilter, onJumpToPallet,
   eskuOverrides, onMoveEsku,
   mountDelay = 0,
-}) {
+  searchQuery = '', onSearchChange = () => {},
+}: any) {
   const total = pallets.length;
+  const hasSearch = searchQuery.trim().length > 0;
   const subtitle = useMemo(() => {
+    if (hasSearch) {
+      return visiblePallets.length === 0
+        ? `Keine Treffer für "${searchQuery}"`
+        : `${visiblePallets.length} Treffer für "${searchQuery}"`;
+    }
     if (problemOnly) {
       return hiddenByFilter > 0
         ? `${visiblePallets.length} mit Hinweisen · ${hiddenByFilter} ausgeblendet`
@@ -887,7 +1377,7 @@ function PalletsSection({
     return viewMode === 'overview'
       ? 'Übersicht — Mini-Karten für schnellen Vergleich'
       : 'Story — Headline, Auslastung und Top-Artikel pro Palette';
-  }, [viewMode, eskuItems.length, problemOnly, visiblePallets.length, hiddenByFilter]);
+  }, [viewMode, eskuItems.length, problemOnly, visiblePallets.length, hiddenByFilter, hasSearch, searchQuery]);
 
   return (
     <section style={{
@@ -931,6 +1421,7 @@ function PalletsSection({
           </div>
         </div>
         <span style={{ flex: 1 }} />
+        <SearchInput value={searchQuery} onChange={onSearchChange} placeholder="FNSKU · EAN · Titel · P-ID" />
         <FilterChip active={problemOnly} onClick={onTogglProblemOnly} />
         <ViewModeToggle value={viewMode} onChange={onChangeViewMode} />
       </div>
@@ -940,6 +1431,7 @@ function PalletsSection({
         visiblePallets={visiblePallets}
         enrichedPallets={enrichedPallets}
         eskuDist={eskuDist}
+        eskuItems={eskuItems}
         palletStates={palletStates}
         ranking={ranking}
         viewMode={viewMode}
@@ -954,7 +1446,7 @@ function PalletsSection({
 }
 
 function PalletsBody({
-  visiblePallets, enrichedPallets, eskuDist,
+  visiblePallets, enrichedPallets, eskuDist, eskuItems,
   palletStates, ranking, viewMode, problemOnly, hiddenByFilter,
   onJumpToPallet,
   eskuOverrides, onMoveEsku,
@@ -979,10 +1471,10 @@ function PalletsBody({
     return (
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: 12,
+        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+        gap: 10,
       }}>
-        {visiblePallets.map((p, i) => {
+        {visiblePallets.map((p) => {
           const raw = enrichedPallets.find((r) => r.id === p.id);
           const eskuAssigned = sortItemsForPallet(eskuDist[p.id] || []);
           const palletState = palletStates[p.id];
@@ -997,8 +1489,6 @@ function PalletsBody({
             <PalletMiniCard
               key={p.id}
               pallet={p}
-              index={i}
-              eskuAssigned={eskuAssigned}
               palletState={palletState}
               story={story}
               onClick={() => onJumpToPallet(p.id)}
@@ -1026,7 +1516,6 @@ function PalletsBody({
           <PalletStoryCard
             key={p.id}
             pallet={p}
-            index={i}
             items={raw?.items || []}
             eskuAssigned={eskuAssigned}
             palletState={palletState}
@@ -1046,7 +1535,12 @@ function PalletsBody({
 /* ════════════════════════════════════════════════════════════════════════
    STICKY PALLETS TOOLBAR — appears when section header scrolls past.
    ════════════════════════════════════════════════════════════════════════ */
-function StickyPalletsToolbar({ visible, count, visibleCount, problemOnly, onToggleProblem, viewMode, onChangeViewMode }) {
+function StickyPalletsToolbar({
+  visible, count, visibleCount,
+  problemOnly, onToggleProblem,
+  viewMode, onChangeViewMode,
+  searchQuery = '', onSearchChange = (_v: string) => {},
+}: any) {
   return (
     <div style={{
       position: 'fixed',
@@ -1086,9 +1580,133 @@ function StickyPalletsToolbar({ visible, count, visibleCount, problemOnly, onTog
           {visibleCount === count ? count : `${visibleCount} / ${count}`}
         </span>
         <span style={{ flex: 1 }} />
+        <SearchInput value={searchQuery} onChange={onSearchChange} placeholder="Suchen…" compact />
         <FilterChip active={problemOnly} onClick={onToggleProblem} />
         <ViewModeToggle value={viewMode} onChange={onChangeViewMode} />
       </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   SEARCH INPUT — quick filter for pallets / items in Pruefen.
+
+   Matches across FNSKU, EAN, SKU, ASIN, useItem, title and pallet ID
+   (case-insensitive substring). When the worker scans a barcode the
+   pallet containing that code surfaces immediately.
+
+   • Slash key (/) at the page level focuses the first visible input
+     (handled in PruefenScreen useEffect — relies on
+     data-pruefen-search attribute).
+   • Esc clears the query and blurs.
+   • Compact variant shrinks for the sticky toolbar's tighter row.
+   ════════════════════════════════════════════════════════════════════════ */
+function SearchInput({
+  value, onChange, placeholder = 'Suchen…', compact = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  compact?: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  const hasValue = value.length > 0;
+  const ref = useRef<HTMLInputElement>(null);
+  const height = compact ? 28 : 32;
+  const width = compact ? 200 : 240;
+  return (
+    <div style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      height,
+      width,
+      padding: '0 10px',
+      background: T.bg.surface,
+      border: `1px solid ${focused ? T.accent.main : T.border.primary}`,
+      borderRadius: 999,
+      transition: 'border-color 140ms ease, background 140ms ease',
+      flexShrink: 0,
+    }}>
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden
+           style={{ color: focused || hasValue ? T.text.subtle : T.text.faint, flexShrink: 0 }}>
+        <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+      <input
+        ref={ref}
+        data-pruefen-search="true"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            if (hasValue) onChange('');
+            else (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+        placeholder={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: 'transparent',
+          border: 'none',
+          outline: 'none',
+          fontSize: compact ? 12 : 13,
+          color: T.text.primary,
+          fontFamily: T.font.mono,
+          letterSpacing: '0.02em',
+        }}
+      />
+      {hasValue ? (
+        <button
+          type="button"
+          onClick={() => { onChange(''); ref.current?.focus(); }}
+          title="Suche leeren (Esc)"
+          aria-label="Suche leeren"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: 18, height: 18,
+            background: 'transparent',
+            border: 'none',
+            color: T.text.subtle,
+            cursor: 'pointer',
+            padding: 0,
+            borderRadius: '50%',
+            transition: 'color 140ms ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = T.text.primary; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = T.text.subtle; }}
+        >
+          <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
+            <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+      ) : !focused && (
+        <span aria-hidden style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: 16, height: 16,
+          padding: '0 5px',
+          fontSize: 10,
+          fontFamily: T.font.mono,
+          fontWeight: 600,
+          color: T.text.faint,
+          background: T.bg.surface2,
+          border: `1px solid ${T.border.subtle}`,
+          borderRadius: 3,
+          letterSpacing: '0.04em',
+        }}>
+          /
+        </span>
+      )}
     </div>
   );
 }
@@ -1210,8 +1828,9 @@ function GridIcon() {
 /* ════════════════════════════════════════════════════════════════════════
    STICKY BAR (bottom)
    ════════════════════════════════════════════════════════════════════════ */
-function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus }) {
+function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus, blockedReason }) {
   const hasFlags = overloadCount > 0 || noValidCount > 0;
+  const isBlocked = !validated || !!blockedReason;
 
   return (
     <div style={{
@@ -1299,8 +1918,12 @@ function StickyBar({ validated, stats, overloadCount, noValidCount, onStartFocus
         <Button
           variant="primary"
           onClick={onStartFocus}
-          disabled={!validated}
-          title={validated ? 'Focus-Modus starten (F)' : 'Validierungsfehler beheben'}
+          disabled={isBlocked}
+          title={
+            !validated ? 'Validierungsfehler beheben'
+            : blockedReason ? blockedReason
+            : 'Focus-Modus starten (F)'
+          }
         >
           Focus-Modus
           <Kbd>F</Kbd>

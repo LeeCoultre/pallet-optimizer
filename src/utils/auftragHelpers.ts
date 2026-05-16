@@ -577,6 +577,37 @@ function isHeavyVeitGroup(group) {
   });
 }
 
+/* Detects "large base layer" thermal roll formats — the wide/heavy
+   variants the warehouse stacks at the very bottom of a pallet before
+   anything else. Matched by title (cheap, robust to missing dimensions
+   from sku_dimensions). When this returns true on an ESKU item, Focus
+   prepends it to the pallet's item list so the worker sees it first
+   and physically lays it as the base.
+
+   Within the base group there is a strict sub-order: 80mm variants
+   always come first (heaviest / widest footprint), then the 57×63
+   and 58×64 variants follow. See `largeBaseRank()` for the priority. */
+export function isLargeBaseFormat(it) {
+  return largeBaseRank(it) > 0;
+}
+
+/* Sub-priority inside the "large base layer" group:
+     2 = 80mm width variants (top priority — placed first)
+     1 = 57mm × 63m/mm  or  58 × 64  (placed after 80mm, before Mixed)
+     0 = not a base-layer format
+*/
+export function largeBaseRank(it) {
+  const title = it?.title || '';
+  if (!title) return 0;
+  // 80mm width × anything — highest priority base layer
+  if (/\b80\s*mm\s*[x×*]/i.test(title)) return 2;
+  // 58 × 64 (Heipa square variant)
+  if (/\b58\s*[x×*]\s*64\b/i.test(title)) return 1;
+  // 57mm × 63 (mm or m) — Thermalking tall
+  if (/\b57\s*mm\s*[x×*]\s*63\s*m/i.test(title)) return 1;
+  return 0;
+}
+
 export function sortItemsForPallet(items) {
   if (!items?.length) return items || [];
   const FINAL_LEVELS = new Set([6, 7]);
@@ -1610,14 +1641,14 @@ export async function enrichItemDims(items, lookupFn) {
 }
 
 /* ─── Identity / matching helpers ────────────────────────────────────────── */
-function formatSig(it) {
+export function formatSig(it) {
   const r = it.rollen ?? 'x';
   const w = it.dim?.normW ?? it.dim?.w ?? 'x';
   const h = it.dim?.normH ?? it.dim?.h ?? 'x';
   return `${r}-${w}x${h}`;
 }
 
-function detectBrand(title) {
+export function detectBrand(title) {
   const t = (title || '').toUpperCase();
   if (/SWIPARO/.test(t))       return 'SWIPARO';
   if (/ECO\s*ROOLLS/.test(t))  return 'ECO_ROOLLS';
@@ -1771,8 +1802,25 @@ export function focusItemView(item) {
   const useItemRaw  = item.useItem || '';
   const useItemCode = extractUseItemId(useItemRaw) || useItemRaw;
 
+  /* Artikel-Code priority:
+       • ESKU rows always lead with the merchant SKU (e.g. LQ-R9N2-YLD0).
+         The SKU is what the worker reads off the FBA box label and what
+         downstream systems index, so it must be the scan target whenever
+         present. FNSKU rides under it as a secondary line for cross-check.
+       • Mixed rows keep FNSKU dominant (legacy behaviour the rest of the
+         warehouse flow relies on).
+     Both branches fall back to whatever non-empty code we have so the
+     hero never renders a bare '—'. */
+  const primaryCode = isEsku
+    ? (item.sku   || item.fnsku || '—')
+    : (item.fnsku || item.sku   || '—');
+  const secondaryCode = isEsku
+    ? (item.sku && item.fnsku && item.fnsku !== item.sku ? item.fnsku : null)
+    : null;
+
   return {
-    code:           item.fnsku || item.sku || '—',
+    code:           primaryCode,
+    secondaryCode,
     useItem:        useItemRaw,
     useItemCode,
     units:          item.units || 0,

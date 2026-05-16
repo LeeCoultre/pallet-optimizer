@@ -131,6 +131,25 @@ class WorkflowProgress(BaseModel):
     pallet_timings: Optional[dict[str, Any]] = None
 
 
+class WorkflowAbortItem(BaseModel):
+    """One flagged article in a Stornierung. `pallet_id` references
+    parsed.pallets[].id so the Historie expand can highlight the row
+    even after pallet reorder. `code` is whatever identifier the
+    frontend pinned at storno time (fnsku → sku → ean) — pure display."""
+    pallet_id: Optional[str] = None
+    item_idx: Optional[int] = None
+    code: Optional[str] = None
+    title: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class WorkflowAbort(BaseModel):
+    """POST /api/auftraege/{id}/abort body. Both fields are optional —
+    a worker can storno without flagging any specific article."""
+    items: list[WorkflowAbortItem] = Field(default_factory=list)
+    note: Optional[str] = None
+
+
 class AuftragReorderItem(BaseModel):
     """One row of PATCH /api/auftraege/reorder body."""
     id: UUID

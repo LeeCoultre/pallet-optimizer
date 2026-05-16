@@ -40,6 +40,87 @@ export function detectCodeType(fnsku) {
   return 'OTHER';
 }
 
+/* ── Strict field classifiers + cross-field validation ──────────────────
+   These are the single source of truth for "what kind of value is
+   this?" — used by extractors to detect column drift, mismatched
+   FNSKU↔ASIN pairings, and ambiguous integers that might be Menge OR
+   Karton-Nr OR a fragment of an EAN.
+
+   FNSKU and ASIN share `X.../B0...` prefix space but are length- and
+   prefix-locked. EAN-13 carries an algorithmic check digit — typos
+   are caught with > 99% probability by isValidEAN13().
+
+   Returns:
+     'fnsku'   X + 9 alphanum   (e.g. X001BVO9LV)
+     'asin'    B0 + 8 alphanum  (e.g. B07ABCD123)
+     'sku'     Merchant SKU     (e.g. 7W-DM3L-8Z3Y)
+     'ean'     EAN-13 with valid check digit
+     'decimal' \d+[.,]\d+        (likely Gewicht)
+     'integer' \d+               (Menge / Karton-Nr / Index)
+     'text'    everything else
+*/
+export const FIELD_PATTERNS = {
+  fnsku:  /^X[0-9][A-Z0-9]{8}$/i,
+  asin:   /^B0[A-Z0-9]{8}$/i,
+  sku:    /^[A-Z0-9]{2,4}-[A-Z0-9]{4,6}-[A-Z0-9]{4,6}$/i,
+  ean13:  /^\d{13}$/,
+  ean8:   /^\d{8}$/,
+};
+
+export function isValidEAN13(s: string): boolean {
+  if (!FIELD_PATTERNS.ean13.test(s)) return false;
+  const digits = s.split('').map((c) => parseInt(c, 10));
+  /* Standard EAN-13 weighted checksum: even-index digits ×1, odd ×3,
+     sum, take mod 10, complement to next multiple of 10 = 13th digit. */
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += digits[i] * (i % 2 === 0 ? 1 : 3);
+  const check = (10 - (sum % 10)) % 10;
+  return check === digits[12];
+}
+
+export type FieldKind =
+  | 'fnsku' | 'asin' | 'sku' | 'ean'
+  | 'decimal' | 'integer' | 'text' | 'empty';
+
+export function classifyField(value: string): FieldKind {
+  if (value == null) return 'empty';
+  const v = String(value).trim();
+  if (!v) return 'empty';
+  if (FIELD_PATTERNS.fnsku.test(v)) return 'fnsku';
+  if (FIELD_PATTERNS.asin.test(v))  return 'asin';
+  if (FIELD_PATTERNS.sku.test(v))   return 'sku';
+  if (FIELD_PATTERNS.ean13.test(v) && isValidEAN13(v)) return 'ean';
+  if (FIELD_PATTERNS.ean8.test(v))  return 'ean';
+  if (/^\d+[.,]\d+$/.test(v)) return 'decimal';
+  if (/^\d+$/.test(v))        return 'integer';
+  return 'text';
+}
+
+/* ── ParseWarning infrastructure ────────────────────────────────────────
+   Every item that survives parsing carries `parseWarnings[]`. A warning
+   never blocks: the parser still records its best-guess value so the
+   workflow remains traversable, but the UI surfaces a yellow / red strip
+   in Pruefen so the worker reviews before Focus.
+
+   severity:
+     'low'    informational — parser self-corrected (e.g. fnsku was in
+              the wrong column but a valid candidate was found elsewhere)
+     'medium' value accepted but suspicious — manual glance recommended
+     'high'   value missing or ambiguous — manual confirmation required
+              before the Auftrag can move to Focus
+*/
+export type ParseWarningField =
+  | 'fnsku' | 'units' | 'useItem' | 'sku' | 'ean' | 'general';
+export type ParseWarningSeverity = 'low' | 'medium' | 'high';
+export interface ParseWarning {
+  field: ParseWarningField;
+  severity: ParseWarningSeverity;
+  reason: string;
+  original?: string;
+  corrected?: string;
+  candidates?: string[];
+}
+
 export function parseTitleMeta(title) {
   if (!title) return { dimStr: null, rollen: null, dim: null };
   const cleanTitle = title.replace(/\s+/g, ' ').trim();
@@ -236,13 +317,86 @@ function parseItemColumns(rest) {
   const sku = parts[0] || '';
   const title = (parts[1] || '').replace(/\s+/g, ' ').trim();
   const asin = parts[2] || '';
-  const fnsku = parts[3] || '';
+  const fnskuRaw = parts[3] || '';
   const codeCol = parts[4] || '';
   const condition = parts[5] || '';
   const prep = parts[6] || '';
   const prepTypeRaw = parts[7] || '';
   const labeler = parts[8] || '';
-  const unitsStr = parts[9] || '';
+  const unitsRaw = parts[9] || '';
+
+  const parseWarnings: ParseWarning[] = [];
+
+  /* ── FNSKU — strict classification + drift detection.
+     Column 3 SHOULD hold an X-prefix FNSKU. We treat the field with
+     the following priority:
+       1. parts[3] is 'fnsku' → keep, no warning.
+       2. parts[3] is 'asin' but parts[2] is 'fnsku' → SWAP detected;
+          take fnsku from parts[2], low warning.
+       3. parts[3] is 'asin' alone → ASIN was placed in FNSKU slot
+          (some rows do this when no FNSKU was assigned); keep but
+          low warning so the worker is aware.
+       4. parts[3] is anything else → scan whole row for any FNSKU.
+          One match → low warning, multiple → high, none → high. */
+  let fnsku = fnskuRaw;
+  const fnskuKind = classifyField(fnskuRaw);
+  const asinKind  = classifyField(asin);
+  if (fnskuKind === 'fnsku') {
+    /* canonical layout, nothing to do */
+  } else if (fnskuKind === 'asin' && asinKind === 'fnsku') {
+    /* swapped — use parts[2] as fnsku. */
+    fnsku = asin;
+    parseWarnings.push({
+      field: 'fnsku',
+      severity: 'low',
+      reason: 'FNSKU und ASIN scheinen vertauscht — automatisch korrigiert',
+      original: fnskuRaw,
+      corrected: asin,
+    });
+  } else if (fnskuKind === 'asin') {
+    parseWarnings.push({
+      field: 'fnsku',
+      severity: 'low',
+      reason: 'ASIN statt FNSKU in der FNSKU-Spalte — bitte prüfen',
+      original: fnskuRaw,
+    });
+  } else {
+    /* parts[3] is neither fnsku nor asin — drift or missing. */
+    const candidates = parts.filter((p) => classifyField(p) === 'fnsku');
+    if (candidates.length === 1) {
+      fnsku = candidates[0];
+      parseWarnings.push({
+        field: 'fnsku',
+        severity: 'low',
+        reason: 'FNSKU stand in unerwarteter Spalte — automatisch korrigiert',
+        original: fnskuRaw,
+        corrected: candidates[0],
+      });
+    } else if (candidates.length > 1) {
+      fnsku = candidates[0];
+      parseWarnings.push({
+        field: 'fnsku',
+        severity: 'high',
+        reason: 'Mehrere FNSKU-Kandidaten in der Zeile — bitte prüfen',
+        original: fnskuRaw,
+        corrected: candidates[0],
+        candidates,
+      });
+    } else if (fnskuRaw) {
+      parseWarnings.push({
+        field: 'fnsku',
+        severity: 'high',
+        reason: 'FNSKU passt zu keinem Muster (X… / B0…)',
+        original: fnskuRaw,
+      });
+    } else {
+      parseWarnings.push({
+        field: 'fnsku',
+        severity: 'high',
+        reason: 'FNSKU fehlt komplett',
+      });
+    }
+  }
 
   let ean = null, upc = null;
   const eanM = codeCol.match(/^EAN:\s*(.+)/i);
@@ -250,7 +404,80 @@ function parseItemColumns(rest) {
   if (eanM) ean = eanM[1].trim();
   else if (upcM) upc = upcM[1].trim();
 
-  const units = parseInt(unitsStr, 10) || 0;
+  /* ── EAN check-digit validation — typo detection (>99% catch rate). */
+  if (ean && FIELD_PATTERNS.ean13.test(ean) && !isValidEAN13(ean)) {
+    parseWarnings.push({
+      field: 'ean',
+      severity: 'medium',
+      reason: 'EAN-13 Prüfziffer stimmt nicht — Tippfehler möglich',
+      original: ean,
+    });
+  }
+
+  /* ── Units — must be a plain integer in a plausible warehouse range
+     AND not equal to a fragment of another field. parseInt() silently
+     accepts "70abc" → 70; we reject those by requiring exact \d+. */
+  let units = 0;
+  if (classifyField(unitsRaw) === 'integer') {
+    const n = parseInt(unitsRaw, 10);
+    if (n >= 1 && n <= 9999) {
+      units = n;
+      /* Cross-check: the units value should not appear as a substring
+         of the FNSKU or EAN — a sign that column drift fed us a
+         fragment of a longer code. */
+      const flat = `${fnsku}${ean || ''}${sku}`.replace(/\D/g, '');
+      if (n >= 100 && flat.includes(String(n))) {
+        parseWarnings.push({
+          field: 'units',
+          severity: 'medium',
+          reason: `Menge ${n} kommt auch in FNSKU/EAN/SKU vor — bitte prüfen`,
+          original: unitsRaw,
+        });
+      }
+    } else {
+      parseWarnings.push({
+        field: 'units',
+        severity: 'high',
+        reason: `Menge ${n} ausserhalb plausibler Bereich (1–9999)`,
+        original: unitsRaw,
+      });
+    }
+  } else if (unitsRaw) {
+    /* Non-integer in the units column — try to recover by finding the
+       first plausible integer among the row's other parts that is
+       NOT another field's value. */
+    const fallbacks = parts.filter((p, i) => {
+      if (i === 9) return false;             // skip the bad column itself
+      if (!/^\d+$/.test(p)) return false;
+      const n = parseInt(p, 10);
+      return n >= 1 && n <= 9999 && String(n) !== fnsku && String(n) !== ean;
+    });
+    if (fallbacks.length === 1) {
+      units = parseInt(fallbacks[0], 10);
+      parseWarnings.push({
+        field: 'units',
+        severity: 'low',
+        reason: 'Menge stand in unerwarteter Spalte — automatisch korrigiert',
+        original: unitsRaw,
+        corrected: fallbacks[0],
+      });
+    } else {
+      parseWarnings.push({
+        field: 'units',
+        severity: 'high',
+        reason: 'Menge nicht erkennbar — bitte manuell prüfen',
+        original: unitsRaw,
+        candidates: fallbacks,
+      });
+    }
+  } else {
+    parseWarnings.push({
+      field: 'units',
+      severity: 'high',
+      reason: 'Menge fehlt',
+    });
+  }
+
   const prepType =
     prepTypeRaw === 'null' || prepTypeRaw === '"--"' || !prepTypeRaw
       ? null
@@ -273,6 +500,7 @@ function parseItemColumns(rest) {
     isProduktion: cls.isProduktion,
     category: cls.category,
     codeType,
+    parseWarnings,
   };
 }
 
@@ -293,11 +521,56 @@ function parseItemsFromBlock(block, palletId) {
 
     // Look forward for "Zu verwendender Artikel" until the next item starts
     // or until the next pallet header.
+    let useItemFound = false;
     for (let j = i + 1; j < lines.length; j++) {
       if (startRe.test(lines[j])) break;
       if (/^PALETTE\s+\d+/i.test(lines[j])) break;
       const um = lines[j].match(/^Zu\s+verwendender\s+Artikel\s*[:：]?\s*(.+)/i);
-      if (um) { parsed.useItem = um[1].trim(); break; }
+      if (um) {
+        useItemFound = true;
+        /* IMPORTANT: keep the RAW rest-of-line (incl. wrappers like
+           "wird von 9120107187501 produziert") as `useItem`. The
+           display layer in focusItemView() intentionally renders this
+           wrapper text. The bare code is recovered downstream via
+           extractUseItemId() which strips the wrapper.
+
+           Validation here only attaches warnings — it never mutates
+           the raw value. */
+        const rest = um[1].trim();
+        parsed.useItem = rest;
+        const tokens = rest.split(/[\s,;|()]+/).filter(Boolean);
+        const validCodes = tokens.filter((t) => {
+          const k = classifyField(t);
+          return k === 'ean' || k === 'fnsku' || k === 'asin' || k === 'sku';
+        });
+        if (validCodes.length > 1) {
+          parsed.parseWarnings.push({
+            field: 'useItem',
+            severity: 'medium',
+            reason: 'Mehrere Codes in "Zu verwendender Artikel"-Zeile gefunden',
+            original: rest,
+            candidates: validCodes,
+          });
+        } else if (validCodes.length === 0 && rest) {
+          parsed.parseWarnings.push({
+            field: 'useItem',
+            severity: 'high',
+            reason: 'Zu verwendender Artikel: kein gültiger Code erkannt',
+            original: rest,
+          });
+        }
+        break;
+      }
+    }
+    if (!useItemFound) {
+      /* Not all items have a useItem (some are top-level standalone
+         products). This is informational only — never blocks. Level 5+
+         items in particular often parse without one. */
+      parsed.parseWarnings.push({
+        field: 'useItem',
+        severity: 'low',
+        reason: 'Keine "Zu verwendender Artikel"-Zeile gefunden',
+      });
     }
 
     items.push(parsed);

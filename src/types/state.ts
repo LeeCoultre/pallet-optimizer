@@ -5,11 +5,13 @@
  * map the API shapes (AuftragDetail / AuftragSummary) into these. */
 
 import type {
+  AuftragStatus,
   CompletedKeys,
   Parsed,
   PalletTimings,
   UUID,
   Validation,
+  WorkflowAbortPayload,
   WorkflowStep,
 } from './api';
 
@@ -52,6 +54,9 @@ export interface LegacyHistoryItem {
   id: UUID;
   fileName: string;
   fbaCode: string | null;
+  /** Underlying API status — 'completed' for normal runs, 'cancelled'
+   *  for stornierte rows (those get a red border in Historie). */
+  status: AuftragStatus;
   startedAt: number | null;
   finishedAt: number | null;
   durationSec: number | null;
@@ -87,7 +92,10 @@ export interface UseAppStateApi {
 
   completeCurrentItem: (effectiveItemsCount?: number, effectiveItem?: unknown, nextPalletIdxOverride?: number) => boolean;
   completeAndAdvance: () => void;
+  /** Release the active Auftrag back to the queue (Verlassen — keeps row alive). */
   cancelCurrent: () => void;
+  /** Terminal cancel (Stornieren) — row lands in Historie with a red border. */
+  abortCurrent: (payload: WorkflowAbortPayload) => void;
 
   removeHistoryEntry: (id: UUID) => void;
   clearHistory: () => void;

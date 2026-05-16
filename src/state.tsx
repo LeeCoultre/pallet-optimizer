@@ -22,7 +22,7 @@ import {
 import { sortPallets, enrichItemDims } from './utils/auftragHelpers.js';
 import {
   listAuftraege, createAuftrag, getAuftrag, deleteAuftrag, reorderQueue as apiReorder,
-  startAuftrag, updateProgress, completeAuftrag, cancelAuftrag,
+  startAuftrag, updateProgress, completeAuftrag, cancelAuftrag, abortAuftrag,
   getHistory, deleteHistoryEntry, getMe,
   lookupSkuDimensions,
   ApiError,
@@ -35,6 +35,7 @@ import type {
   CompletedKeys,
   PalletTimings,
   UUID,
+  WorkflowAbortPayload,
   WorkflowProgressPatch,
   WorkflowStep,
 } from './types/api';
@@ -150,6 +151,7 @@ export function toLegacyHistory(h: AuftragSummary): LegacyHistoryItem {
     id:           h.id,
     fileName:     h.fileName,
     fbaCode:      h.fbaCode,
+    status:       h.status,
     startedAt:    h.startedAt  ? Date.parse(h.startedAt)  : null,
     finishedAt:   h.finishedAt ? Date.parse(h.finishedAt) : null,
     durationSec:  h.durationSec,
@@ -368,6 +370,23 @@ export function useAppState(): UseAppStateApi {
       const fresh = await listAuftraege();
       const next = fresh.find((a) => a.status === 'queued');
       if (next) startMut.mutate(next.id);
+    },
+  });
+
+  /* Terminal cancel ("Stornieren") — flips the active row into status
+     cancelled with the worker's flagged-article reasons, and surfaces
+     it in Historie with a red border. Distinct from cancelMut (which
+     just releases the Auftrag back to the queue). */
+  const abortMut = useMutation<AuftragDetail, Error, { id: UUID; payload: WorkflowAbortPayload }>({
+    mutationFn: ({ id, payload }) => abortAuftrag(id, payload),
+    onSuccess: (_data, { id }) => {
+      clearCopiedKeys(id);
+      clearEskuOverrides(id);
+      invalidateAll();
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : 'Stornierung fehlgeschlagen.';
+      alert(msg);
     },
   });
   const deleteHistMut = useMutation({
@@ -601,6 +620,10 @@ export function useAppState(): UseAppStateApi {
     if (current?.id) cancelMut.mutate(current.id);
   }, [current, cancelMut]);
 
+  const abortCurrent = useCallback((payload: WorkflowAbortPayload) => {
+    if (current?.id) abortMut.mutate({ id: current.id, payload });
+  }, [current, abortMut]);
+
   const removeHistoryEntry = useCallback(
     (id: UUID) => deleteHistMut.mutate(id),
     [deleteHistMut],
@@ -616,7 +639,7 @@ export function useAppState(): UseAppStateApi {
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     moveEskuToPallet, resetEskuOverrides,
-    completeCurrentItem, completeAndAdvance, cancelCurrent,
+    completeCurrentItem, completeAndAdvance, cancelCurrent, abortCurrent,
     removeHistoryEntry, clearHistory,
   }), [
     queue, current, history,
@@ -624,7 +647,7 @@ export function useAppState(): UseAppStateApi {
     startEntry, goToStep,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     moveEskuToPallet, resetEskuOverrides,
-    completeCurrentItem, completeAndAdvance, cancelCurrent,
+    completeCurrentItem, completeAndAdvance, cancelCurrent, abortCurrent,
     removeHistoryEntry, clearHistory,
   ]);
 }

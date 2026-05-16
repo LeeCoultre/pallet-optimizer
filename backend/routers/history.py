@@ -36,8 +36,10 @@ async def list_history(
     me: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """All completed Auftrag, newest first. Paginated."""
-    base = select(Auftrag).where(Auftrag.status == AuftragStatus.completed)
+    """Terminal Aufträge (completed + cancelled), newest first. Paginated."""
+    base = select(Auftrag).where(
+        Auftrag.status.in_([AuftragStatus.completed, AuftragStatus.cancelled])
+    )
 
     total = (
         await db.execute(
@@ -74,7 +76,7 @@ async def delete_history_entry(
     a = await db.get(Auftrag, auftrag_id)
     if a is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Auftrag not found")
-    if a.status != AuftragStatus.completed:
+    if a.status not in (AuftragStatus.completed, AuftragStatus.cancelled):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"Not in history — status is {a.status.value}",

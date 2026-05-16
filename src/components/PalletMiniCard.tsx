@@ -1,253 +1,184 @@
 // @ts-nocheck — legacy pallet-optimizer component (pre-Marathon); not in active code path
-/* ─────────────────────────────────────────────────────────────────────────
-   PalletMiniCard — compact summary tile for the "Übersicht" view-mode in
-   Pruefen. 3 cards per row at 1180px content width, so 3-9 pallets fit
-   on one screen for quick scan. Click jumps to the full story card.
+/* PalletMiniCard — visual-first tile for the "Übersicht" view-mode.
 
-   Design: horizontal split — left column owns the mini stack pyramid,
-   right column owns ID + headline + levels mini-bar + facts. A small
-   ring gauge sits top-right.
-   ───────────────────────────────────────────────────────────────────────── */
+   Designed to be scanned with the eye, not read with the mind:
+     • Stack viz is the visual hero (left rail, 64×128 thumbnail —
+       colored bands tell the level story without text).
+     • Soft tone-tinted border carries the state (warn/danger/accent).
+       Neutral pallets keep the default gray border — they don't shout.
+     • Right column: P-id (mono), level dot+shortname, then a single
+       big Fill% number, a thin bar, and a weight ratio. That's it.
+
+   Removed vs. v1: headline text, "N Art · N Eh" facts, ESKU chip
+   (already shown as white dots inside stack viz), MiniGauge, levels
+   mini-stripe, SplitHeadline split-tag. Übersicht is a glance, not a
+   read. Story-card is one click away for everything else.
+*/
 
 import PalletStackViz from './PalletStackViz.jsx';
 import { T } from './ui.jsx';
 import { LEVEL_META } from '@/utils/auftragHelpers.js';
 
-const TONE_BORDER = {
-  warn:    T.status.warn.border,
-  accent:  T.accent.main,
-  cool:    '#BFDBFE',
-  neutral: T.border.primary,
-  special: T.border.strong,
+const TONE_PALETTE = {
+  warn:    { color: T.status.warn.main,    stateful: true },
+  danger:  { color: T.status.danger.main,  stateful: true },
+  accent:  { color: T.accent.main,         stateful: true },
+  cool:    { color: '#3B82F6',             stateful: true },
+  special: { color: T.status.warn.main,    stateful: true },
+  neutral: { color: T.border.primary,      stateful: false },
 };
 
-export default function PalletMiniCard({ pallet, index, story, eskuAssigned, palletState, onClick }) {
+const PALLET_VOL_M3 = 1.59;
+const PALLET_WEIGHT_KG = 700;
+
+export default function PalletMiniCard({ pallet, story, palletState, onClick }) {
   const meta = LEVEL_META[pallet.level] || LEVEL_META[1];
-  const accentBorder = TONE_BORDER[story.tone] || T.border.primary;
-  const fillPct = story.capacity?.fillPct ?? 0;
-  const gaugeColor = fillPct > 1 ? T.status.danger.main
+  const cap = story.capacity || {};
+  const fillPct = cap.fillPct ?? 0;
+  const fillValue = Math.round(fillPct * 100);
+  const fillColor = fillPct > 1 ? T.status.danger.text
+    : fillPct >= 0.95 ? T.status.warn.text
+    : T.text.primary;
+  const barColor = fillPct > 1 ? T.status.danger.main
     : fillPct >= 0.95 ? T.status.warn.main
-    : fillPct >= 0.5 ? T.accent.main
-    : T.text.subtle;
+    : T.accent.main;
+  const palette = TONE_PALETTE[story.tone] || TONE_PALETTE.neutral;
+  const borderRest  = palette.stateful ? `${palette.color}55` : T.border.primary;
+  const borderHover = palette.stateful ? `${palette.color}AA` : T.text.subtle;
+  const shadowHover = palette.stateful
+    ? `0 14px 32px -20px ${palette.color}66`
+    : '0 12px 28px -20px rgba(17,24,39,0.18)';
+
+  const weightKg = cap.weightKg ?? 0;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      title="Klick öffnet die volle Story-Karte"
+      title={story.headline}
       style={{
         display: 'grid',
-        gridTemplateColumns: '60px 1fr',
-        gap: 12,
-        padding: '16px 16px',
+        gridTemplateColumns: '64px 1fr',
+        gap: 16,
+        padding: 16,
         background: T.bg.surface,
-        border: `1px solid ${T.border.primary}`,
+        border: `1px solid ${borderRest}`,
         borderRadius: 14,
-        boxShadow: 'none',
         cursor: 'pointer',
         textAlign: 'left',
         fontFamily: T.font.ui,
-        transition: 'border-color 160ms, transform 160ms',
-        position: 'relative',
-        overflow: 'hidden',
+        transition: 'transform 200ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms, border-color 200ms',
+        minWidth: 0,
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = accentBorder;
-        e.currentTarget.style.transform = 'translateY(-1px)';
+        e.currentTarget.style.transform = 'translateY(-2px)';
+        e.currentTarget.style.boxShadow = shadowHover;
+        e.currentTarget.style.borderColor = borderHover;
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = T.border.primary;
         e.currentTarget.style.transform = 'none';
+        e.currentTarget.style.boxShadow = 'none';
+        e.currentTarget.style.borderColor = borderRest;
       }}
     >
-      {/* Stack viz (row size) */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <PalletStackViz palletState={palletState} size="row" />
-      </div>
+      {/* Visual hero — stack viz */}
+      <PalletStackViz palletState={palletState} size="mini" />
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-        {/* Header line */}
+      {/* Data column */}
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {/* Identity */}
         <div style={{
+          fontFamily: T.font.mono,
+          fontSize: 13.5,
+          fontWeight: 600,
+          color: T.text.primary,
+          letterSpacing: '-0.005em',
+          lineHeight: 1,
+        }}>
+          {pallet.id}
+        </div>
+
+        <div style={{
+          marginTop: 6,
           display: 'flex',
           alignItems: 'center',
           gap: 6,
-          fontFamily: T.font.mono,
-          fontSize: 11,
-          color: T.text.subtle,
+          minWidth: 0,
         }}>
-          <span style={{ color: T.text.faint }}>{String(index + 1).padStart(2, '0')}</span>
-          <span style={{ color: T.text.primary, fontWeight: 600 }}>{pallet.id}</span>
           <span style={{
-            fontFamily: T.font.ui,
-            fontSize: 10.5,
-            fontWeight: 600,
-            color: meta.text,
-            background: meta.bg,
-            padding: '1px 6px',
-            borderRadius: 4,
+            width: 6, height: 6,
+            background: meta.color,
+            borderRadius: 2,
+            flexShrink: 0,
+          }} />
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 9.5,
+            fontWeight: 700,
+            color: T.text.subtle,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
           }}>
-            L{pallet.level}
+            L{pallet.level} {meta.shortName}
           </span>
-          {eskuAssigned?.length > 0 && (
-            <span style={{
-              fontFamily: T.font.mono,
-              fontSize: 10.5,
-              fontWeight: 600,
-              color: T.accent.text,
-            }}>
-              +{eskuAssigned.length}E
-            </span>
-          )}
-          {pallet.isSingleSku && (
-            <span title="Single-SKU · 4-Seiten" style={{
-              fontFamily: T.font.ui,
-              fontSize: 10,
-              fontWeight: 700,
-              color: T.status.warn.text,
-            }}>S</span>
-          )}
-          <span style={{ flex: 1 }} />
-          {/* Gauge in corner */}
-          <MiniGauge pct={fillPct} color={gaugeColor} />
         </div>
 
-        {/* Headline — type-tag + content (2-line hierarchy) */}
-        <SplitHeadline
-          headline={story.headline}
-          tone={story.tone}
-          tagSize={9.5}
-          contentSize={14}
-        />
+        {/* Fill hero */}
+        <div style={{
+          marginTop: 14,
+          fontFamily: T.font.mono,
+          fontSize: 26,
+          fontWeight: 600,
+          color: fillColor,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '-0.03em',
+          lineHeight: 1,
+        }}>
+          {fillValue}
+          <span style={{
+            fontSize: 12,
+            fontWeight: 500,
+            opacity: 0.55,
+            marginLeft: 2,
+          }}>%</span>
+        </div>
 
-        {/* Levels mini-stripe */}
-        {story.levels.length > 0 && (
+        {/* Thin fill bar */}
+        <div style={{
+          marginTop: 8,
+          position: 'relative',
+          height: 3,
+          background: T.bg.surface3,
+          borderRadius: 999,
+          overflow: 'hidden',
+        }}>
           <div style={{
-            display: 'flex',
-            height: 5,
-            background: T.bg.surface3,
-            borderRadius: T.radius.full,
-            overflow: 'hidden',
+            position: 'absolute',
+            inset: 0,
+            width: `${Math.min(100, fillValue)}%`,
+            background: barColor,
+            borderRadius: 999,
+            transition: 'width 600ms cubic-bezier(0.16,1,0.3,1)',
+          }} />
+        </div>
+
+        {/* Weight ratio */}
+        {weightKg > 0 && (
+          <div style={{
+            marginTop: 8,
+            fontFamily: T.font.mono,
+            fontSize: 10.5,
+            color: T.text.faint,
+            fontVariantNumeric: 'tabular-nums',
+            letterSpacing: '0.02em',
           }}>
-            {story.levels.map((l) => (
-              <div
-                key={l.level}
-                title={`L${l.level} ${l.name} · ${Math.round(l.pct * 100)}%`}
-                style={{
-                  width: `${l.pct * 100}%`,
-                  background: l.color,
-                }}
-              />
-            ))}
+            {Math.round(weightKg).toLocaleString('de-DE')} / {PALLET_WEIGHT_KG} kg
           </div>
         )}
-
-        {/* Facts */}
-        <div style={{
-          fontSize: 11.5,
-          color: T.text.subtle,
-          fontVariantNumeric: 'tabular-nums',
-          letterSpacing: '-0.005em',
-        }}>
-          {pallet.articles} Art · {pallet.units.toLocaleString('de-DE')} Eh
-          {fillPct > 0 && (
-            <>
-              <span style={{ opacity: 0.4, margin: '0 6px' }}>·</span>
-              <span style={{ color: gaugeColor, fontWeight: 600 }}>
-                {Math.round(fillPct * 100)}%
-              </span>
-            </>
-          )}
-        </div>
       </div>
     </button>
-  );
-}
-
-/* ─── SplitHeadline ──────────────────────────────────────────────────
-   Splits a story headline by the " · " separator into a tone-colored
-   uppercase tag (top line) + primary content (bottom line). When the
-   headline has no separator, the whole phrase becomes the content
-   line and the tag is omitted.
-
-   Tone palette maps story tone → tag color. Warn = amber, accent =
-   orange, cool = deep blue, danger = red. Neutral keeps primary.
-   ──────────────────────────────────────────────────────────────────── */
-const TONE_TAG_COLOR = {
-  warn:    T.status.warn.text,
-  accent:  T.accent.text,
-  cool:    '#1E40AF',
-  special: T.text.primary,
-  danger:  T.status.danger.text,
-  neutral: T.text.subtle,
-};
-
-function SplitHeadline({ headline, tone, tagSize = 10, contentSize = 14 }) {
-  if (!headline) return null;
-  const parts = headline.split(' · ');
-  const hasSplit = parts.length >= 2;
-  const tag = hasSplit ? parts[0] : null;
-  const content = hasSplit ? parts.slice(1).join(' · ') : headline;
-  const tagColor = TONE_TAG_COLOR[tone] || T.text.subtle;
-
-  return (
-    <div style={{ minWidth: 0 }}>
-      {tag && (
-        <div style={{
-          fontSize: tagSize,
-          fontWeight: 700,
-          color: tagColor,
-          textTransform: 'uppercase',
-          letterSpacing: '0.14em',
-          fontFamily: T.font.mono,
-          lineHeight: 1.1,
-          marginBottom: 4,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {tag}
-        </div>
-      )}
-      <div style={{
-        fontSize: contentSize,
-        fontWeight: 600,
-        color: T.text.primary,
-        letterSpacing: '-0.012em',
-        lineHeight: 1.2,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-      }}>
-        {content}
-      </div>
-    </div>
-  );
-}
-
-/* Minimal 32px circular gauge for mini-cards. No label inside —
-   the percent text lives in the facts row. */
-function MiniGauge({ pct, color }) {
-  const safePct = Math.max(0, Math.min(1, pct || 0));
-  const stroke = 3;
-  const radius = 13;
-  const circ = 2 * Math.PI * radius;
-  const dash = safePct * circ;
-  return (
-    <span style={{
-      display: 'inline-flex',
-      width: 32, height: 32,
-      flexShrink: 0,
-    }}>
-      <svg width="32" height="32" viewBox="0 0 32 32"
-           style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx="16" cy="16" r={radius}
-                stroke={T.bg.surface3} strokeWidth={stroke} fill="none" />
-        <circle cx="16" cy="16" r={radius}
-                stroke={color} strokeWidth={stroke}
-                strokeLinecap="round" fill="none"
-                strokeDasharray={`${dash} ${circ - dash}`}
-                style={{ transition: 'stroke-dasharray 400ms cubic-bezier(0.16, 1, 0.3, 1)' }} />
-      </svg>
-    </span>
   );
 }

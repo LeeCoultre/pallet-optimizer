@@ -1050,6 +1050,7 @@ function RowCard({
   onSelect, onToggle, onRemove,
 }) {
   const fba = entry.fbaCode || entry.fileName;
+  const isCancelled = entry.status === 'cancelled';
   const palTimings = useMemo(
     () => (Object.values(entry.palletTimings || {}) as Array<{ startedAt?: number; finishedAt?: number }>)
       .map((t) => (t.startedAt && t.finishedAt) ? Math.round((t.finishedAt - t.startedAt) / 1000) : null)
@@ -1061,12 +1062,17 @@ function RowCard({
     ? Math.round(((entry.durationSec - medianDur) / medianDur) * 100)
     : null;
 
+  const borderColor = isCancelled
+    ? T.status.danger.border
+    : (isSelected ? T.text.primary : T.border.primary);
+  const borderWidth = isCancelled ? 2 : 1;
+
   return (
     <div
       onClick={() => { onSelect(); onToggle(); }}
       style={{
-        background: T.bg.surface,
-        border: `1px solid ${isSelected ? T.text.primary : T.border.primary}`,
+        background: isCancelled ? T.status.danger.bg : T.bg.surface,
+        border: `${borderWidth}px solid ${borderColor}`,
         borderRadius: T.radius.lg,
         cursor: 'pointer',
         transition: 'border-color 150ms, box-shadow 200ms',
@@ -1117,10 +1123,13 @@ function RowCard({
             }}>
               {fba}
             </span>
+            {isCancelled && (
+              <Badge tone="danger">Storniert</Badge>
+            )}
             {showUser && entry.assignedToUserName && (
               <Badge tone="neutral">{entry.assignedToUserName}</Badge>
             )}
-            {cmpPct != null && Math.abs(cmpPct) >= 5 && (
+            {!isCancelled && cmpPct != null && Math.abs(cmpPct) >= 5 && (
               <ComparisonBadge pct={cmpPct} />
             )}
           </div>
@@ -1329,13 +1338,33 @@ function IconBtn({ children, onClick, title, danger }: { children?: React.ReactN
 /* ════════════════════════════════════════════════════════════════════════
    Expanded detail — Gantt timing + lazy article fetch
    ════════════════════════════════════════════════════════════════════════ */
-function ExpandedDetail({ entry }: { entry: { id: string; fileName?: string | null; palletCount?: number; articleCount?: number; durationSec?: number | null; palletTimings?: Record<string, { startedAt?: number; finishedAt?: number }> }; onClose?: () => void }) {
+function ExpandedDetail({ entry }: { entry: { id: string; fileName?: string | null; palletCount?: number; articleCount?: number; durationSec?: number | null; palletTimings?: Record<string, { startedAt?: number; finishedAt?: number }>; status?: string }; onClose?: () => void }) {
   const detailQ = useQuery({
     queryKey: ['auftrag', entry.id],
     queryFn: () => getAuftrag(entry.id),
     staleTime: Infinity,
     refetchInterval: false,
   });
+
+  const cancellation = (detailQ.data?.parsed as { cancellation?: {
+    items: Array<{ palletId: string | null; itemIdx: number | null; code: string | null; title: string | null; reason: string | null }>;
+    note: string | null;
+    at: string;
+    by: { id: string; name: string } | null;
+  } } | null | undefined)?.cancellation || null;
+
+  /* Lookup map for inline highlight: `${palletId}|${itemIdx}` → reason.
+     palletId/itemIdx may be null (ESKU); those entries surface in the
+     dedicated Stornierung block only, not in the article table. */
+  const cancelByKey = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const it of cancellation?.items || []) {
+      if (it.palletId != null && it.itemIdx != null) {
+        m.set(`${it.palletId}|${it.itemIdx}`, it.reason);
+      }
+    }
+    return m;
+  }, [cancellation]);
 
   const articles = useMemo(() => {
     const pallets = detailQ.data?.parsed?.pallets || [];
@@ -1387,6 +1416,10 @@ function ExpandedDetail({ entry }: { entry: { id: string; fileName?: string | nu
         borderTop: `1px solid ${T.border.subtle}`,
       }}
     >
+      {cancellation && (
+        <CancellationBlock cancellation={cancellation} />
+      )}
+
       {/* Palette-Gantt */}
       <SectionLabel
         title="Palettenzeiten"
@@ -1453,32 +1486,58 @@ function ExpandedDetail({ entry }: { entry: { id: string; fileName?: string | nu
             )}
             {articles.slice(0, 200).map((a, j) => {
               const meta = LEVEL_META[a.level] || LEVEL_META[1];
+              const cancelKey = `${a.palletId}|${a.itemIdx}`;
+              const isCancelled = cancelByKey.has(cancelKey);
+              const cancelReason = isCancelled ? cancelByKey.get(cancelKey) : null;
               return (
-                <div key={j} style={{
-                  ...articlesRow,
-                  borderBottom: j < articles.length - 1 ? `1px solid ${T.border.subtle}` : 'none',
-                }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: T.font.mono, fontSize: 11.5 }}>
+                <div
+                  key={j}
+                  style={{
+                    borderBottom: j < articles.length - 1 ? `1px solid ${T.border.subtle}` : 'none',
+                    background: isCancelled ? T.status.danger.bg : 'transparent',
+                  }}
+                >
+                  <div style={articlesRow}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: T.font.mono, fontSize: 11.5 }}>
+                      <span style={{
+                        width: 6, height: 6,
+                        borderRadius: '50%',
+                        background: isCancelled ? T.status.danger.main : meta.color,
+                        flexShrink: 0,
+                      }} />
+                      <span style={{ color: isCancelled ? T.status.danger.text : T.text.faint }}>{a.palletId}</span>
+                    </span>
                     <span style={{
-                      width: 6, height: 6,
-                      borderRadius: '50%',
-                      background: meta.color,
-                      flexShrink: 0,
-                    }} />
-                    <span style={{ color: T.text.faint }}>{a.palletId}</span>
-                  </span>
-                  <span style={{ color: T.text.primary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {a.title || '—'}
-                  </span>
-                  <span style={{ fontFamily: T.font.mono, fontSize: 11.5, color: T.text.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {a.fnsku || a.sku || '—'}
-                  </span>
-                  <span style={{ fontFamily: T.font.mono, fontSize: 11.5, color: T.text.subtle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {a.useItem || '—'}
-                  </span>
-                  <span style={{ fontWeight: 600, color: T.text.primary, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {a.units || 0}
-                  </span>
+                      color: isCancelled ? T.status.danger.text : T.text.primary,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontWeight: isCancelled ? 600 : 400,
+                    }}>
+                      {a.title || '—'}
+                    </span>
+                    <span style={{ fontFamily: T.font.mono, fontSize: 11.5, color: isCancelled ? T.status.danger.text : T.text.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {a.fnsku || a.sku || '—'}
+                    </span>
+                    <span style={{ fontFamily: T.font.mono, fontSize: 11.5, color: T.text.subtle, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {a.useItem || '—'}
+                    </span>
+                    <span style={{ fontWeight: 600, color: isCancelled ? T.status.danger.text : T.text.primary, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {a.units || 0}
+                    </span>
+                  </div>
+                  {isCancelled && (
+                    <div style={{
+                      padding: '0 14px 8px 28px',
+                      fontSize: 11.5,
+                      fontFamily: T.font.mono,
+                      color: T.status.danger.text,
+                      letterSpacing: '0.02em',
+                    }}>
+                      <span style={{ fontWeight: 700, textTransform: 'uppercase' }}>Storniert</span>
+                      {cancelReason ? <span> · {cancelReason}</span> : null}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1567,6 +1626,122 @@ function primaryLevelOf(items) {
     if (n > bestN) { bestN = n; best = parseInt(lvl, 10); }
   }
   return best;
+}
+
+/* Storniert-Block — shown at the top of ExpandedDetail when the
+   Auftrag was aborted from Focus. Surfaces the operator's reason
+   trail (who, when, optional global note, optional per-article
+   reasons) so a reviewer can see WHY the row was stornert without
+   scrolling through palette/Artikel sections that may be empty. */
+function CancellationBlock({ cancellation }: {
+  cancellation: {
+    items: Array<{ palletId: string | null; itemIdx: number | null; code: string | null; title: string | null; reason: string | null }>;
+    note: string | null;
+    at: string;
+    by: { id: string; name: string } | null;
+  };
+}) {
+  const at = cancellation.at ? new Date(cancellation.at) : null;
+  const atFmt = at && !isNaN(at.getTime())
+    ? at.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null;
+  const items = cancellation.items || [];
+  return (
+    <div style={{
+      marginTop: 8,
+      marginBottom: 22,
+      padding: '14px 16px',
+      background: T.status.danger.bg,
+      border: `1px solid ${T.status.danger.border}`,
+      borderRadius: T.radius.md,
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 8,
+        flexWrap: 'wrap',
+      }}>
+        <span style={{
+          fontSize: 10.5,
+          fontFamily: T.font.mono,
+          fontWeight: 700,
+          color: T.status.danger.text,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+        }}>
+          Storniert
+        </span>
+        {cancellation.by?.name && (
+          <span style={{ fontSize: 12, color: T.text.subtle }}>
+            durch <strong style={{ color: T.text.primary }}>{cancellation.by.name}</strong>
+          </span>
+        )}
+        {atFmt && (
+          <span style={{ fontSize: 12, color: T.text.faint, fontVariantNumeric: 'tabular-nums' }}>
+            · {atFmt}
+          </span>
+        )}
+      </div>
+      {cancellation.note && (
+        <div style={{
+          fontSize: 13,
+          color: T.text.primary,
+          marginBottom: items.length ? 10 : 0,
+          whiteSpace: 'pre-wrap',
+        }}>
+          {cancellation.note}
+        </div>
+      )}
+      {items.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {items.map((it, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '90px 1fr',
+                gap: 10,
+                fontSize: 12.5,
+                lineHeight: 1.4,
+              }}
+            >
+              <span style={{
+                fontFamily: T.font.mono,
+                fontSize: 11.5,
+                color: T.status.danger.text,
+                fontWeight: 600,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {it.palletId || 'ESKU'}
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{
+                  color: T.text.primary,
+                  fontWeight: 500,
+                  marginRight: 6,
+                }}>
+                  {it.title || it.code || '—'}
+                </span>
+                {it.code && it.code !== it.title && (
+                  <span style={{ fontFamily: T.font.mono, fontSize: 11.5, color: T.text.subtle, marginRight: 6 }}>
+                    · {it.code}
+                  </span>
+                )}
+                {it.reason && (
+                  <span style={{ color: T.status.danger.text, fontStyle: 'italic' }}>
+                    — {it.reason}
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SectionLabel({ title, sub }: { title?: React.ReactNode; sub?: React.ReactNode }) {

@@ -34,7 +34,7 @@ import { useAppState } from '@/state.jsx';
 import {
   focusItemView, sortItemsForPallet, distributeEinzelneSku, applyEskuOverrides, eskuOverrideKey,
   enrichItemDims, getDisplayLevel, LEVEL_META, formatItemTitle,
-  extractProduktionPerCarton, singleSkuClusterKey,
+  extractProduktionPerCarton, singleSkuClusterKey, itemTotalVolumeCm3, largeBaseRank,
 } from '@/utils/auftragHelpers.js';
 import { lookupSkuDimensions } from '@/marathonApi.js';
 import { detectWiederholt } from '@/utils/wiederholtLogic.js';
@@ -42,8 +42,10 @@ import { Page, Topbar, Button, Badge, StudioFrame, T } from '@/components/ui.jsx
 import PalletInterlude, { resetSkipCount } from '@/components/PalletInterlude.jsx';
 import AuftragFinaleStage from '@/components/AuftragFinaleStage.jsx';
 import EskuMovePopover from '@/components/EskuMovePopover.jsx';
+import CancelAuftragModal from '@/components/CancelAuftragModal';
 
 const SCHNELL_KEY = 'marathon.focus.schnellmodus';
+const DOPPEL_KEY  = 'marathon.focus.doppelmodus';
 
 /* Short, human-readable pallet name. Files come in with id like
    "P1-B1" / "P2-B3"; the "-B…" suffix is the docx box number, which
@@ -66,8 +68,9 @@ export default function FocusScreen() {
     current,
     setCurrentPalletIdx, setCurrentItemIdx, markCodeCopied,
     moveEskuToPallet,
-    completeCurrentItem, cancelCurrent, goToStep,
+    completeCurrentItem, cancelCurrent, abortCurrent, goToStep,
   } = useAppState();
+  const [stornoOpen, setStornoOpen] = useState(false);
   const eskuOverrides = current?.eskuOverrides || {};
 
   /* Async dim/weight enrichment (cached 5min, same key as Pruefen). */
@@ -112,8 +115,18 @@ export default function FocusScreen() {
   const rawPallets = useMemo(
     () => enrichedSourcePallets.map((p) => {
       const sortedMixed = sortItemsForPallet(p.items || []);
-      const sortedEsku  = sortItemsForPallet(distribution.byPalletId[p.id] || []);
-      return { ...p, items: [...sortedMixed, ...sortedEsku] };
+      /* Large-base ESKU goes to the START of the pallet, before Mixed.
+         Within that group there is a strict sub-order driven by
+         largeBaseRank():
+           rank 2  →  80mm × *           (placed FIRST, heaviest base)
+           rank 1  →  57mm × 63m / 58×64 (placed AFTER 80mm)
+           rank 0  →  not a base format  (continues to land after Mixed)
+         This mirrors the warehouse stacking sequence physically. */
+      const eskuRaw     = distribution.byPalletId[p.id] || [];
+      const base80      = sortItemsForPallet(eskuRaw.filter((x) => largeBaseRank(x) === 2));
+      const baseOther   = sortItemsForPallet(eskuRaw.filter((x) => largeBaseRank(x) === 1));
+      const restEsku    = sortItemsForPallet(eskuRaw.filter((x) => largeBaseRank(x) === 0));
+      return { ...p, items: [...base80, ...baseOther, ...sortedMixed, ...restEsku] };
     }),
     [enrichedSourcePallets, distribution],
   );
@@ -130,10 +143,16 @@ export default function FocusScreen() {
   } : null;
   const item = rawItem ? focusItemView(rawItem) : null;
 
+  /* Next article on the SAME pallet — used by Doppel-Artikel-Modus.
+     Intentionally null on the last item of a pallet so the second slot
+     hides cleanly at pallet boundaries (no "Nächste Palette" preview). */
+  const rawNextItem = rawPallet?.items?.[itemIdx + 1] || null;
+  const nextItem = rawNextItem ? focusItemView(rawNextItem) : null;
+
   /* ── view-only state ── */
   const [wiederholt, setWiederholt] = useState<{ code?: string; units?: number; palletId?: string; name?: string } | null>(null);
   const [flashUse,   setFlashUse]   = useState<unknown | null>(null);
-  const [interlude,  setInterlude]  = useState<{ id: string; itemCount: number; weightKg: unknown; volCm3: unknown; durationMs: number; nextPallet: unknown } | null>(null);
+  const [interlude,  setInterlude]  = useState<{ id: string; itemCount: number; weightKg: unknown; volCm3: unknown; durationMs: number; nextPallet: unknown; nextHints: Array<{ tone: 'danger' | 'warn' | 'info'; label: string; detail?: string }> } | null>(null);
   const [finale,     setFinale]     = useState(false);
   /* «Zen»-Modus — Klick auf den freien Bereich (oder Z-Taste) blendet
      alles bis auf das Wesentliche aus: Artikelname, Menge, Codes. */
@@ -148,6 +167,9 @@ export default function FocusScreen() {
 
   const [schnellmodus, setSchnellmodus] = useState(() => {
     try { return localStorage.getItem(SCHNELL_KEY) === '1'; } catch { return false; }
+  });
+  const [doppelmodus, setDoppelmodus] = useState(() => {
+    try { return localStorage.getItem(DOPPEL_KEY) === '1'; } catch { return false; }
   });
   const reducedMotion = useReducedMotion();
 
@@ -277,6 +299,14 @@ export default function FocusScreen() {
   const currentPalletId = rawPallets[palletIdx]?.id || '';
   const displayCurrentItemIdx = articleOrigToDisplay(currentPalletId, itemIdx);
 
+  /* Whether the article displayed in the Hero is in completedKeys.
+     True the moment Fertig is pressed (briefly visible before cursor
+     advances) and whenever the worker navigates back to a Fertig'd
+     item via the chip strip — drives Hero's success styling. */
+  const currentIsCompleted = displayCompletedKeys.has(
+    `${displayCurrentIdx}|${displayCurrentItemIdx}`,
+  );
+
   /* Stable callback for the chip strip — keeps NumberedChip's React.memo
      effective. Re-binds only when the active pallet id (translation key)
      or the override map changes. */
@@ -349,6 +379,55 @@ export default function FocusScreen() {
        display reorder so the preview matches what comes next visually. */
     const nextRawIdx = nextDisplayPalletRawIdx(idx);
     const nextPallet = nextRawIdx != null ? rawPallets[nextRawIdx] : null;
+
+    /* Worth-noting hints for the NEXT pallet, surfaced as a compact
+       Hinweise strip inside the interlude card. Empty array = nothing
+       worth flagging, the strip stays hidden. Tones map to T.status.
+       Order: hard-block first (4-Seiten), then physical limits, then
+       informational. Wording stays terse — the worker re-derives
+       context from the FBA chip / level dashes. */
+    const nextHints: Array<{ tone: 'danger' | 'warn' | 'info'; label: string; detail?: string }> = [];
+    if (nextPallet) {
+      const nextPS = palletStates?.[nextPallet.id];
+      if (nextPallet.hasFourSideWarning) {
+        nextHints.push({
+          tone: 'danger',
+          label: '4-Seiten-Warnung',
+          detail: 'Single-SKU · keine ESKU erlaubt',
+        });
+      }
+      if (nextPS?.overloadFlags?.has?.('OVERLOAD-W')) {
+        nextHints.push({
+          tone: 'warn',
+          label: 'Übergewicht',
+          detail: `${Math.round(nextPS.weightKg || 0)} kg · Limit 700 kg`,
+        });
+      }
+      if (nextPS?.overloadFlags?.has?.('OVERLOAD-V')) {
+        nextHints.push({
+          tone: 'warn',
+          label: 'Übervolumen',
+          detail: `${(((nextPS.volCm3 || 0) / 1e6)).toFixed(2)} m³ · Limit 1.59 m³`,
+        });
+      }
+      const eskuOnNext = distribution?.byPalletId?.[nextPallet.id]?.length || 0;
+      if (eskuOnNext > 0) {
+        nextHints.push({
+          tone: 'info',
+          label: 'ESKU dabei',
+          detail: `${eskuOnNext} Einzelne SKU eingeplant`,
+        });
+      }
+      const itemCount = (nextPallet.items || []).length;
+      if (itemCount >= 18) {
+        nextHints.push({
+          tone: 'info',
+          label: 'Viele Artikel',
+          detail: `${itemCount} Stück auf einer Palette`,
+        });
+      }
+    }
+
     return {
       id: p.id,
       itemCount: p.items.length,
@@ -356,8 +435,9 @@ export default function FocusScreen() {
       volCm3:   ps?.volCm3   || 0,
       durationMs,
       nextPallet,
+      nextHints,
     };
-  }, [rawPallets, palletStates, current?.palletTimings, nextDisplayPalletRawIdx]);
+  }, [rawPallets, palletStates, distribution, current?.palletTimings, nextDisplayPalletRawIdx]);
 
   /* ── Navigation ──
      Arrow-keys (and StickyBar prev/next buttons) walk the items in
@@ -496,6 +576,14 @@ export default function FocusScreen() {
     });
   }, []);
 
+  const toggleDoppel = useCallback(() => {
+    setDoppelmodus((v) => {
+      const next = !v;
+      try { localStorage.setItem(DOPPEL_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   /* Reset only flashUse on item change — copiedCode is now derived from
      persistent copiedKeys (localStorage) below, so it survives navigation
      and returns to previously-copied articles still read as "kopiert". */
@@ -562,11 +650,22 @@ export default function FocusScreen() {
         }
         return;
       }
-      /* Zen-Modus toggle — works regardless of Shell, since it's a UI
-         layer concern, not a workflow key. Esc exits zen too. */
+      /* UI-mode toggles (Z/D/S) — always available, regardless of
+         Shell. They flip view layers, not workflow state. Esc exits
+         zen too. */
       if (e.key === 'z' || e.key === 'Z') {
         e.preventDefault();
         setZen((v) => !v);
+        return;
+      }
+      if (e.key === 'd' || e.key === 'D') {
+        e.preventDefault();
+        toggleDoppel();
+        return;
+      }
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        toggleSchnell();
         return;
       }
       if (zen && e.key === 'Escape') {
@@ -599,7 +698,8 @@ export default function FocusScreen() {
     return () => document.removeEventListener('keydown', onKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wiederholt, interlude, finale, zen, schnellmodus, handleFertig, goNextItem, goPrevItem,
-      onCopyArtikelCode, onCopyUseItem, palletIdx, allPalletCopied, rawPallets]);
+      onCopyArtikelCode, onCopyUseItem, palletIdx, allPalletCopied, rawPallets,
+      toggleDoppel, toggleSchnell]);
 
   /* Auftrag totals — used by AuftragFinaleStage. */
   const totals = useMemo(() => {
@@ -655,14 +755,72 @@ export default function FocusScreen() {
               title: 'Zurück zu Prüfen' },
             { label: 'Focus' },
           ]}
-          center={<FbaCenterChip current={current} />}
+          center={<FocusStatusStripe current={current} />}
           right={
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <ShellToggle on={schnellmodus} onToggle={toggleSchnell} />
-              <Button variant="danger" size="sm" onClick={onExit}
-                      title="Focus-Modus verlassen">
-                Verlassen
-              </Button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              {/* View-mode toggles — same pill style, kbd hint on each.
+                  Order chosen by hotkey adjacency on the keyboard so the
+                  Z|S|D row reads as a single tactile group. */}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <ViewListButton onClick={() => setPalletListOpen(true)} />
+                <ZenToggle    on={zen}          onToggle={() => setZen((v) => !v)} />
+                <ShellToggle  on={schnellmodus} onToggle={toggleSchnell} />
+                <DoppelToggle on={doppelmodus}  onToggle={toggleDoppel} />
+              </span>
+
+              {/* Hairline separator between view-modes and exit-actions
+                  so the two clusters read as distinct intents. */}
+              <span aria-hidden style={{
+                width: 1,
+                height: 22,
+                background: T.border.primary,
+              }} />
+
+              {/* Exit cluster — Storno (text, dangerous) + X (quick).
+                  Tighter gap binds them visually. */}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Button variant="ghost" size="sm" onClick={() => setStornoOpen(true)}
+                        title="Auftrag stornieren — geht mit Begründung in die Historie"
+                        style={{
+                          color: T.status.danger.text,
+                          borderColor: T.status.danger.border,
+                        }}>
+                  Stornieren
+                </Button>
+                <button
+                  onClick={onExit}
+                  title="Focus verlassen — Fortschritt bleibt gespeichert"
+                  aria-label="Focus verlassen"
+                  style={{
+                    width: 32,
+                    height: 32,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'transparent',
+                    color: T.text.subtle,
+                    border: `1px solid ${T.border.primary}`,
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                    transition: 'background 140ms, border-color 140ms, color 140ms',
+                    padding: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = T.bg.surface2;
+                    e.currentTarget.style.color = T.text.primary;
+                    e.currentTarget.style.borderColor = T.text.faint;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = T.text.subtle;
+                    e.currentTarget.style.borderColor = T.border.primary;
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                    <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </span>
             </span>
           }
         />
@@ -714,6 +872,9 @@ export default function FocusScreen() {
             eskuDist={distribution.byPalletId}
             eskuOverrides={eskuOverrides}
             onMoveEsku={moveEskuToPallet}
+            doppelmodus={doppelmodus}
+            nextItem={nextItem}
+            isCompleted={currentIsCompleted}
           />
 
           {/* Pallet flow — visual twin of ArticleHeroCard above it.
@@ -757,7 +918,6 @@ export default function FocusScreen() {
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'space-between',
                 gap: 12,
                 minHeight: 30,
               }}>
@@ -771,7 +931,6 @@ export default function FocusScreen() {
                 }}>
                   Pallet Flow
                 </span>
-                <ViewListButton onClick={() => setPalletListOpen(true)} />
               </div>
             )}
             <PalletFlow
@@ -876,6 +1035,7 @@ export default function FocusScreen() {
         <PalletInterlude
           pallet={interlude}
           nextPallet={interlude.nextPallet}
+          nextHints={interlude.nextHints}
           reducedMotion={reducedMotion}
           onComplete={() => setInterlude(null)}
         />
@@ -889,6 +1049,18 @@ export default function FocusScreen() {
           onComplete={() => goToStep('abschluss')}
         />
       )}
+
+      <CancelAuftragModal
+        open={stornoOpen}
+        fbaCode={current?.fbaCode || current?.parsed?.meta?.sendungsnummer || current?.fileName}
+        pallets={current?.parsed?.pallets || []}
+        eskuItems={current?.parsed?.einzelneSkuItems || []}
+        onClose={() => setStornoOpen(false)}
+        onConfirm={(payload) => {
+          setStornoOpen(false);
+          abortCurrent(payload);
+        }}
+      />
     </Page>
   );
 }
@@ -910,9 +1082,18 @@ function ArticleHeroCard({
   reCopyTick = 0,
   wiederholt = null,
   allPallets, palletStates, eskuDist, eskuOverrides, onMoveEsku,
-}) {
+  doppelmodus = false,
+  nextItem = null,
+  isCompleted = false,
+}: any) {
   const cat = item.levelMeta || LEVEL_META[1];
-  const haloColor = cat.color || T.accent.main;
+  const showNext = doppelmodus && !zen && !!nextItem;
+  /* Completed-success theme overrides the level halo + border when the
+     worker has Fertig'd this article (or navigated back to one already
+     Fertig'd). Visible briefly during forward Fertig (cursor advances
+     within one tick) and persistent when revisiting via chip. */
+  const haloColor = isCompleted ? T.status.success.main : (cat.color || T.accent.main);
+  const borderColor = isCompleted ? T.status.success.main : T.border.primary;
   const moveTriggerRef = useRef(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const canMoveEsku = item.isEsku && typeof onMoveEsku === 'function' && allPallets?.length > 1;
@@ -925,21 +1106,38 @@ function ArticleHeroCard({
       width: '100%',
       maxWidth: 1080,
       padding: compact ? '14px 20px' : '24px 28px',
-      background: T.bg.surface,
-      border: `1px solid ${T.border.primary}`,
+      background: isCompleted ? '#ecfdf575' : T.bg.surface,
+      border: `${isCompleted ? 1.4 : 1}px solid ${borderColor}`,
       borderRadius: 18,
-      boxShadow: 'none',
+      boxShadow: isCompleted
+        ? `0 0 0 4px ${T.status.success.main}1A, 0 8px 24px -8px ${T.status.success.main}3D`
+        : 'none',
       overflow: 'hidden',
-      transition: 'padding 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+      transition: 'padding 240ms cubic-bezier(0.16, 1, 0.3, 1), border-color 280ms ease, box-shadow 320ms ease, background 320ms ease',
     }}>
-      {/* Soft accent radial halo */}
+      {/* Halo — saturates and grows when completed; left + right twin
+          for full envelope, vs. the single right halo of the default
+          state. */}
       <div aria-hidden style={{
         position: 'absolute',
         top: -120, right: -120,
-        width: 280, height: 280,
-        background: `radial-gradient(circle, ${haloColor}10 0%, transparent 65%)`,
+        width: isCompleted ? 360 : 280,
+        height: isCompleted ? 360 : 280,
+        background: `radial-gradient(circle, ${haloColor}${isCompleted ? '2E' : '10'} 0%, transparent 65%)`,
         pointerEvents: 'none',
+        transition: 'background 280ms ease, width 320ms ease, height 320ms ease',
       }} />
+      {isCompleted && (
+        <div aria-hidden style={{
+          position: 'absolute',
+          bottom: -140, left: -140,
+          width: 320,
+          height: 320,
+          background: `radial-gradient(circle, ${T.status.success.main}24 0%, transparent 65%)`,
+          pointerEvents: 'none',
+        }} />
+      )}
+
 
       <div style={{ position: 'relative' }}>
         {/* Top mini-row — position eyebrow on left, badges on right.
@@ -959,6 +1157,7 @@ function ArticleHeroCard({
         }}>
           <PositionEyebrow palletId={palletId} itemIdx={itemIdx} itemCount={itemCount} />
           <span style={{ flex: 1 }} />
+          {isCompleted && <Badge tone="success">✓ Abgeschlossen</Badge>}
           <LevelChip level={item.level} cat={cat} />
           {item.isEsku && <Badge tone="accent">ESKU</Badge>}
           {item.lst && (
@@ -1032,62 +1231,362 @@ function ArticleHeroCard({
             reCopyTick={reCopyTick}
           />
         </div>
+
+        {/* Doppel-Artikel — thin preview strip for the next article on
+            the same pallet. Hidden in zen mode and on the last item of
+            a pallet (nextItem == null). Visually subdued: smaller type,
+            muted color, hairline divider above so it reads as secondary
+            context, not a second active workflow target. */}
+        <DoppelStrip show={showNext} nextItem={nextItem} currentItem={rawItem} currentCat={cat} />
       </div>
     </div>
   );
 }
 
-function FbaCenterChip({ current }) {
+function DoppelStrip({ show, nextItem, currentItem, currentCat }: any) {
+  const cat = nextItem?.levelMeta || LEVEL_META[1];
+  const qty = nextItem
+    ? (nextItem.isEsku ? nextItem.eskuCartons : nextItem.units)
+    : null;
+  /* Mirror ArticleColumn's perCarton rule: Mixed → "N Rollen" per
+     Karton (or whatever rollenUnit says), ESKU → "N Einheiten" per
+     Karton. Hidden when the parser couldn't extract it. */
+  const perCarton = nextItem
+    ? (!nextItem.isEsku
+        ? (nextItem.rollen ? { value: nextItem.rollen, unit: nextItem.rollenUnit || 'Rollen' } : null)
+        : (nextItem.eskuPacksPerCarton != null
+            ? { value: nextItem.eskuPacksPerCarton, unit: 'Einheiten' }
+            : null))
+    : null;
+  /* Volume comparison: how much bigger/smaller is the NEXT article
+     vs the CURRENT one. Renders two stacked mini-bars normalized to
+     whichever is larger, plus a "+X%" or "−X%" chip. The visual
+     length-difference is the primary signal; the % is precise. */
+  const currentVol = currentItem ? (itemTotalVolumeCm3(currentItem) || 0) : 0;
+  const nextVol    = nextItem    ? (itemTotalVolumeCm3(nextItem)    || 0) : 0;
+  const hasCompare = currentVol > 0 && nextVol > 0;
+  const maxVol     = Math.max(currentVol, nextVol);
+  const currPct    = hasCompare ? (currentVol / maxVol) * 100 : 0;
+  const nextPct    = hasCompare ? (nextVol    / maxVol) * 100 : 0;
+  const ratio      = hasCompare ? nextVol / currentVol : 1;
+  const diffPct    = (ratio - 1) * 100;
+  /* Color the ratio chip by direction: bigger = warn (eats more
+     pallet, give it space), smaller = neutral, equal = quiet. */
+  const ratioBig   = Math.abs(diffPct) >= 1;
+  const ratioColor = !ratioBig
+    ? T.text.subtle
+    : diffPct > 0
+      ? T.status.warn.main
+      : T.text.subtle;
+  const ratioLabel = !ratioBig
+    ? 'gleich'
+    : `${diffPct > 0 ? '+' : '−'}${Math.abs(diffPct).toFixed(0)}%`;
+  const currentBarColor = currentCat?.color || T.text.faint;
+  return (
+    <div style={{
+      maxHeight: show ? 90 : 0,
+      marginTop: show ? 20 : 0,
+      paddingTop: show ? 14 : 0,
+      opacity: show ? 1 : 0,
+      borderTop: show ? `1px solid ${T.border.primary}` : '1px solid transparent',
+      overflow: 'hidden',
+      pointerEvents: show ? 'auto' : 'none',
+      transition: 'opacity 200ms ease, max-height 280ms cubic-bezier(0.16, 1, 0.3, 1), margin-top 240ms ease, padding-top 240ms ease, border-color 200ms ease',
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        minWidth: 0,
+      }}>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 10.5,
+          fontWeight: 700,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          color: T.text.subtle,
+          flexShrink: 0,
+        }}>
+          Nächster Artikel
+        </span>
+        {nextItem && <LevelChip level={nextItem.level} cat={cat} />}
+        {/* Name + per-Karton fact sit in one shrinkable group so the
+            "50 Rollen" badge always reads as a property OF this name,
+            not as a standalone metric on the right. Group truncates as
+            a whole; perCarton itself never wraps or shrinks. */}
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: 10,
+          minWidth: 0,
+          flex: 1,
+          overflow: 'hidden',
+        }}>
+          <span style={{
+            fontFamily: T.font.ui,
+            fontSize: 17,
+            fontWeight: 500,
+            color: '#4a4a4a',
+            letterSpacing: '-0.01em',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            minWidth: 0,
+          }}>
+            {nextItem?.name}
+          </span>
+          {perCarton && (
+            <span style={{
+              fontFamily: T.font.mono,
+              fontSize: 14,
+              fontWeight: 700,
+              color: T.accent.main,
+              letterSpacing: '0.02em',
+              fontVariantNumeric: 'tabular-nums',
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
+            }}>
+              {perCarton.value}
+              <span style={{
+                marginLeft: 5,
+                fontSize: 10.5,
+                letterSpacing: '0.10em',
+                textTransform: 'uppercase',
+                color: T.text.subtle,
+              }}>
+                {perCarton.unit}
+              </span>
+            </span>
+          )}
+        </span>
+        {qty != null && (
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 16,
+            fontWeight: 700,
+            color: T.text.primary,
+            letterSpacing: '0.04em',
+            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0,
+          }}>
+            {qty}
+            <span style={{
+              marginLeft: 6,
+              fontSize: 10.5,
+              letterSpacing: '0.10em',
+              textTransform: 'uppercase',
+              color: T.text.subtle,
+              fontWeight: 600,
+            }}>
+              Kartons
+            </span>
+          </span>
+        )}
+        {/* Volume comparison — stacked mini-bars, normalised so the
+            larger of (current, next) takes the full width. Bars carry
+            their own level colour; the ratio chip surfaces precise
+            "+X%" / "−X%" and turns orange when the next article is
+            bigger, hinting the worker to plan space. */}
+        {hasCompare && (
+          <span
+            title={`Aktuell: ${(currentVol / 1e6).toFixed(3)} m³ · Nächster: ${(nextVol / 1e6).toFixed(3)} m³ · ${ratioLabel} grösser`}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 10,
+              flexShrink: 0,
+            }}
+          >
+            <span aria-hidden style={{
+              display: 'inline-flex',
+              flexDirection: 'column',
+              gap: 3,
+              width: 110,
+            }}>
+              {/* Current (top, muted) — current article's footprint. */}
+              <span style={{
+                position: 'relative',
+                width: '100%',
+                height: 6,
+                borderRadius: 3,
+                background: T.bg.surface2,
+                overflow: 'hidden',
+              }}>
+                <span style={{
+                  position: 'absolute',
+                  top: 0, left: 0, bottom: 0,
+                  width: `${currPct}%`,
+                  background: currentBarColor,
+                  opacity: 0.45,
+                  borderRadius: 3,
+                  transition: 'width 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+                }} />
+              </span>
+              {/* Next (bottom, full colour) — next article's footprint. */}
+              <span style={{
+                position: 'relative',
+                width: '100%',
+                height: 6,
+                borderRadius: 3,
+                background: T.bg.surface2,
+                overflow: 'hidden',
+              }}>
+                <span style={{
+                  position: 'absolute',
+                  top: 0, left: 0, bottom: 0,
+                  width: `${nextPct}%`,
+                  background: cat.color,
+                  borderRadius: 3,
+                  boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.20)',
+                  transition: 'width 240ms cubic-bezier(0.16, 1, 0.3, 1), background 200ms ease',
+                }} />
+              </span>
+            </span>
+            <span style={{
+              fontFamily: T.font.mono,
+              fontSize: 13,
+              fontWeight: 700,
+              color: ratioColor,
+              fontVariantNumeric: 'tabular-nums',
+              letterSpacing: '0.02em',
+              minWidth: 44,
+              textAlign: 'right',
+            }}>
+              {ratioLabel}
+            </span>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   FocusStatusStripe — live context chip for the Topbar centre.
+
+   Single horizontal pill carrying every fact the worker references
+   without leaving the screen: FBA / Auftrag identity, pallet position,
+   item position (overall), elapsed time. Click anywhere on the chip
+   copies the FBA code; the file name lives in the hover tooltip.
+   Sections separated by hairline dots, mono throughout for ambient
+   scanability. */
+function FocusStatusStripe({ current }: { current: any }) {
   const meta = current?.parsed?.meta;
-  const fba = meta?.sendungsnummer || meta?.fbaCode || null;
-  const [hover, setHover] = useState(false);
+  const fba = meta?.sendungsnummer || meta?.fbaCode || current?.fbaCode || null;
+  const fileName: string = current?.fileName || '';
+  const startedAt: number = current?.startedAt ?? Date.now();
+
+  /* Tick every 30 s so the elapsed-time readout stays live during
+     idle moments. State changes also trigger re-render, so the gap
+     between ticks is the worst case, not the typical case. */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const elapsedStr = formatElapsedShort(Math.max(0, now - startedAt));
+
   const [copied, setCopied] = useState(false);
-  if (!fba) return null;
+  const [hover, setHover] = useState(false);
   const onCopy = () => {
+    if (!fba) return;
     copyToClipboard(fba);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1200);
   };
+
+  const identity = fba || (fileName ? fileName.replace(/\.docx$/i, '') : 'Auftrag');
+  const tooltipParts: string[] = [];
+  if (fileName) tooltipParts.push(`Datei: ${fileName}`);
+  if (fba) tooltipParts.push(`FBA: ${fba}`);
+  tooltipParts.push('Klick = FBA kopieren');
+
+  const sectionStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: 4,
+    fontFamily: T.font.mono,
+    fontSize: 12,
+    fontVariantNumeric: 'tabular-nums',
+    color: T.text.primary,
+    fontWeight: 600,
+    letterSpacing: '-0.005em',
+  };
+  const sep = (
+    <span aria-hidden style={{
+      color: T.border.strong,
+      fontFamily: T.font.mono,
+      fontSize: 11,
+      fontWeight: 400,
+    }}>·</span>
+  );
+
   return (
     <button
       type="button"
       onClick={onCopy}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      title={copied ? 'Kopiert!' : `FBA-Code kopieren: ${fba}`}
+      title={copied ? 'FBA-Code kopiert!' : tooltipParts.join(' · ')}
       style={{
         display: 'inline-flex',
-        alignItems: 'baseline',
-        gap: 8,
-        padding: '6px 12px',
+        alignItems: 'center',
+        gap: 10,
+        padding: '6px 14px',
+        height: 32,
         borderRadius: 999,
         background: copied ? T.accent.bg : (hover ? T.bg.surface2 : T.bg.surface),
         border: `1px solid ${copied ? T.accent.main : (hover ? T.accent.main : T.border.primary)}`,
-        fontFamily: T.font.mono,
-        fontVariantNumeric: 'tabular-nums',
-        cursor: 'pointer',
-        transition: 'background 160ms ease, border-color 160ms ease, color 160ms ease',
+        cursor: fba ? 'pointer' : 'default',
+        transition: 'background 160ms ease, border-color 160ms ease',
       }}
     >
-      <span style={{
-        fontSize: 9.5,
-        fontWeight: 600,
-        color: copied ? T.accent.text : T.text.subtle,
-        textTransform: 'uppercase',
-        letterSpacing: '0.18em',
-      }}>
-        {copied ? 'Kopiert' : 'FBA'}
+      {/* Identity — FBA code if available, else cleaned file name.
+          The 'FBA' label flips to 'KOPIERT' on copy feedback. */}
+      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 9.5,
+          fontWeight: 700,
+          color: copied ? T.accent.text : T.text.faint,
+          textTransform: 'uppercase',
+          letterSpacing: '0.18em',
+        }}>
+          {copied ? 'Kopiert' : (fba ? 'FBA' : 'Datei')}
+        </span>
+        <span style={{
+          fontFamily: T.font.mono,
+          fontSize: 12.5,
+          fontWeight: 700,
+          color: copied ? T.accent.text : T.text.primary,
+          letterSpacing: '0.02em',
+          maxWidth: 240,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}>
+          {identity}
+        </span>
       </span>
-      <span style={{
-        fontSize: 13,
-        fontWeight: 600,
-        color: copied ? T.accent.text : T.text.primary,
-        letterSpacing: '0.04em',
-      }}>
-        {fba}
+
+      {sep}
+
+      {/* Elapsed time */}
+      <span style={{ ...sectionStyle, color: T.text.subtle, fontWeight: 600 }} title="Dauer seit Start">
+        {elapsedStr}
       </span>
     </button>
   );
+}
+
+function formatElapsedShort(ms: number): string {
+  const totalMin = Math.floor(ms / 60_000);
+  if (totalMin < 1) return '< 1m';
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 function PositionEyebrow({ palletId, itemIdx, itemCount }) {
@@ -1319,11 +1818,15 @@ function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse, reCopy
       paddingLeft: 4,
       height: '100%',
     }}>
-      {/* PRIMARY — Artikel-Code (dominant) */}
+      {/* PRIMARY — Artikel-Code (dominant). For ESKU the SKU leads and
+          FNSKU rides under as a secondary line; for everything else the
+          secondary line is null and only the dominant value renders. */}
       <CodeRow
         label="Artikel-Code"
         kbd="C"
         value={item.code}
+        secondary={item.secondaryCode}
+        secondaryLabel={item.isEsku ? 'FNSKU' : null}
         copied={copiedCode != null && copiedCode === item.code}
         onCopy={onCopyCode}
         size="dominant"
@@ -1346,7 +1849,7 @@ function CodesColumn({ item, copiedCode, flashUse, onCopyCode, onCopyUse, reCopy
   );
 }
 
-function CodeRow({ label, kbd, value, copied, onCopy, size, accent, reCopyTick = 0 }: { label: React.ReactNode; kbd?: string; value: string; copied?: boolean; onCopy: () => void; size?: 'dominant' | 'compact' | 'quiet'; accent?: boolean; reCopyTick?: number }) {
+function CodeRow({ label, kbd, value, secondary, secondaryLabel, copied, onCopy, size, accent, reCopyTick = 0 }: { label: React.ReactNode; kbd?: string; value: string; secondary?: string | null; secondaryLabel?: string | null; copied?: boolean; onCopy: () => void; size?: 'dominant' | 'compact' | 'quiet'; accent?: boolean; reCopyTick?: number }) {
   const isDominant = size === 'dominant';
   const valueFont = isDominant
     ? 'clamp(30px, 3.6vw, 46px)'
@@ -1427,6 +1930,40 @@ function CodeRow({ label, kbd, value, copied, onCopy, size, accent, reCopyTick =
       }}>
         {value || '—'}
       </div>
+
+      {/* Secondary code line (e.g. FNSKU below an ESKU's SKU). Only
+          renders when set — non-ESKU rows never see it. Subtle, mono,
+          no copy interaction (clicking still copies the primary). */}
+      {secondary && (
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: 8,
+          marginTop: 2,
+        }}>
+          {secondaryLabel && (
+            <span style={{
+              fontSize: 9.5,
+              fontWeight: 600,
+              fontFamily: T.font.mono,
+              color: T.text.faint,
+              textTransform: 'uppercase',
+              letterSpacing: '0.16em',
+            }}>
+              {secondaryLabel}
+            </span>
+          )}
+          <span style={{
+            fontFamily: T.font.mono,
+            fontSize: 13,
+            fontWeight: 500,
+            color: T.text.subtle,
+            letterSpacing: '-0.005em',
+          }}>
+            {secondary}
+          </span>
+        </div>
+      )}
     </button>
   );
 }
@@ -1711,6 +2248,7 @@ function PalletFlow({
           hasFlag={hasFlag}
           currentItemIdx={state === 'current' ? itemIdx : -1}
           copiedKeys={copiedKeys}
+          completedKeys={completedKeys}
           onPickPallet={() => onPickPallet?.(i)}
           onPickItem={onPickItem}
         />
@@ -1812,59 +2350,11 @@ function ZenItemDots({ items, palletDisplayIdx, currentDisplayItemIdx, copiedKey
   );
 }
 
-/* ViewListButton — opens the full-pallet overview overlay. Solid
-   accent border + list icon so it reads as a primary action. */
-function ViewListButton({ onClick }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Alle Paletten und Artikel als Liste anzeigen"
-      style={{
-        height: 30,
-        paddingInline: 12,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        border: `1.5px solid ${T.accent.main}`,
-        background: T.bg.surface,
-        borderRadius: 8,
-        cursor: 'pointer',
-        color: T.accent.main,
-        fontFamily: T.font.mono,
-        fontSize: 11,
-        fontWeight: 700,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        transition: 'background 200ms ease, color 200ms ease',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = T.accent.main;
-        e.currentTarget.style.color = '#fff';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = T.bg.surface;
-        e.currentTarget.style.color = T.accent.main;
-      }}
-    >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
-           stroke="currentColor" strokeWidth="1.8"
-           strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 4h10M3 8h10M3 12h10"/>
-        <circle cx="1.5" cy="4" r="0.6" fill="currentColor" stroke="none"/>
-        <circle cx="1.5" cy="8" r="0.6" fill="currentColor" stroke="none"/>
-        <circle cx="1.5" cy="12" r="0.6" fill="currentColor" stroke="none"/>
-      </svg>
-      <span>Liste</span>
-    </button>
-  );
-}
-
 function PalletNode({
   pallet, palletIdx, state, blocked, total, copied,
-  isEsku, hasFlag, currentItemIdx, copiedKeys,
+  isEsku, hasFlag, currentItemIdx, copiedKeys, completedKeys,
   onPickPallet, onPickItem,
-}) {
+}: any) {
   const STATE_STYLES = {
     done:    { bg: T.status.success.bg, border: T.status.success.border,
                text: T.status.success.text, sub: T.status.success.text,
@@ -1984,6 +2474,7 @@ function PalletNode({
           palletIdx={palletIdx}
           currentItemIdx={currentItemIdx}
           copiedKeys={copiedKeys}
+          completedKeys={completedKeys}
           onPick={onPickItem}
         />
       )}
@@ -1991,11 +2482,67 @@ function PalletNode({
   );
 }
 
+
+/* ViewListButton — opens the full-pallet overview overlay. Pill shape
+   + mono uppercase so it docks cleanly next to the view-mode toggle
+   cluster (Zen/Shell/Doppel) in the Topbar. On hover it lifts to the
+   accent palette to signal it's a navigation action, not a state toggle. */
+function ViewListButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => { onClick(); e.currentTarget.blur(); }}
+      title="Alle Paletten und Artikel als Liste anzeigen"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        height: 24,
+        padding: '0 10px',
+        fontSize: 10.5,
+        fontFamily: T.font.mono,
+        fontWeight: 700,
+        color: T.text.subtle,
+        background: 'transparent',
+        border: `1px solid ${T.border.primary}`,
+        borderRadius: 999,
+        cursor: 'pointer',
+        letterSpacing: '0.10em',
+        textTransform: 'uppercase',
+        transition: 'background 140ms ease, border-color 140ms ease, color 140ms ease',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = T.accent.bg;
+        e.currentTarget.style.color = T.accent.text;
+        e.currentTarget.style.borderColor = T.accent.border;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.color = T.text.subtle;
+        e.currentTarget.style.borderColor = T.border.primary;
+      }}
+    >
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+           stroke="currentColor" strokeWidth="1.8"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 4h10M3 8h10M3 12h10"/>
+        <circle cx="1.5" cy="4" r="0.6" fill="currentColor" stroke="none"/>
+        <circle cx="1.5" cy="8" r="0.6" fill="currentColor" stroke="none"/>
+        <circle cx="1.5" cy="12" r="0.6" fill="currentColor" stroke="none"/>
+      </svg>
+      <span>Liste</span>
+    </button>
+  );
+}
+
 /* NumberedChipStrip — one chip per item on the current pallet.
-   Red bg = code not copied yet, green bg = copied, accent border =
-   active item. Each chip is clickable to jump. ESKU items get a
-   dashed border. Items with placement flags get a tiny warn dot. */
-function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPick }) {
+   Level-tinted bg = todo, green bg = completed (Fertig'd), accent
+   fill = active item. Each chip is clickable to jump. ESKU items get a
+   dashed border. Items with placement flags get a tiny warn dot. Copy
+   state lives only on the Hero's Artikel-Code button — chips do NOT
+   green-out on copy, only on Fertig. */
+function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, completedKeys, onPick }) {
   if (!items.length) return null;
   /* Bucket consecutive items that share the same `useItem` into the
      same container — one visual unit per repeating SKU. Items without
@@ -2054,19 +2601,18 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
     }}>
       {groups.map((g) => {
         const isCluster = g.items.length > 1;
-        // Mirror the PalletFlow cluster success transition: once every
-        // chip inside this useItem-group is copied, fade the capsule
-        // bg into success.bg + bold success border. Inner chips are
-        // already green when copied, so the group reads as one
-        // completed unit under the unified green frame.
-        const allCopied = isCluster && g.items.every((_, gi) =>
-          copiedKeys?.has?.(`${palletIdx}|${g.from + gi}`)
+        // Cluster success transition: once every chip inside this
+        // useItem-group is Fertig'd (not just copied), fade the
+        // capsule into success.bg + success border. Copy alone no
+        // longer triggers the green frame.
+        const allCompleted = isCluster && g.items.every((_, gi) =>
+          completedKeys?.has?.(`${palletIdx}|${g.from + gi}`)
         );
         return (
         <div
           key={g.from}
           title={isCluster
-            ? `${g.items.length}× gleicher Use-Item${allCopied ? ' · alle kopiert' : ''}`
+            ? `${g.items.length}× gleicher Use-Item${allCompleted ? ' · alle abgeschlossen' : ''}`
             : undefined}
           style={{
             display: 'inline-flex',
@@ -2077,10 +2623,10 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
                of same-useItem chips as one unit at a glance. */
             padding: isCluster ? 4 : 0,
             background: isCluster
-              ? (allCopied ? T.status.success.bg : T.bg.surface3)
+              ? (allCompleted ? T.status.success.bg : T.bg.surface3)
               : 'transparent',
             border: isCluster
-              ? `1.5px solid ${allCopied ? T.status.success.main : T.border.strong}`
+              ? `1.5px solid ${allCompleted ? T.status.success.main : T.border.strong}`
               : 'none',
             borderRadius: 999,
             transition: isCluster
@@ -2090,6 +2636,7 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
         >
           {g.items.map((item, gi) => {
             const j = g.from + gi;
+            const isCompleted = completedKeys?.has?.(`${palletIdx}|${j}`);
             const isCopied = copiedKeys?.has?.(`${palletIdx}|${j}`);
             const isActive = j === currentItemIdx;
             const isEsku = item.isEinzelneSku === true;
@@ -2102,6 +2649,7 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
                 idx={j + 1}
                 itemIdx={j}
                 isActive={isActive}
+                isCompleted={isCompleted}
                 isCopied={isCopied}
                 isEsku={isEsku}
                 hasFlag={hasFlag}
@@ -2109,7 +2657,9 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
                 onPick={onPick}
                 title={`Artikel ${j + 1} · L${lvl} ${meta.shortName || meta.name}` +
                        (isEsku ? ' · ⬢ ESKU' : '') +
-                       (isCopied ? ' · ✓ kopiert' : ' · noch zu kopieren')}
+                       (isCompleted
+                         ? ' · ✓ abgeschlossen'
+                         : isCopied ? ' · Code kopiert' : ' · noch offen')}
               />
             );
           })}
@@ -2121,11 +2671,12 @@ function NumberedChipStrip({ items, palletIdx, currentItemIdx, copiedKeys, onPic
 }
 
 const NumberedChip = memo(function NumberedChip({
-  idx, itemIdx, isActive, isCopied, isEsku, hasFlag, levelMeta, onPick, title,
+  idx, itemIdx, isActive, isCompleted, isCopied, isEsku, hasFlag, levelMeta, onPick, title,
 }: {
   idx: number;
   itemIdx: number;
   isActive: boolean;
+  isCompleted: boolean;
   isCopied: boolean;
   isEsku: boolean;
   hasFlag: boolean;
@@ -2134,13 +2685,16 @@ const NumberedChip = memo(function NumberedChip({
   title: string;
 }) {
   /* Coloring rules:
-       active  → filled accent, white number, bold — the selected chip
-       copied  → green tinted (Artikel-Code wurde kopiert)
-       todo    → level-color soft (tinted bg + colored border + text)
-     ESKU shifts border style to dashed; flags → tiny warn dot.
-     Wrapped in React.memo — when the worker advances an item only the
-     chips whose isActive/isCopied actually flipped re-render, instead
-     of the entire strip rebuilding on every state change. */
+       active    → filled accent, white number — the selected chip
+       completed → green tinted (Fertig wurde gedrückt)
+       todo      → level-color soft (tinted bg + colored border + text)
+     The copy-only state (code in clipboard but Fertig not pressed)
+     intentionally has NO bg change — copy progress is shown on the
+     Hero's Artikel-Code button, and chips greening on copy alone
+     misled workers into skipping the Fertig step. A subtle inner ring
+     hints at copy-progress for navigability without competing with
+     the completion state.
+     ESKU shifts border style to dashed; flags → tiny warn dot. */
   const meta = levelMeta || LEVEL_META[1];
   let color: string, fontWeight: number, bg: string, border: string;
   if (isActive) {
@@ -2148,7 +2702,7 @@ const NumberedChip = memo(function NumberedChip({
     fontWeight = 700;
     bg = T.accent.main;
     border = T.accent.main;
-  } else if (isCopied) {
+  } else if (isCompleted) {
     color = T.status.success.text;
     fontWeight = 600;
     bg = T.status.success.bg;
@@ -2159,6 +2713,10 @@ const NumberedChip = memo(function NumberedChip({
     bg = meta.bg;
     border = meta.color;
   }
+  /* Inner accent ring marks "copied but not yet Fertig'd" — quieter
+     than a bg flip, just enough so the worker can scan and see which
+     codes are queued in clipboard. Suppressed on active/completed. */
+  const showCopyHint = !isActive && !isCompleted && isCopied;
 
   const handleClick = useCallback(() => {
     onPick?.(itemIdx);
@@ -2192,7 +2750,9 @@ const NumberedChip = memo(function NumberedChip({
         flexShrink: 0,
         boxShadow: isActive
           ? `0 1px 2px rgba(17,24,39,0.06), 0 4px 12px -4px ${T.accent.main}55`
-          : 'none',
+          : showCopyHint
+            ? `inset 0 0 0 1.5px ${T.accent.main}`
+            : 'none',
       }}
       onMouseEnter={(e) => {
         if (!isActive) e.currentTarget.style.transform = 'translateY(-1px)';
@@ -2730,18 +3290,59 @@ function PalletListOverlay({
                             {formatItemTitle(it.title || '—')}
                           </span>
 
-                          {/* Code */}
-                          <span style={{
-                            fontFamily: T.font.mono,
-                            fontSize: 12,
-                            color: T.text.subtle,
-                            textAlign: 'right',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }} title={it.code || it.useItem || it.fnsku || ''}>
-                            {it.code || it.useItem || it.fnsku || '—'}
-                          </span>
+                          {/* Code — ESKU rows lead with the merchant SKU
+                             (the label workers actually scan) and surface
+                             FNSKU as a small subtle line underneath.
+                             Mixed rows keep the legacy single-line code. */}
+                          {it.isEinzelneSku ? (
+                            <span style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'flex-end',
+                              gap: 2,
+                              minWidth: 0,
+                              overflow: 'hidden',
+                            }} title={[it.sku, it.fnsku].filter(Boolean).join(' · ') || ''}>
+                              <span style={{
+                                fontFamily: T.font.mono,
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: T.text.primary,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: '100%',
+                              }}>
+                                {it.sku || it.fnsku || '—'}
+                              </span>
+                              {it.sku && it.fnsku && it.fnsku !== it.sku && (
+                                <span style={{
+                                  fontFamily: T.font.mono,
+                                  fontSize: 10.5,
+                                  color: T.text.faint,
+                                  letterSpacing: '0.02em',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                  maxWidth: '100%',
+                                }}>
+                                  {it.fnsku}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span style={{
+                              fontFamily: T.font.mono,
+                              fontSize: 12,
+                              color: T.text.subtle,
+                              textAlign: 'right',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }} title={it.code || it.useItem || it.fnsku || ''}>
+                              {it.code || it.useItem || it.fnsku || '—'}
+                            </span>
+                          )}
 
                           {/* Status indicator (✓ if copied) OR chevron
                              when expanded. Status wins — copy state is
@@ -2973,31 +3574,40 @@ function WiederholtOverlay({ hit, onDismiss }) {
 /* ════════════════════════════════════════════════════════════════════════
    Atoms
    ════════════════════════════════════════════════════════════════════════ */
-function ShellToggle({ on, onToggle }) {
-  /* onMouseDown preventDefault avoids focus-steal: without it, clicking
-     the toggle puts focus on the button, and the next Space press would
-     re-fire the click instead of running handleFertig. The keyboard
-     handler in Focus.jsx already preventDefaults Space at the document
-     level, but a focused button can synthesise a click on keyup which
-     bypasses that guard. Keeping focus on document = hotkeys keep
-     working as the worker expects. */
+/* Shared ModeToggle — uniform pill style for view-mode flags (Doppel/
+   Shell/Zen). Variant icon distinguishes them at a glance; a Kbd hint
+   surfaces the keyboard shortcut so workers learn it ambient.
+
+   Focus-steal guard (mouseDown preventDefault + blur on click) keeps
+   the document-level keydown handler in charge — without it, a
+   focused toggle could re-fire its own click on Space/Enter, hijacking
+   Fertig. */
+function ModeToggle({
+  label, hotkey, on, onToggle, icon, title,
+}: {
+  label: string;
+  hotkey: string;
+  on: boolean;
+  onToggle: () => void;
+  icon: 'dot' | 'double' | 'zen';
+  title: string;
+}) {
+  const dotColor = on ? T.accent.main : T.text.faint;
   return (
     <button
       type="button"
       onMouseDown={(e) => e.preventDefault()}
       onClick={(e) => { onToggle(); e.currentTarget.blur(); }}
-      title={on
-        ? 'Shell-Modus an — Animationen verkürzt'
-        : 'Shell-Modus aus — vollständige Übergänge'}
+      title={title}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 5,
-        height: 22,
-        padding: '0 10px',
+        gap: 6,
+        height: 24,
+        padding: '0 6px 0 10px',
         fontSize: 10.5,
         fontFamily: T.font.mono,
-        fontWeight: 600,
+        fontWeight: 700,
         color: on ? T.accent.text : T.text.subtle,
         background: on ? T.accent.bg : 'transparent',
         border: `1px solid ${on ? T.accent.border : T.border.primary}`,
@@ -3005,14 +3615,89 @@ function ShellToggle({ on, onToggle }) {
         cursor: 'pointer',
         letterSpacing: '0.10em',
         textTransform: 'uppercase',
+        transition: 'background 140ms ease, border-color 140ms ease, color 140ms ease',
       }}
     >
-      <span style={{
-        width: 5, height: 5, borderRadius: '50%',
-        background: on ? T.accent.main : T.text.faint,
-      }} />
-      Shell
+      {icon === 'double' ? (
+        <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: dotColor }} />
+          <span style={{ width: 3, height: 3, borderRadius: '50%', background: dotColor, opacity: 0.5 }} />
+        </span>
+      ) : icon === 'zen' ? (
+        <span aria-hidden style={{
+          width: 6, height: 6,
+          border: `1.5px solid ${dotColor}`,
+          borderRadius: '50%',
+          background: 'transparent',
+        }} />
+      ) : (
+        <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: dotColor }} />
+      )}
+      <span>{label}</span>
+      <span aria-hidden style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 14, height: 14,
+        marginLeft: 2,
+        fontSize: 9,
+        fontFamily: T.font.mono,
+        fontWeight: 700,
+        color: on ? T.accent.text : T.text.faint,
+        background: on ? 'rgba(255,255,255,0.55)' : T.bg.surface2,
+        border: `1px solid ${on ? T.accent.border : T.border.subtle}`,
+        borderRadius: 3,
+        letterSpacing: 0,
+        lineHeight: 1,
+      }}>
+        {hotkey}
+      </span>
     </button>
+  );
+}
+
+function DoppelToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <ModeToggle
+      label="Doppel"
+      hotkey="D"
+      on={on}
+      onToggle={onToggle}
+      icon="double"
+      title={on
+        ? 'Doppel-Artikel-Modus an — nächster Artikel als Vorschau (D)'
+        : 'Doppel-Artikel-Modus aus — nur aktueller Artikel (D)'}
+    />
+  );
+}
+
+function ShellToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <ModeToggle
+      label="Shell"
+      hotkey="S"
+      on={on}
+      onToggle={onToggle}
+      icon="dot"
+      title={on
+        ? 'Shell-Modus an — Tastatur-Hotkeys aktiv (S)'
+        : 'Shell-Modus aus — Tastatur-Hotkeys deaktiviert (S)'}
+    />
+  );
+}
+
+function ZenToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <ModeToggle
+      label="Zen"
+      hotkey="Z"
+      on={on}
+      onToggle={onToggle}
+      icon="zen"
+      title={on
+        ? 'Zen-Modus an — nur Artikel sichtbar (Z oder Esc)'
+        : 'Zen-Modus aus — vollständige Oberfläche (Z)'}
+    />
   );
 }
 

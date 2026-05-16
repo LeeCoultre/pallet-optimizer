@@ -49,6 +49,7 @@ class AuftragStatus(str, enum.Enum):
     in_progress = "in_progress"
     completed = "completed"
     error = "error"
+    cancelled = "cancelled"
 
 
 class WorkflowStep(str, enum.Enum):

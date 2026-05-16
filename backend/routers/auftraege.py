@@ -31,6 +31,7 @@ from backend.schemas import (
     AuftragDetail,
     AuftragReorderItem,
     AuftragSummary,
+    WorkflowAbort,
     WorkflowProgress,
 )
 
@@ -353,3 +354,65 @@ async def cancel_auftrag(
     await db.commit()
     await db.refresh(a)
     return AuftragDetail.from_orm_row(a, assigned_to_user_name=None)
+
+
+@router.post("/{auftrag_id}/abort", response_model=AuftragDetail)
+async def abort_auftrag(
+    auftrag_id: UUID,
+    payload: WorkflowAbort,
+    me: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Terminal cancel ("Stornieren"). Unlike /cancel (which recycles
+    the Auftrag back to queued), this marks it `cancelled` so it lands
+    in Historie with the Storniert badge + red border, carrying the
+    flagged-article reasons in parsed.cancellation."""
+    a = await db.get(Auftrag, auftrag_id)
+    if a is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Auftrag not found")
+    if a.status != AuftragStatus.in_progress:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Status is {a.status.value}"
+        )
+    if a.assigned_to_user_id != me.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Not your Auftrag")
+
+    now = datetime.now(timezone.utc)
+    items_clean = [
+        {
+            "palletId": it.pallet_id,
+            "itemIdx": it.item_idx,
+            "code": it.code,
+            "title": it.title,
+            "reason": (it.reason or "").strip() or None,
+        }
+        for it in payload.items
+    ]
+    cancellation = {
+        "items": items_clean,
+        "note": (payload.note or "").strip() or None,
+        "at": now.isoformat(),
+        "by": {"id": str(me.id), "name": me.name},
+    }
+    # parsed is JSONB; preserve everything the parser wrote and append
+    # the cancellation block. Re-assign the dict (not in-place mutate)
+    # so SQLAlchemy flags the column dirty.
+    parsed = dict(a.parsed or {})
+    parsed["cancellation"] = cancellation
+    a.parsed = parsed
+
+    a.status = AuftragStatus.cancelled
+    a.finished_at = now
+    if a.started_at:
+        a.duration_sec = int((now - a.started_at).total_seconds())
+
+    _audit(
+        db, me.id, "abort", auftrag_id=auftrag_id,
+        meta={
+            "items": items_clean,
+            "note": cancellation["note"],
+        },
+    )
+    await db.commit()
+    await db.refresh(a)
+    return AuftragDetail.from_orm_row(a, assigned_to_user_name=me.name)

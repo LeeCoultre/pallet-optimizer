@@ -7,6 +7,7 @@
      "card"    — full card with frame + KPI rail (expanded review view)
      "story"   — 100×200 ambient sidebar viz for Focus mode
                  (mini labels, no KPI rail, optional `pulseLevel` glow)
+     "mini"    — 64×128 thumbnail for Übersicht tiles (no labels)
      "compact" — 22×30 micro icon
 */
 
@@ -21,8 +22,9 @@ export default function PalletStackViz({ palletState, size = 'row', onClick, pul
   const isCard = size === 'card';
   const isCompact = size === 'compact';
   const isStory = size === 'story';
-  const W = isCard ? 168 : isStory ? 100 : isCompact ? 22 : 36;
-  const H = isCard ? 320 : isStory ? 200 : isCompact ? 30 : 72;
+  const isMini = size === 'mini';
+  const W = isCard ? 168 : isStory ? 100 : isMini ? 64 : isCompact ? 22 : 36;
+  const H = isCard ? 320 : isStory ? 200 : isMini ? 128 : isCompact ? 30 : 72;
 
   if (!palletState) {
     return (
